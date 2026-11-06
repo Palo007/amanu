@@ -3,9 +3,53 @@
 This runbook covers the **macOS** release. Both platforms read their shared
 version from the root `VERSION` file. Windows uses `windows-v<version>` tags,
 Microsoft Artifact Signing, and a stable
-Velopack update feed. See [Windows build and release packaging](../windows/README.md#signing-and-release-packaging)
-for its source branch, workflow, signing configuration, and signed test builds.
+Velopack update feed. In this fork the Windows source and release scripts are in
+`windows/` on `master`. Do not build from stale untracked Windows files in a
+macOS checkout.
+See [Windows build and release packaging](../windows/README.md#signing-and-release-packaging)
+for its workflow, signing configuration, and signed test builds.
 Do not use the macOS release script or Sparkle appcast for a Windows release.
+
+Set the root `VERSION` on the prepared Windows branch to the agreed shared
+release version and commit the change before building. For GitHub Actions,
+always select that prepared branch explicitly:
+
+```sh
+gh workflow run windows-beta.yml --repo gsamat/amanu --ref <prepared-windows-release-branch>
+```
+
+Local `windows/scripts/Build-Release.ps1` and the workflow both produce
+`Amanu-<VERSION>-Setup.exe`, update installer metadata and generate `SHA256SUMS`.
+After publication, point both landing-page languages, `/win.exe` and package
+manifests at the versioned asset. Update the GitHub README from public releases:
+
+```sh
+python3 scripts/update-readme-downloads.py --write --verify-downloads
+# Commit and publish README.md on master, then verify it there.
+```
+
+The updater chooses the highest published stable version for each platform;
+it ignores drafts and prereleases and requires the versioned installer asset.
+It updates both download links and the public-version paragraph, even when the
+platforms have different current versions. Root `VERSION` describes the source
+build; it is not proof that an installer has been published.
+
+CI rejects stale README downloads and checks that both assets are downloadable.
+The **Published README downloads** workflow reads the README visible on GitHub
+after every release and after the Windows workflow completes. The latter is
+required because Windows publishes using `GITHUB_TOKEN`, which does not trigger
+another release workflow. It always runs trusted code from `master`, including
+when the Windows build uses a separate release branch. A red check means the
+release's README publication is incomplete: run the updater on a fresh `master`
+checkout, publish the README change, and rerun the check (or dispatch
+`readme-downloads.yml`). Branch protection still applies; this workflow checks
+publication rather than bypassing the required CI to push a bot commit.
+
+The macOS release script runs the updater in publication stage 8, includes
+README.md in its publication commit, and verifies the README read back from
+GitHub. Dry runs do not update it. Read the live site URLs back and check their
+redirects and hashes against the published release. Keep already published
+assets intact.
 
 After publishing the signed Windows assets, update the
 [Scoop manifest](../windows/packaging/scoop/amanu.json) and submit the new
@@ -127,7 +171,8 @@ before it costs time and nothing else. Do not "helpfully" reorder them.
    so a rehearsal never leaves a signed feed pointing at a release that does
    not exist.
 8. **Publish.** The GitHub release stops being a draft; then the canonical
-   appcast and landing pages are committed, pushed and rsynced to reina. The
+   appcast, README downloads and landing pages are committed and pushed,
+   and the site is rsynced to reina. The
    same appcast is committed and deployed at the legacy URL. Finally the script
    fetches both feeds, compares them byte for byte with what it signed, and
    asks GitHub for the asset to confirm it answers 200.

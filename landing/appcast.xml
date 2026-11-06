@@ -6,30 +6,24 @@
         <description>Updates for amanu, a local-first meeting recorder for macOS.</description>
         <language>en</language>
         <item>
-            <title>0.6.1</title>
-            <pubDate>Thu, 01 Oct 2026 16:44:08 +0000</pubDate>
+            <title>0.6.5</title>
+            <pubDate>Tue, 06 Oct 2026 05:26:42 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2>Amanu 0.6.1</h2>
-<h3>Automatic recording</h3>
+            <description><![CDATA[<h2>amanu 0.6.5</h2>
 <ul>
-<li>The Call apps list now accepts app names as well as bundle-id prefixes. Entries such as Comet and Comet Helper detect the browser&#x27;s microphone activity and follow its helper processes for audio capture.</li>
-<li>Advanced settings now has an optional Record any app that opens the mic switch, off by default. It keeps dictation tools and ignored apps excluded, and turning it off restores the configured call list.</li>
-<li>Clarified that clearing the Call apps field restores the standard list. The new switch stays in Advanced settings.</li>
-</ul>
-<h3>Summaries</h3>
-<ul>
-<li>Codex summaries use the model selected in Codex&#x27;s own configuration. Amanu no longer forces the OpenAI API model onto a Codex subscription, which could make summaries fail. The OpenAI API model setting continues to apply to API summaries.</li>
+<li>Fixed Command-V in API-key fields on macOS, including the OpenAI-compatible summary provider.</li>
+<li>Added the standard Edit menu with Cut, Copy, Paste, and Select All shortcuts for text fields.</li>
 </ul>
 <h3>Compatibility</h3>
 <ul>
 <li>Universal binary for Apple Silicon and Intel Macs running macOS 14.2 or later. Local transcription requires Apple Silicon; Intel requires a cloud transcription key and has not been tested on physical hardware.</li>
 </ul>]]></description>
             <enclosure
-                url="https://github.com/gsamat/amanu/releases/download/v0.6.1/amanu-v0.6.1-macos-universal.dmg"
-                sparkle:version="416"
-                sparkle:shortVersionString="0.6.1"
-                sparkle:edSignature="g13C+rF1HX/f9fNo/D3dp133J5PU0peri3YzFQ9D3qkdZ6O2IfdbUuE0E8rmTw7MlsKQT+2ovj84GbFbBc69DA=="
-                length="24039489"
+                url="https://github.com/gsamat/amanu/releases/download/v0.6.5/amanu-v0.6.5-macos-universal.dmg"
+                sparkle:version="440"
+                sparkle:shortVersionString="0.6.5"
+                sparkle:edSignature="uBv5hX9yDnQfjCxJ1iPw+MqpoSEbLnc/bgSlmRYeYBnyO7wj+714zYyiMSEUfTtPQyk34kwDsCAnt2c+0cTlAA=="
+                length="24037351"
                 type="application/octet-stream" />
         </item>
     </channel>
