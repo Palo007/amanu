@@ -17,4 +17,9 @@
     <Compile Include="../../src/Amanu.App/ModelManager.cs" Link="ModelManager.cs" />
     <Compile Include="../../src/Amanu.App/CommandLineToolLocator.cs" Link="CommandLineToolLocator.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The real-DLL echo test runs when these are present and skips otherwise. -->
+    <None Include="../../native/localvqe/liblocalvqe.dll" Link="echo-runtime/liblocalvqe.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../native/localvqe/liblocalvqe.dll')" />
+    <None Include="../../native/localvqe/localvqe-v1.4-aec-200K-f32.gguf" Link="echo-runtime/localvqe-v1.4-aec-200K-f32.gguf" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../native/localvqe/localvqe-v1.4-aec-200K-f32.gguf')" />
+  </ItemGroup>
 </Project>

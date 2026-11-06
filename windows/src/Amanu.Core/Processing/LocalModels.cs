@@ -4,10 +4,16 @@ using System.Text.RegularExpressions;
 
 namespace Amanu.Core.Processing;
 
-public sealed record DownloadArtifact(string Url, string Sha256, long Size, string FileName);
+/// <summary>Url and Sha256 are null for a model that is only ever a local file the user supplies.</summary>
+public sealed record DownloadArtifact(string? Url, string? Sha256, long Size, string FileName);
 
 public static class ModelCatalog
 {
+    /// <summary>Every Parakeet variant (v3, Ultra, Slovak) takes the chunked, word-timestamp path.</summary>
+    public static bool IsParakeet(string id) =>
+        id.Equals("parakeet", StringComparison.OrdinalIgnoreCase)
+        || id.StartsWith("parakeet-", StringComparison.OrdinalIgnoreCase);
+
     public static IReadOnlyDictionary<string, DownloadArtifact> Models { get; } =
         new Dictionary<string, DownloadArtifact>(StringComparer.OrdinalIgnoreCase)
         {
@@ -21,6 +27,13 @@ public static class ModelCatalog
                 "5859f77944efcd8eafa23a6350731960b2b55b2203df51f319665c807d802cc7",
                 739_508_576,
                 "parakeet-tdt-0.6b-v3-Q8_0.gguf"),
+            ["parakeet-ultra"] = new(
+                "https://huggingface.co/handy-computer/parakeet-ultra-gguf/resolve/main/parakeet-ultra-Q8_0.gguf",
+                "007a59761e9258779f189df396b50d12b83bb5b79e66df4b955c230d2f2a0a59",
+                740_363_168,
+                "parakeet-ultra-Q8_0.gguf"),
+            // No public GGUF exists: the user converts the KInIT fine-tune locally.
+            ["parakeet-sk"] = new(null, null, 0, "parakeet-tdt-0.6b-v3-sk-Q8_0.gguf"),
             ["gigaam"] = new(
                 "https://huggingface.co/handy-computer/gigaam-v3-ctc-gguf/resolve/main/gigaam-v3-ctc-Q8_0.gguf",
                 "71e5c82890e9e243a6bd7575f129f5d1bd2c3ca3ae79aab75cfb1a6934c6a62b",

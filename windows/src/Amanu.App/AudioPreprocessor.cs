@@ -148,7 +148,7 @@ public static class AudioPreprocessor
         return pieces;
     }
 
-    private static ISampleProvider Mono16k(ISampleProvider samples)
+    internal static ISampleProvider Mono16k(ISampleProvider samples)
     {
         if (samples.WaveFormat.Channels == 2)
             samples = new StereoToMonoSampleProvider(samples) { LeftVolume = 0.5f, RightVolume = 0.5f };

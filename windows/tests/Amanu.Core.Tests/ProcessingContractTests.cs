@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Amanu.Core.Processing;
+using Amanu.Core.Configuration;
 
 namespace Amanu.Core.Tests;
 
@@ -161,6 +162,27 @@ public sealed class ProcessingContractTests
 
         Assert.Equal([60, 60, 10], segments.Select(segment => segment.Text.Split(' ').Length));
     }
+
+    [Fact]
+    public void ModelCatalog_lists_three_parakeet_models()
+    {
+        Assert.Equal("parakeet-ultra-Q8_0.gguf", ModelCatalog.Models["parakeet-ultra"].FileName);
+        Assert.Equal("parakeet-tdt-0.6b-v3-sk-Q8_0.gguf", ModelCatalog.Models["parakeet-sk"].FileName);
+        Assert.Null(ModelCatalog.Models["parakeet-sk"].Url);
+        Assert.NotNull(ModelCatalog.Models["parakeet-ultra"].Url);
+        Assert.Contains("parakeet-ultra", TranscriptionSettings.LocalEngines);
+        Assert.Contains("parakeet-sk", TranscriptionSettings.LocalEngines);
+    }
+
+    [Theory]
+    [InlineData("parakeet", true)]
+    [InlineData("parakeet-ultra", true)]
+    [InlineData("parakeet-sk", true)]
+    [InlineData("gigaam", false)]
+    [InlineData("whisper", false)]
+    [InlineData("nemotron-live", false)]
+    public void IsParakeet_matches_only_parakeet_models(string id, bool expected) =>
+        Assert.Equal(expected, ModelCatalog.IsParakeet(id));
 
     [Fact]
     public void ModelCatalog_pins_verified_local_models()

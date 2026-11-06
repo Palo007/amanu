@@ -225,6 +225,8 @@ internal sealed class SetupForm
         var models = new (string Id, string Title, string Detail)[]
         {
             ("parakeet", "Parakeet v3", T("Fastest · about 740 MB", "Самая быстрая · около 740 МБ")),
+            ("parakeet-ultra", "Parakeet Ultra", T("Better accuracy · about 740 MB", "Лучше точность · около 740 МБ")),
+            ("parakeet-sk", "Parakeet v3 Slovak (KInIT)", T("Slovak fine-tune · local file", "Словацкая дообученная модель · локальный файл")),
             ("whisper", "Whisper large-v3-turbo", T("Best multilingual accuracy · about 890 MB", "Лучшая точность на разных языках · около 890 МБ")),
             ("gigaam", "GigaAM v3", T("Alternative for Russian · about 270 MB", "Альтернатива для русского · около 270 МБ")),
         };

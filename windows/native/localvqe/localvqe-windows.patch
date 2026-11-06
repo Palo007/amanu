@@ -1,0 +1,147 @@
+diff --git a/ggml/CMakeLists.txt b/ggml/CMakeLists.txt
+index be703e7..b3b0db7 100644
+--- a/ggml/CMakeLists.txt
++++ b/ggml/CMakeLists.txt
+@@ -50,7 +50,7 @@ if(EMSCRIPTEN)
+ elseif(LOCALVQE_CUDA)
+     set(GGML_CUDA ON CACHE BOOL "" FORCE)
+     set(GGML_STATIC OFF CACHE BOOL "" FORCE)
+-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
++elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64" AND NOT APPLE AND NOT WIN32)
+     # x86: build all CPU backend variants (SSE4.2 through AVX-512/Zen4) as shared
+     # libraries, selected at runtime based on CPU capabilities.
+     # This avoids needing -march=native (which Nix strips).
+diff --git a/ggml/daf_frontend.cpp b/ggml/daf_frontend.cpp
+index 23ad059..4062142 100644
+--- a/ggml/daf_frontend.cpp
++++ b/ggml/daf_frontend.cpp
+@@ -475,9 +475,20 @@ void daf_prime_delay(daf_frontend& fe, const float* mic, const float* ref, int n
+     // of the standalone front-end's onset residual ("reverb"), which the
+     // cascade's mask otherwise hides. The filter is never run here.
+     daf_reset(fe);
+-    const int M = daf_frontend::M, W = daf_frontend::G_WIN;
+     int best_shift = 0;
+     float best_conf = 0.0f;
++    daf_prime_feed(fe, mic, ref, n, &best_shift, &best_conf);
++    daf_prime_finish(fe, best_shift, best_conf);
++}
++
++void daf_prime_feed(daf_frontend& fe, const float* mic, const float* ref, int n,
++                    int* best_shift_io, float* best_conf_io) {
++    // One chunk of daf_prime_delay's scan. Call daf_reset first, then feed the
++    // whole signal in order (each n a multiple of M; a partial tail block is
++    // ignored, as in daf_prime_delay), then daf_prime_finish.
++    const int M = daf_frontend::M, W = daf_frontend::G_WIN;
++    int best_shift = *best_shift_io;
++    float best_conf = *best_conf_io;
+     for (int o = 0; o + M <= n; o += M) {
+         std::memmove(fe.mic_ring.data(), fe.mic_ring.data() + M, (W - M) * sizeof(float));
+         std::memcpy(fe.mic_ring.data() + W - M, mic + o, M * sizeof(float));
+@@ -493,6 +504,11 @@ void daf_prime_delay(daf_frontend& fe, const float* mic, const float* ref, int n
+             }
+         }
+     }
++    *best_shift_io = best_shift;
++    *best_conf_io = best_conf;
++}
++
++void daf_prime_finish(daf_frontend& fe, int best_shift, float best_conf) {
+     daf_reset(fe);
+     if (best_conf > daf_frontend::G_CONF_THR) {
+         fe.cur_shift = best_shift;
+diff --git a/ggml/daf_frontend.h b/ggml/daf_frontend.h
+index f86c597..af972e3 100644
+--- a/ggml/daf_frontend.h
++++ b/ggml/daf_frontend.h
+@@ -98,6 +98,11 @@ void daf_reset(daf_frontend& fe);
+ /// reset, ready for daf_process. Streaming/real-time callers skip this and get
+ /// the normal online acquisition.
+ void daf_prime_delay(daf_frontend& fe, const float* mic, const float* ref, int n);
++/// Chunked form of daf_prime_delay for signals too long to hold in memory:
++/// daf_reset, then daf_prime_feed over the signal in order, then daf_prime_finish.
++void daf_prime_feed(daf_frontend& fe, const float* mic, const float* ref, int n,
++                    int* best_shift_io, float* best_conf_io);
++void daf_prime_finish(daf_frontend& fe, int best_shift, float best_conf);
+ 
+ /// Process one hop of `hop` samples (must be a multiple of M=128).
+ /// e_out receives the echo-cancelled mic; yhat_out (optional, may be null)
+diff --git a/ggml/localvqe_api.cpp b/ggml/localvqe_api.cpp
+index 7feffba..d0d2de6 100644
+--- a/ggml/localvqe_api.cpp
++++ b/ggml/localvqe_api.cpp
+@@ -103,6 +103,10 @@ struct localvqe_ctx {
+     std::vector<float> batch_s16_a;
+     std::vector<float> batch_s16_b;
+     std::vector<float> batch_s16_out;
++
++    // Chunked whole-signal delay prime (localvqe_prime_delay_*).
++    int prime_best_shift = 0;
++    float prime_best_conf = 0.0f;
+ };
+ 
+ static void ensure_size(std::vector<float>& v, size_t n) {
+@@ -790,6 +794,34 @@ LOCALVQE_API void localvqe_reset(localvqe_ctx_t handle) {
+     // policy, not stream state.
+ }
+ 
++LOCALVQE_API int localvqe_prime_delay_begin(localvqe_ctx_t handle) {
++    if (!handle) return -1;
++    auto* ctx = reinterpret_cast<localvqe_ctx*>(handle);
++    if (!ctx->daf.loaded) return -3;
++    localvqe_reset(handle);
++    ctx->prime_best_shift = 0;
++    ctx->prime_best_conf = 0.0f;
++    return 0;
++}
++
++LOCALVQE_API int localvqe_prime_delay_feed(localvqe_ctx_t handle, const float* mic,
++                                           const float* ref, int n_samples) {
++    if (!handle || !mic || !ref || n_samples < 0) return -1;
++    auto* ctx = reinterpret_cast<localvqe_ctx*>(handle);
++    if (!ctx->daf.loaded) return -3;
++    daf_prime_feed(ctx->daf, mic, ref, n_samples, &ctx->prime_best_shift, &ctx->prime_best_conf);
++    return 0;
++}
++
++LOCALVQE_API int localvqe_prime_delay_end(localvqe_ctx_t handle) {
++    if (!handle) return -1;
++    auto* ctx = reinterpret_cast<localvqe_ctx*>(handle);
++    if (!ctx->daf.loaded) return -3;
++    localvqe_reset(handle);
++    daf_prime_finish(ctx->daf, ctx->prime_best_shift, ctx->prime_best_conf);
++    return ctx->daf.gcc_locked ? ctx->daf.cur_shift : -2;
++}
++
+ LOCALVQE_API int localvqe_set_noise_gate(localvqe_ctx_t handle,
+                                         int enabled,
+                                         float threshold_dbfs) {
+diff --git a/ggml/localvqe_api.h b/ggml/localvqe_api.h
+index 841f050..ca56b8f 100644
+--- a/ggml/localvqe_api.h
++++ b/ggml/localvqe_api.h
+@@ -262,6 +262,25 @@ LOCALVQE_API void localvqe_reset(localvqe_ctx_t ctx);
+  *
+  * Returns 0 on success, negative on error.
+  */
++/**
++ * Whole-signal bulk-delay prime for offline callers with long signals.
++ *
++ * The 203K cascade normally estimates the echo delay online (GCC-PHAT) and
++ * freezes it after ~3.5 s; that early guess can lock a wrong delay for the
++ * rest of the stream. For a file, call begin, feed the whole mic/ref signal
++ * in order (each chunk a multiple of 128 samples; a partial tail block is
++ * ignored), then end. end() resets the stream state and freezes the
++ * highest-confidence delay, so process_frame_* then runs aligned from frame 0.
++ *
++ * begin/feed return 0, or -3 when the model has no DAF front-end.
++ * end returns the frozen shift in samples (>= 0), -2 when no estimate was
++ * confident (online acquisition stays on), or -3 as above.
++ */
++LOCALVQE_API int localvqe_prime_delay_begin(localvqe_ctx_t ctx);
++LOCALVQE_API int localvqe_prime_delay_feed(localvqe_ctx_t ctx, const float* mic,
++                                           const float* ref, int n_samples);
++LOCALVQE_API int localvqe_prime_delay_end(localvqe_ctx_t ctx);
++
+ LOCALVQE_API int localvqe_set_noise_gate(localvqe_ctx_t ctx,
+                                         int enabled,
+                                         float threshold_dbfs);

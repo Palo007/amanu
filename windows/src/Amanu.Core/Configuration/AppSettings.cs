@@ -42,6 +42,10 @@ public sealed class AppSettings
     [JsonPropertyName("transcript_echo_filter")]
     public bool TranscriptEchoFilter { get; set; } = true;
 
+    /// <summary>Removes acoustic echo from a copy of the mic with LocalVQE before transcription; the recording is untouched.</summary>
+    [JsonPropertyName("offline_echo_cancellation")]
+    public bool OfflineEchoCancellation { get; set; } = true;
+
     [JsonPropertyName("auto_record")]
     public AutoRecordSettings AutoRecord { get; set; } = new();
 
@@ -162,7 +166,7 @@ public sealed class AutoRecordSettings
 public sealed class TranscriptionSettings
 {
     public static readonly IReadOnlyList<string> CloudEngines = ["assemblyai", "openai", "elevenlabs"];
-    public static readonly IReadOnlyList<string> LocalEngines = ["parakeet", "whisper", "gigaam"];
+    public static readonly IReadOnlyList<string> LocalEngines = ["parakeet", "parakeet-ultra", "parakeet-sk", "whisper", "gigaam"];
 
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; } = true;

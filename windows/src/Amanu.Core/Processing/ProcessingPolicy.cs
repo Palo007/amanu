@@ -48,6 +48,8 @@ public static class EngineResolver
         "openai" => "OpenAI",
         "elevenlabs" => "ElevenLabs",
         "parakeet" => "Parakeet v3",
+        "parakeet-ultra" => "Parakeet Ultra",
+        "parakeet-sk" => "Parakeet v3 Slovak (KInIT)",
         "whisper" => "Whisper large-v3-turbo",
         "gigaam" => "GigaAM v3",
         _ => engine,

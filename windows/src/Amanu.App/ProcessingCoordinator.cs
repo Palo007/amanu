@@ -20,7 +20,19 @@ public sealed record ProcessingLedger(
     int SummaryAttempts = 0,
     bool HookRan = false,
     bool NamesAsked = false,
-    string? LastError = null);
+    string? LastError = null,
+    EchoCancellationRecord? AudioEchoCancellation = null);
+
+/// <summary>Which audio recognition heard: LocalVQE's cleaned mic, the exact mic (no playback), or — skipped — the raw tracks.</summary>
+public sealed record EchoCancellationRecord(
+    string Processor,
+    string? ModelSha256 = null,
+    int? SampleRate = null,
+    long? Frames = null,
+    string? Mode = null,
+    string? Skipped = null,
+    // The whole-signal echo delay in samples, or why LocalVQE fell back to estimating it online.
+    string? DelayPrime = null);
 
 /// <summary>
 /// Turns recordings into transcripts, names and summaries, one session at a time.
@@ -256,6 +268,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                     "This session's audio was not kept, so there is nothing to transcribe again.",
                     "Звук этой записи не сохранён, расшифровывать заново нечего."));
             ProviderCache.Clear(directory);
+            OfflineEchoAudio.Clear(directory);
             foreach (var file in new[] { "transcribe.failed", "transcribe.deferred", "transcribe.off",
                          "speakers.failed", "speakers.deferred", "summary.failed", "summary.deferred" })
                 File.Delete(Path.Combine(directory, file));
@@ -400,9 +413,30 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             return false;
         }
 
+        // Recognition hears an echo-cleaned copy of the mic; the archive and
+        // keep_audio below still settle the original tracks in `audio`.
+        var heard = audio;
+        OfflineEchoAudio.Result? cleaned = null;
+        if (current.OfflineEchoCancellation && audio.BothSides)
+        {
+            cleaned = await CancelEchoAsync(directory, audio, cancellationToken).ConfigureAwait(false);
+            if (cleaned is not null)
+                heard = audio with
+                {
+                    Directory = cleaned.Directory,
+                    Microphone = cleaned.Microphone,
+                    System = cleaned.System,
+                    MicrophoneOffsetMs = cleaned.OffsetMs,
+                    SystemOffsetMs = cleaned.OffsetMs,
+                };
+        }
+        else WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = null });
+
         try
         {
-            var transcript = await RunPlanAsync(plan, audio, current, cancellationToken).ConfigureAwait(false);
+            var transcript = await RunPlanAsync(plan, heard, directory, current, cancellationToken).ConfigureAwait(false);
+            cleaned?.Delete();
+            cleaned = null;
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
             if (transcript.Segments.All(segment => string.IsNullOrWhiteSpace(segment.Text)))
@@ -475,13 +509,78 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             ScheduleRetry(directory, TimeSpan.FromSeconds(30));
             return false;
         }
+        finally
+        {
+            // A retry recomputes the cleaned audio; only provider caches stay for it.
+            cleaned?.RemoveAudio();
+        }
+    }
+
+    /// <summary>
+    /// An echo-cleaned copy of the mic, or null when that could not be made.
+    /// Echo cancellation improves a transcript; it is not what makes one: a
+    /// missing DLL or model, a failed checksum, a native error or a short copy
+    /// leaves the tracks to be transcribed as recorded, and transcribe.log and
+    /// processing.json say what was skipped and why. Shares the CPU with local
+    /// recognition, so live transcription preempts it like a batch pass.
+    /// </summary>
+    private async Task<OfflineEchoAudio.Result?> CancelEchoAsync(string directory, SessionAudio audio, CancellationToken cancellationToken)
+    {
+        var log = Path.Combine(directory, "transcribe.log");
+        await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} removing acoustic echo from a microphone copy before transcription{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+        var timer = Stopwatch.StartNew();
+        OfflineEchoAudio.Result prepared;
+        try
+        {
+            while (true)
+            {
+                using var cpu = await models.CpuTranscription.EnterBatchAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    prepared = await Task.Run(() => OfflineEchoAudio.Prepare(audio, () =>
+                    {
+                        var assets = LocalVqeAssets.Resolve();
+                        return new LocalVqeBackend(assets.Library, assets.Model);
+                    }, cpu.Token), cpu.Token).ConfigureAwait(false);
+                    break;
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Live preempted this pass; the model starts again from t=0 once it is done.
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo cancellation skipped — {exception.Message}; transcribing the tracks as recorded{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+            WriteLedger(directory, ReadLedger(directory) with
+            {
+                AudioEchoCancellation = new EchoCancellationRecord(LocalVqeAssets.ProcessorVersion, Skipped: exception.Message),
+            });
+            return null;
+        }
+        WriteLedger(directory, ReadLedger(directory) with
+        {
+            AudioEchoCancellation = new EchoCancellationRecord(LocalVqeAssets.ProcessorVersion,
+                prepared.ModelRan ? LocalVqeAssets.ModelSha256 : null, EchoCanceller.SampleRate, prepared.Frames,
+                Mode: prepared.ModelRan ? "localvqe" : "silent_reference_passthrough",
+                DelayPrime: prepared.DelayPrime?.Describe()),
+        });
+        if (prepared.DelayPrime is { Applied: false } prime)
+            await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo delay prime unavailable ({prime.Status}); LocalVQE estimated the delay online{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+        var how = !prepared.ModelRan ? "no playback, mic kept exact"
+            : prepared.DelayPrime is { ShiftSamples: { } shift } ? $"LocalVQE, echo delay primed at {shift} samples"
+            : "LocalVQE";
+        await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} audio echo cancellation complete in {timer.Elapsed.TotalSeconds:0.0} s " +
+            $"({how}); original tracks kept{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+        return prepared;
     }
 
     /// <summary>
     /// The cloud first when the plan has one, and this computer's model only when
     /// the cloud could not be reached or was busy — for this session alone.
     /// </summary>
-    private async Task<TranscriptDocument> RunPlanAsync(EnginePlan plan, SessionAudio audio, AppSettings current, CancellationToken cancellationToken)
+    private async Task<TranscriptDocument> RunPlanAsync(EnginePlan plan, SessionAudio audio, string directory, AppSettings current, CancellationToken cancellationToken)
     {
         if (plan.Cloud is { } cloud)
         {
@@ -495,7 +594,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                 {
                     ["from_engine"] = cloud, ["to_engine"] = plan.Local, ["reason"] = Reason(failure),
                 });
-                await File.AppendAllTextAsync(Path.Combine(audio.Directory, "transcribe.log"),
+                await File.AppendAllTextAsync(Path.Combine(directory, "transcribe.log"),
                     $"{DateTimeOffset.UtcNow:O} {cloud} → {plan.Local}: {failure.Message}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
             }
         }
@@ -816,6 +915,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         ("openai", "gpt-4o-transcribe-diarize") => "gpt-4o-transcribe-diarize",
         ("elevenlabs", _) => "scribe_v2",
         ("parakeet", _) => "parakeet-v3",
+        ("parakeet-ultra", _) => "parakeet-ultra",
+        ("parakeet-sk", _) => "parakeet-v3-sk",
         ("gigaam", _) => "gigaam-v3",
         ("whisper", _) => "whisper-large-v3-turbo",
         _ => "custom",

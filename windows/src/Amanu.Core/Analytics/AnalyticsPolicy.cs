@@ -24,10 +24,10 @@ public static class AnalyticsPolicy
     private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> Choices =
         new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
         {
-            ["engine"] = Set("auto", "parakeet", "gigaam", "whisper", "openai", "assemblyai", "elevenlabs"),
-            ["from_engine"] = Set("auto", "parakeet", "gigaam", "whisper", "openai", "assemblyai", "elevenlabs"),
-            ["to_engine"] = Set("auto", "parakeet", "gigaam", "whisper", "openai", "assemblyai", "elevenlabs"),
-            ["transcription_engine"] = Set("auto", "parakeet", "gigaam", "whisper", "openai", "assemblyai", "elevenlabs"),
+            ["engine"] = Set("auto", "parakeet", "parakeet-ultra", "parakeet-sk", "gigaam", "whisper", "openai", "assemblyai", "elevenlabs"),
+            ["from_engine"] = Set("auto", "parakeet", "parakeet-ultra", "parakeet-sk", "gigaam", "whisper", "openai", "assemblyai", "elevenlabs"),
+            ["to_engine"] = Set("auto", "parakeet", "parakeet-ultra", "parakeet-sk", "gigaam", "whisper", "openai", "assemblyai", "elevenlabs"),
+            ["transcription_engine"] = Set("auto", "parakeet", "parakeet-ultra", "parakeet-sk", "gigaam", "whisper", "openai", "assemblyai", "elevenlabs"),
             ["backend"] = Set("auto", "claude-cli", "anthropic-api", "codex-cli", "openai-api", "ollama", "none"),
             ["summary_backend"] = Set("auto", "claude-cli", "anthropic-api", "codex-cli", "openai-api", "ollama", "none"),
             ["speaker_names_backend"] = Set("summary", "auto", "claude-cli", "anthropic-api", "codex-cli", "openai-api", "ollama", "none"),

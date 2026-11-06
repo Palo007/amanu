@@ -52,6 +52,12 @@ public sealed class ModelManager(string dataDirectory, HttpClient httpClient, st
             throw new InvalidOperationException($"Unknown local model: {model}");
         if (model == "nemotron-live" ? !LiveRuntimePresent : CliPath is null)
             throw new InvalidOperationException("The local transcription runtime is missing from this Amanu installation.");
+        if (artifact.Url is null || artifact.Sha256 is null)
+        {
+            if (File.Exists(ModelPath(model))) return;
+            throw new InvalidOperationException(
+                $"{EngineResolver.DisplayName(model)} can't be downloaded. Put the converted file at {Path.GetFullPath(ModelPath(model))}.");
+        }
         Directory.CreateDirectory(ModelDirectory);
         lock (downloading)
         {
@@ -61,7 +67,7 @@ public sealed class ModelManager(string dataDirectory, HttpClient httpClient, st
         }
         try
         {
-            await DownloadVerifiedAsync($"Model {model}", artifact, ModelPath(model), cancellationToken).ConfigureAwait(false);
+            await DownloadVerifiedAsync($"Model {model}", artifact.Url, artifact.Sha256, artifact.Size, ModelPath(model), cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -70,9 +76,9 @@ public sealed class ModelManager(string dataDirectory, HttpClient httpClient, st
     }
 
     private async Task DownloadVerifiedAsync(
-        string item, DownloadArtifact artifact, string destination, CancellationToken cancellationToken)
+        string item, string url, string sha256, long size, string destination, CancellationToken cancellationToken)
     {
-        if (File.Exists(destination) && await MatchesHashAsync(destination, artifact.Sha256, cancellationToken).ConfigureAwait(false)) return;
+        if (File.Exists(destination) && await MatchesHashAsync(destination, sha256, cancellationToken).ConfigureAwait(false)) return;
         DownloadStarted?.Invoke(this, item);
         try
         {
@@ -81,15 +87,15 @@ public sealed class ModelManager(string dataDirectory, HttpClient httpClient, st
             // A download that stopped halfway resumes where it stopped, rather than
             // starting the better part of a gigabyte again.
             var have = File.Exists(partial) ? new FileInfo(partial).Length : 0;
-            if (have >= artifact.Size) { File.Delete(partial); have = 0; }
-            using var request = new HttpRequestMessage(HttpMethod.Get, artifact.Url);
+            if (have >= size) { File.Delete(partial); have = 0; }
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
             if (have > 0) request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(have, null);
             using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             var resumed = have > 0 && response.StatusCode == System.Net.HttpStatusCode.PartialContent;
             if (!resumed) have = 0;
-            var total = artifact.Size;
+            var total = size;
             await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
             await using (var output = new FileStream(partial, resumed ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 128, true))
             {
@@ -103,7 +109,7 @@ public sealed class ModelManager(string dataDirectory, HttpClient httpClient, st
                     Progress?.Invoke(this, new DownloadProgress(item, received, total));
                 }
             }
-            if (!await MatchesHashAsync(partial, artifact.Sha256, cancellationToken).ConfigureAwait(false))
+            if (!await MatchesHashAsync(partial, sha256, cancellationToken).ConfigureAwait(false))
             {
                 File.Delete(partial);
                 throw new InvalidDataException($"Downloaded {item} did not match its pinned SHA-256 checksum.");

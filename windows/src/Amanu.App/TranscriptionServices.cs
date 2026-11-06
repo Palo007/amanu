@@ -145,7 +145,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             var wave = Path.Combine(temp, "input.wav");
             AudioPreprocessor.ConvertToMono16k(source, wave);
             cancellationToken.ThrowIfCancellationRequested();
-            if (model == "parakeet")
+            if (ModelCatalog.IsParakeet(model))
             {
                 var chunks = AudioPreprocessor.SplitWithContext(wave, temp, 60, 1);
                 var words = new List<TimedWord>();

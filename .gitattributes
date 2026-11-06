@@ -1,1 +1,4 @@
 windows/patches/*.patch text eol=lf whitespace=-blank-at-eol
+windows/native/**/*.patch text eol=lf whitespace=-blank-at-eol
+windows/native/**/*.dll binary
+windows/native/**/*.gguf binary
