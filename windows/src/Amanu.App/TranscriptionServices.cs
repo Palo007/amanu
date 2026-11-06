@@ -109,6 +109,50 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             ? Math.Min(value, processors)
             : Math.Max(1, processors);
 
+    /// <summary>
+    /// Set after a Vulkan run fails (no GPU, no driver, no Vulkan loader, no
+    /// VC++ runtime for the GPU module). Then all later runs in this app use the CPU.
+    /// </summary>
+    private static volatile bool vulkanFailed;
+
+    /// <summary>
+    /// The transcribe-cli backend: "vulkan" when the runtime has the GPU module
+    /// (ggml-vulkan.dll), else "cpu". AMANU_ASR_BACKEND=cpu or =vulkan overrides it.
+    /// After one failed Vulkan run it is always "cpu".
+    /// </summary>
+    public static string Backend(string? setting, bool vulkanModulePresent, bool failed)
+    {
+        if (failed) return "cpu";
+        if (string.Equals(setting?.Trim(), "cpu", StringComparison.OrdinalIgnoreCase)) return "cpu";
+        if (string.Equals(setting?.Trim(), "vulkan", StringComparison.OrdinalIgnoreCase)) return "vulkan";
+        return vulkanModulePresent ? "vulkan" : "cpu";
+    }
+
+    private static string BackendFor(string cli) => Backend(
+        Environment.GetEnvironmentVariable("AMANU_ASR_BACKEND"),
+        File.Exists(Path.Combine(Path.GetDirectoryName(cli) ?? "", "ggml-vulkan.dll")),
+        vulkanFailed);
+
+    /// <summary>
+    /// Runs transcribe-cli with the chosen backend. A failed Vulkan run is run
+    /// again on the CPU, and the CPU is used from then on.
+    /// </summary>
+    private static async Task<string> RunAsrAsync(string cli, List<string> arguments, TrackTiming timing, CancellationToken cancellationToken)
+    {
+        var backend = BackendFor(cli);
+        if (!timing.Backend.EndsWith("(vulkan failed)", StringComparison.Ordinal)) timing.Backend = backend;
+        try
+        {
+            return await RunCliAsync(cli, ["--backend", backend, .. arguments], cancellationToken).ConfigureAwait(false);
+        }
+        catch (ProcessingFailure) when (backend == "vulkan" && !cancellationToken.IsCancellationRequested)
+        {
+            vulkanFailed = true;
+            timing.Backend = "cpu (vulkan failed)";
+            return await RunCliAsync(cli, ["--backend", "cpu", .. arguments], cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Told each track's time: ("asr.me", wall time, detail).</summary>
     public Action<string, TimeSpan, string>? Timing { get; set; }
 
@@ -116,6 +160,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
     {
         public TimeSpan Convert;
         public int Runs;
+        public string Backend = "cpu";
     }
 
     public async Task<TranscriptDocument> TranscribeAsync(SessionAudio audio, CancellationToken cancellationToken)
@@ -148,7 +193,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             {
                 var segments = await TranscribeFileCoreAsync(source, side, offsetMs, timing, cpu.Token).ConfigureAwait(false);
                 Timing?.Invoke($"asr.{side}", wall.Elapsed, string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                    $"convert {timing.Convert.TotalSeconds:0.0} s, {timing.Runs} runs, preempted {preempted}"));
+                    $"convert {timing.Convert.TotalSeconds:0.0} s, {timing.Runs} runs, preempted {preempted}, backend {timing.Backend}"));
                 return segments;
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -185,11 +230,11 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
                 foreach (var chunk in chunks)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var args = new List<string> { "-m", modelPath, "--backend", "cpu", "--threads", Threads.ToString(System.Globalization.CultureInfo.InvariantCulture), "-q", "--timestamps", "word" };
+                    var args = new List<string> { "-m", modelPath, "--threads", Threads.ToString(System.Globalization.CultureInfo.InvariantCulture), "-q", "--timestamps", "word" };
                     if (!string.IsNullOrWhiteSpace(languagePin)) args.AddRange(["--language", languagePin]);
                     args.Add(chunk.Path);
                     timing.Runs++;
-                    var answer = await RunCliAsync(cli, args, cancellationToken).ConfigureAwait(false);
+                    var answer = await RunAsrAsync(cli, args, timing, cancellationToken).ConfigureAwait(false);
                     var parsed = LocalCliWords.Parse(answer);
                     words.AddRange(parsed.Select(word => word with
                     {
@@ -211,13 +256,13 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             IReadOnlyList<(string Path, long StartMs, long EndMs)> pieces = model == "gigaam"
                 ? AudioPreprocessor.Split(wave, temp, GigaAmChunkSeconds)
                 : [(wave, 0L, 0L)];
-            var arguments = new List<string> { "-m", modelPath, "--backend", "cpu", "--threads", Threads.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+            var arguments = new List<string> { "-m", modelPath, "--threads", Threads.ToString(System.Globalization.CultureInfo.InvariantCulture) };
             var batch = Path.Combine(temp, "batch.txt");
             await File.WriteAllLinesAsync(batch, pieces.Select(piece => piece.Path), cancellationToken).ConfigureAwait(false);
             arguments.AddRange(["--batch", batch, "--batch-jsonl", "--timestamps", "auto"]);
             if (!string.IsNullOrWhiteSpace(languagePin)) arguments.AddRange(["--language", languagePin]);
             timing.Runs++;
-            var output = await RunCliAsync(cli, arguments, cancellationToken).ConfigureAwait(false);
+            var output = await RunAsrAsync(cli, arguments, timing, cancellationToken).ConfigureAwait(false);
             if (model == "gigaam")
             {
                 // One segment per piece, as on the Mac: the piece's span, its text.

@@ -122,10 +122,24 @@ Done when: ASR time is lower on calls with long silence, with no lost words in t
 
 ## Step 7: GPU (large, optional)
 
-- [ ] Build transcribe.cpp with Vulkan (`Build-LocalRuntime.ps1:40`). Use `--backend vulkan` with CPU fallback.
-- [ ] Check runtime size, driver failures and WER.
+- [x] Build transcribe.cpp with Vulkan (`Build-LocalRuntime.ps1:40`). Use `--backend vulkan` with CPU fallback.
+  - Done another way: a Vulkan build needs the Vulkan SDK. The official v0.1.3 release has a ready Windows Vulkan module (`ggml-vulkan.dll`), from the same pinned source. `Build-LocalRuntime.ps1` downloads it, checks its SHA-256 and adds it to `local-runtime` (`-NoVulkan` leaves it out). Our own patched CLI loads it as a separate ggml backend module.
+  - Amanu uses `--backend vulkan` when `ggml-vulkan.dll` is in the runtime, else `cpu`. `AMANU_ASR_BACKEND=cpu|vulkan` overrides it. When a Vulkan run fails, Amanu runs that piece again on the CPU and uses the CPU until it restarts. The timing line shows `backend vulkan`, `cpu` or `cpu (vulkan failed)`.
+- [x] Check runtime size, driver failures and WER.
+  - Size: `local-runtime` goes from 13 MB to 84 MB (`ggml-vulkan.dll` is 74 MB).
+  - No GPU: the CLI stops in less than 1 s with "vulkan backend requested but not available". Tested with the module removed: the run finished on the CPU. The module needs `vulkan-1.dll` (GPU driver) and the VC++ runtime. If one is missing, the module does not load and the same fallback happens.
+  - Words: a 60 s piece gave the same 121 words on both. Full recording: 98.6 % of the words are the same. The small differences go both ways (fp16 on the GPU).
 
-Done when: it is clearly faster on this PC and falls back safely on a PC without a GPU.
+Done when: it is clearly faster on this PC and falls back safely on a PC without a GPU. **Done on branch `step7-vulkan` (2026-11-06), not merged.**
+
+Step 7 result (`2026.11.06-1000`, AC power, Amanu closed, after a warm-up run, same build, tracks one after the other; integrated AMD Radeon Vega of the Ryzen 7 5800H):
+
+| Backend | Echo removal | ASR me | ASR them | ASR | Total | WER (120–300 s) |
+|---|---|---|---|---|---|---|
+| CPU, 16 threads | 123.8 s | 96.9 s | 105.9 s | 202.8 s | 328.8 s | 42.1 % |
+| Vulkan (iGPU) | 116.7 s | 59.0 s | 65.5 s | **124.6 s** | 243.4 s | 42.5 % |
+
+ASR is 39 % faster. The CPU is also more free during ASR. Not measured yet: Vulkan together with Step 2 (both tracks at the same time on one iGPU).
 
 ## Later (other review items, not speed)
 

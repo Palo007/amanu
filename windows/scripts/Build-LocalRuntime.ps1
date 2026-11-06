@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$PublishDirectory
+    [string]$PublishDirectory,
+    # Leave out the GPU (Vulkan) module. Amanu then always uses the CPU.
+    [switch]$NoVulkan
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,6 +63,27 @@ try {
     New-Item -ItemType Directory -Force -Path $licenses | Out-Null
     Copy-Item -LiteralPath (Join-Path $sourceDirectory "LICENSE") -Destination (Join-Path $licenses "transcribe.cpp-LICENSE") -Force
     Copy-Item -LiteralPath (Join-Path $sourceDirectory "ggml/LICENSE") -Destination (Join-Path $licenses "ggml-LICENSE") -Force
+    if (-not $NoVulkan) {
+        # GPU module from the official v0.1.3 release (same pinned source). A
+        # Vulkan build here needs the Vulkan SDK; the release file needs only the
+        # GPU driver at run time. ggml loads it as a separate backend module, so a
+        # PC without a GPU, driver or VC++ runtime just keeps the CPU.
+        $vulkanArchive = Join-Path $workDirectory "vulkan.tar.gz"
+        $vulkanUrl = "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.1.3/transcribe-native-0.1.3-windows-x86_64-cpu-vulkan.tar.gz"
+        Invoke-WebRequest -Uri $vulkanUrl -OutFile $vulkanArchive -UseBasicParsing
+        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $vulkanArchive).Hash -ne "9F536CB0FB839BD305E6D92FB214FD417C7718A416A6C7646A9911FBD56FDAD5") {
+            throw "The transcribe.cpp v0.1.3 Vulkan release file did not match its pinned hash."
+        }
+        $vulkanDirectory = Join-Path $workDirectory "vulkan"
+        New-Item -ItemType Directory -Force -Path $vulkanDirectory | Out-Null
+        tar -xzf $vulkanArchive -C $vulkanDirectory "transcribe-native-windows-x86_64-cpu-vulkan/ggml-vulkan.dll"
+        if ($LASTEXITCODE -ne 0) { throw "Could not unpack the Vulkan module." }
+        $vulkanModule = Join-Path $vulkanDirectory "transcribe-native-windows-x86_64-cpu-vulkan/ggml-vulkan.dll"
+        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $vulkanModule).Hash -ne "658260FF65065606198AE7303467444B5AF5CE1EE07258B3B54EAF35A09B6AF5") {
+            throw "The Vulkan module did not match its pinned hash."
+        }
+        Copy-Item -LiteralPath $vulkanModule -Destination $destinationDirectory -Force
+    }
     & (Join-Path $PSScriptRoot 'Test-NativeCpu.ps1') -RuntimeDirectory $destinationDirectory
     & (Join-Path $PSScriptRoot '../tests/Test-NativeUnicodePaths.ps1') -RuntimeDirectory $destinationDirectory
     Write-Host "Bundled transcribe-cli from $actualCommit"
