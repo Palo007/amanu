@@ -98,6 +98,17 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
 
     public string Name => model;
 
+    /// <summary>
+    /// CPU threads for each transcribe-cli run. AMANU_ASR_THREADS overrides it,
+    /// so the measure script can try other counts without a new build.
+    /// </summary>
+    public static int Threads { get; } = ThreadCount(Environment.GetEnvironmentVariable("AMANU_ASR_THREADS"), Environment.ProcessorCount);
+
+    public static int ThreadCount(string? setting, int processors) =>
+        int.TryParse(setting, out var value) && value > 0
+            ? Math.Min(value, processors)
+            : Math.Max(1, processors);
+
     /// <summary>Told each track's time: ("asr.me", wall time, detail).</summary>
     public Action<string, TimeSpan, string>? Timing { get; set; }
 
@@ -174,7 +185,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
                 foreach (var chunk in chunks)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var args = new List<string> { "-m", modelPath, "--backend", "cpu", "-q", "--timestamps", "word" };
+                    var args = new List<string> { "-m", modelPath, "--backend", "cpu", "--threads", Threads.ToString(System.Globalization.CultureInfo.InvariantCulture), "-q", "--timestamps", "word" };
                     if (!string.IsNullOrWhiteSpace(languagePin)) args.AddRange(["--language", languagePin]);
                     args.Add(chunk.Path);
                     timing.Runs++;
@@ -200,7 +211,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             IReadOnlyList<(string Path, long StartMs, long EndMs)> pieces = model == "gigaam"
                 ? AudioPreprocessor.Split(wave, temp, GigaAmChunkSeconds)
                 : [(wave, 0L, 0L)];
-            var arguments = new List<string> { "-m", modelPath, "--backend", "cpu" };
+            var arguments = new List<string> { "-m", modelPath, "--backend", "cpu", "--threads", Threads.ToString(System.Globalization.CultureInfo.InvariantCulture) };
             var batch = Path.Combine(temp, "batch.txt");
             await File.WriteAllLinesAsync(batch, pieces.Select(piece => piece.Path), cancellationToken).ConfigureAwait(false);
             arguments.AddRange(["--batch", batch, "--batch-jsonl", "--timestamps", "auto"]);
@@ -252,7 +263,9 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new ProcessingFailure(FailureKind.Environmental,
             T("Could not launch local transcription.", "Не удалось запустить локальную расшифровку."));
-        try { process.PriorityClass = ProcessPriorityClass.Idle; }
+        // Batch work only (live speech has its own worker). BelowNormal still
+        // yields to the user's apps, but Idle starved ASR on a busy computer.
+        try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
         catch (InvalidOperationException) { }
         using var registration = cancellationToken.Register(() => { try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } });
         var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);

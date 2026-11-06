@@ -102,7 +102,9 @@ internal sealed class RecordingsWindow : Window
         tabs.Items.Add(new TabItem { Header = T("Summary", "Саммари"), Content = summary });
         engineTabs.SelectionChanged += async (_, args) =>
         {
-            if (!updatingChoices && args.Source == engineTabs) await ShowTranscriptAsync();
+            if (args.Source != engineTabs) return;
+            MarkSelectedEngineTab();
+            if (!updatingChoices) await ShowTranscriptAsync();
         };
         var transcriptPanel = new Grid();
         transcriptPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -168,6 +170,37 @@ internal sealed class RecordingsWindow : Window
     }
 
     private Row? Selected => grid.SelectedItem as Row;
+
+    /// <summary>
+    /// Fluent's selected tab differs from the others only by a thin line, which
+    /// dark mode all but hides; the chosen transcript gets an accent pill instead.
+    /// </summary>
+    private static Border EngineTabHeader(string label) => new()
+    {
+        CornerRadius = new CornerRadius(4),
+        Padding = new Thickness(8, 2, 8, 2),
+        Child = new TextBlock { Text = label },
+    };
+
+    private void MarkSelectedEngineTab()
+    {
+        foreach (var tab in engineTabs.Items.OfType<TabItem>())
+        {
+            if (tab.Header is not Border { Child: TextBlock text } pill) continue;
+            if (tab.IsSelected)
+            {
+                pill.SetResourceReference(Border.BackgroundProperty, "AccentFillColorDefaultBrush");
+                text.SetResourceReference(TextBlock.ForegroundProperty, "TextOnAccentFillColorPrimaryBrush");
+                text.FontWeight = FontWeights.SemiBold;
+            }
+            else
+            {
+                pill.ClearValue(Border.BackgroundProperty);
+                text.ClearValue(TextBlock.ForegroundProperty);
+                text.FontWeight = FontWeights.Normal;
+            }
+        }
+    }
 
     private static DataGridTextColumn Column(string header, string path, double width) => new()
     {
@@ -257,9 +290,10 @@ internal sealed class RecordingsWindow : Window
             entry.EngineName + (entries.Count(other => other.Engine == entry.Engine) > 1 ? $" ({index + 1})" : "")
             + " · " + Row.Step(row.StateFor(entry)))).ToList();
         updatingChoices = true;
-        engineTabs.ItemsSource = choices.Select(choice => new TabItem { Header = choice.Label, Tag = choice }).ToList();
+        engineTabs.ItemsSource = choices.Select(choice => new TabItem { Header = EngineTabHeader(choice.Label), Tag = choice }).ToList();
         engineTabs.SelectedItem = engineTabs.Items.Cast<TabItem>().FirstOrDefault(tab => ((TranscriptChoice)tab.Tag).Key == selectedTranscriptKey)
             ?? engineTabs.Items.Cast<TabItem>().LastOrDefault();
+        MarkSelectedEngineTab();
         engineTabs.Visibility = choices.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         tabs.Margin = new Thickness(0, choices.Count > 1 ? 0 : 8, 0, 0);
         updatingChoices = false;
