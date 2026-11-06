@@ -89,6 +89,7 @@ Step 2 result (AC power, Amanu closed, after a warm-up run):
 - Threads per track, tested on `1000`: 8 + 8 = 162.7 s, 12 + 12 = 220.7 s, 16 + 16 = 388.1 s. Too many threads fight for the CPU, so half each is the best.
 - Why not −25 %: one track alone already uses most of the CPU (step 1: 8 threads is only 12 % slower than 16). Two tracks at the same time mostly share the same CPU time. The gain is the part one track left unused.
 - The warm-up run of `1000` was 193.0 s; the cold run after a publish is slower, as before.
+- Full report (code changes, measurements, thread research): [reviews/2026-11-06-step2-parallel-asr.html](reviews/2026-11-06-step2-parallel-asr.html) (Word copy beside it).
 
 ## Step 3: system track during echo removal (medium)
 
