@@ -188,6 +188,16 @@ public sealed class TranscriptionSettings
     [JsonPropertyName("language")]
     public string? Language { get; set; }
 
+    public static readonly IReadOnlyList<string> LevelNormalizations = ["auto", "off"];
+
+    /// <summary>
+    /// <c>auto</c>: a copy of each track whose speech is outside −26…−16 dBFS is
+    /// brought toward −20 dBFS by a slow AGC before recognition. <c>off</c>: the
+    /// tracks are heard as recorded. The recording itself is never changed.
+    /// </summary>
+    [JsonPropertyName("level_normalization")]
+    public string LevelNormalization { get; set; } = "off";
+
     [JsonPropertyName("openai")]
     public OpenAiTranscriptionSettings OpenAi { get; set; } = new();
 

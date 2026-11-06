@@ -32,6 +32,9 @@ internal static class MeasureTranscription
                 dataDirectory = Path.GetFullPath(testDirectory);
 #endif
             var settings = new AppSettingsStore(Path.Combine(dataDirectory, "config.json"), home).Load().Settings;
+            // Measurement only: try level normalization on or off without changing config.json.
+            if (Environment.GetEnvironmentVariable("AMANU_MEASURE_LEVELS") is { Length: > 0 } levels)
+                settings.Transcription.LevelNormalization = levels;
             using var http = new HttpClient();
             var models = new ModelManager(dataDirectory, http);
             // Analytics never sends from here: it is given no permission.

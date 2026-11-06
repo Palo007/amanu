@@ -570,6 +570,10 @@ before using this example offline.
   `system_audio` is `app` or `all`; `transcript_echo_filter` removes duplicate
   far-end speech. Apple's `mic_voice_processing` and LocalVQE's
   `offline_echo_cancellation` are macOS-only settings.
+- `transcription.level_normalization` (Windows, `off` by default): `auto`
+  brings quiet or loud speech in a copy of each track toward −20 dBFS before
+  transcription. The recording itself is not changed. Turn it on and
+  re-transcribe a recording where quiet speakers lose words.
 - `start_at_login`, `tray_icon`, and `taskbar_icon` control Windows startup and
   appearance. `recordings_dir`, `keep_audio`, `analytics`, `interface_language`,
   and `user_name` have the same purposes as on macOS.

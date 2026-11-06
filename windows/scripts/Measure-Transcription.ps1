@@ -35,7 +35,9 @@ param(
     # Run even when Amanu is open.
     [switch]$Force,
     # Do not transcribe: only score the recording's own transcript.json against -Reference.
-    [switch]$ScoreOnly
+    [switch]$ScoreOnly,
+    # Speech level normalization for this run only (roadmap step 4); default is config.json's.
+    [ValidateSet('', 'auto', 'off')][string]$LevelNormalization = ''
 )
 $ErrorActionPreference = 'Stop'
 
@@ -59,7 +61,9 @@ else {
     $arguments = @('--measure-transcription', "`"$Recording`"", "`"$Output`"")
     if ($Engine) { $arguments += $Engine }
     $clock.Start()
-    $process = Start-Process -FilePath $Exe -ArgumentList $arguments -PassThru -Wait -WindowStyle Hidden
+    $env:AMANU_MEASURE_LEVELS = $LevelNormalization
+    try { $process = Start-Process -FilePath $Exe -ArgumentList $arguments -PassThru -Wait -WindowStyle Hidden }
+    finally { Remove-Item Env:AMANU_MEASURE_LEVELS -ErrorAction SilentlyContinue }
     $clock.Stop()
     if ($process.ExitCode -ne 0) {
         $why = Join-Path $Output 'measure.error'

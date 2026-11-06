@@ -108,16 +108,43 @@ on the hand-checked minute. This minute can only catch a step 4 regression, not 
 Before starting step 4, find a recording where Parakeet really misses quiet words. If none is
 found, step 4 may not be needed.
 
+Gate result (2026-11-06): **no failing case found, step 4 is on hold.** All 21 kept recordings
+were measured (RMS in 400 ms windows, hop 100 ms, floor = 10th percentile of the windows).
+- Mic speech is −40 to −60 dBFS, the far side −20 to −34 dBFS. The far side is already near the target.
+- On the 6 recordings with a Parakeet transcript, 88–98 % of the mic speech time (mic active, far
+  side quiet) is inside a "me" segment, also on the quietest mics (−54 dBFS). Only 3 gaps of 1.5 s
+  or more were found (6 s in all), and they are not quieter than the speech that was found.
+- Words per second of speech do not drop on quieter segments (correlation about 0 on both sides,
+  with the activity gate set 15 dB below the track's speech level).
+- AGC does not change the signal-to-noise ratio, and Parakeet normalizes its features per chunk.
+Open step 4 again only if a hand-checked minute shows quiet words that Parakeet misses.
+
+Built anyway as an opt-in setting (2026-11-06, branch `step4-levels`):
+`transcription.level_normalization` = `auto` / `off`, **default `off`**. Turn it on and
+re-transcribe a recording where quiet speakers lose words; `Measure-Transcription.ps1
+-LevelNormalization auto|off` compares both on a copy without a change to `config.json`.
+
+| Run (parakeet-sk) | Levels | WER | Words | Level step |
+|---|---|---|---|---|
+| `1021`, me, hand-checked minute | off (step 0/1) | 0.0 % | — | — |
+| `1021`, me, hand-checked minute | auto (me −46.6 → −26.7 dBFS, +20 dB cap; them in range) | 2.0 % (3 / 152) | 2247 | 0.6 s |
+| `1000`, silver ref, 120–300 s | off | 42.1 % | 1646 | — |
+| `1000`, silver ref, 120–300 s | auto (me −52.0 → −32.0, them −29.7 → −19.3) | 42.1 % | 1678 | 0.8 s |
+
+So on these calls it does not help: the quiet-mic minute got 3 errors worse, the silver score
+did not move, and 2 % more words came out. Time is under 1 s per 15 min, no clipping.
+Keep it `off` by default until a recording with lost quiet words shows a gain.
+
 Plan:
-- [ ] **Measure.** For each track, compute the RMS level in dBFS over short windows (e.g. 400 ms, hop 100 ms). Estimate the noise floor (e.g. the 10th percentile) and the speech level (e.g. the median of the windows clearly above the floor). Log both per track.
-- [ ] **Decide.** Do nothing if the speech level is already in the target range (e.g. −26 to −16 dBFS). Otherwise, normalize.
-- [ ] **Normalize dynamically** (slow AGC, automatic gain control). Gain follows the speech level with a slow attack and release (about 1–3 s), so each speaker in turn is lifted or lowered toward about −20 dBFS.
+- [x] **Measure.** For each track, compute the RMS level in dBFS over short windows (e.g. 400 ms, hop 100 ms). Estimate the noise floor (e.g. the 10th percentile) and the speech level (e.g. the median of the windows clearly above the floor). Log both per track.
+- [x] **Decide.** Do nothing if the speech level is already in the target range (e.g. −26 to −16 dBFS). Otherwise, normalize.
+- [x] **Normalize dynamically** (slow AGC, automatic gain control). Gain follows the speech level with a slow attack and release (about 1–3 s), so each speaker in turn is lifted or lowered toward about −20 dBFS.
   - Limit the gain (e.g. +20 dB up, −12 dB down).
   - Never raise windows that are only at the noise floor. Hold the gain there, so silence and hiss do not get loud.
   - Put a peak limiter at the end, so nothing clips.
-- [ ] **Order.** Run it after echo removal (LocalVQE needs the true mic/system level relation) and before ASR. Mic and system each get their own AGC.
-- [ ] **Setting.** `transcription.level_normalization`: `auto` (default) / `off`. Write what was done to `processing.json` (levels before and after, max gain).
-- [ ] **Check with WER, not by ear.** NeMo/Parakeet probably normalizes the features of each chunk itself, so a plain overall gain may change little. The expected gain is in chunks where loud and quiet speakers are mixed. The research in the review found that "speech enhancement" can make ASR worse. So keep the change only if WER on the test set goes down. Most of all, check the quiet-speaker recording.
+- [x] **Order.** Run it after echo removal (LocalVQE needs the true mic/system level relation) and before ASR. Mic and system each get their own AGC.
+- [x] **Setting.** `transcription.level_normalization`: `auto` / `off` (default `off`, see above). Write what was done to `processing.json` (levels before and after, max gain).
+- [x] **Check with WER, not by ear.** NeMo/Parakeet probably normalizes the features of each chunk itself, so a plain overall gain may change little. The expected gain is in chunks where loud and quiet speakers are mixed. The research in the review found that "speech enhancement" can make ASR worse. So keep the change only if WER on the test set goes down. Most of all, check the quiet-speaker recording.
 
 Done when: WER is lower (or the same) on all test recordings and lower on the quiet one, there is no clipping, and the extra time is under 5 s per 15 min.
 

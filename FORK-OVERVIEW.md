@@ -62,6 +62,16 @@ Another call: ASR 259.4 s → 238.8 s (step 1) → 218.0 s (step 2), about -16 %
 
 Quality check on a quiet speaker (one minute, hand-checked): Parakeet had 0.0 % WER over 152 words.
 
+### Speech level normalization (off by default)
+
+| Item | Benefit | Platform | Where |
+|---|---|---|---|
+| Setting `transcription.level_normalization` (`auto` / `off`, default `off`) | With `auto`, a copy of each track is brought toward −20 dBFS by a slow AGC before recognition: quiet speakers up (max +20 dB), loud ones down (max −12 dB), silence held, peak limiter. Use it on a recording where quiet words are lost, then transcribe it again. The recording is not changed. | Windows | `windows/src/Amanu.Core/Processing/SpeechLevels.cs`, `windows/src/Amanu.App/LevelAudio.cs` |
+| Levels in `processing.json` and `transcribe.log` | Floor, speech level before and after, and gain range per track. | Windows | `ProcessingCoordinator.cs` |
+| `Measure-Transcription.ps1 -LevelNormalization auto` | Compare WER with and without it on a copy, without a change to `config.json`. | Windows | `windows/scripts/Measure-Transcription.ps1` |
+
+No recording found so far loses quiet words, so it stays off by default. See step 4 in [docs/roadmap-speed.md](docs/roadmap-speed.md).
+
 ### UI
 
 | Item | Benefit | Platform | Where |
