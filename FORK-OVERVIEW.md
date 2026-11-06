@@ -6,13 +6,15 @@ Fork: [Palo007/amanu](https://github.com/Palo007/amanu), branch `master`. Fork v
 
 ## Get it
 
-The fork has **no releases**. Build from source:
+Download the Windows portable zip from [Releases](https://github.com/Palo007/amanu/releases/latest), unzip it and run `Amanu.exe`. It has no installer and no auto-update.
+
+Or build from source:
 
 ```powershell
 dotnet publish windows\src\Amanu.App\Amanu.App.csproj -c Release -r win-x64 --self-contained true --property:Version=0.7.0 -o windows\artifacts\publish
 ```
 
-Run `windows\artifacts\publish\Amanu.exe`. This build is not code-signed.
+Run `windows\artifacts\publish\Amanu.exe`. Fork builds are not code-signed, so Windows SmartScreen may warn you.
 
 ## What is in this fork's master
 
@@ -82,7 +84,7 @@ Quality check on a quiet speaker (one minute, hand-checked): Parakeet had 0.0 % 
 ## Who should stay on upstream
 
 - You use macOS. This fork adds nothing for macOS (the echo feature already exists there).
-- You want a signed installer, release notes and auto-update. Upstream ships them. This fork does not.
+- You want a signed installer and auto-update. Upstream ships them. This fork ships only an unsigned portable zip.
 - You want the most tested build. Upstream's releases are validated on clean installs.
 
 ## Status
@@ -92,5 +94,5 @@ Quality check on a quiet speaker (one minute, hand-checked): Parakeet had 0.0 % 
 | Echo removal, model choice, timings, thread setting | Done and measured on two real recordings (2026-11-06). All 211 Windows tests pass. |
 | Roadmap step 0 (measure) and step 1 (threads, priority) | Done. |
 | Roadmap steps 2-7 | Open: both tracks in parallel, system track during echo removal, level normalization, fewer model reloads, skip silence, GPU (Vulkan). |
-| Release builds, signing, installer | Not done for this fork. |
+| Release builds | Windows portable zip from 0.7.0. No signing, no installer, no auto-update. |
 | Wider hardware testing | Measured on one PC (Ryzen 7 5800H). Not tested elsewhere. |
