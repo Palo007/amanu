@@ -49,6 +49,7 @@ Run `windows\artifacts\publish\Amanu.exe`. Fork builds are not code-signed, so W
 | `Amanu.exe --measure-transcription` and `Measure-Transcription.ps1` | Repeat a run on a copy of a recording. Prints timings, words and WER. | Windows | `windows/scripts/Measure-Transcription.ps1`, `windows/src/Amanu.App/MeasureTranscription.cs` |
 | Explicit thread count and BelowNormal priority | ASR is faster because batch work no longer loses CPU to other apps. | Windows | `windows/src/Amanu.App/TranscriptionServices.cs` |
 | Mic and call tracks transcribed at the same time | ASR is faster: two tracks with half the threads each. Live speech still stops both. | Windows | `windows/src/Amanu.App/TranscriptionServices.cs` |
+| GPU (Vulkan) transcription with CPU fallback | ASR runs on the GPU when `local-runtime` has `ggml-vulkan.dll` (official transcribe.cpp v0.1.3 module, pinned hash, +74 MB). A failed GPU run is done again on the CPU. `AMANU_ASR_BACKEND=cpu` turns it off. | Windows | `TranscriptionServices.cs`, `windows/scripts/Build-LocalRuntime.ps1` |
 
 Measured on a 14-minute call (CPU only, same words in the output):
 
@@ -57,6 +58,7 @@ Measured on a 14-minute call (CPU only, same words in the output):
 | Step 0 (Idle priority, CLI default threads) | 238.7 s | 362.9 s |
 | Step 1 (16 threads, BelowNormal) | 199.0 s (about -17 %) | 319.9 s |
 | Step 2 (both tracks at once, 8 + 8 threads) | **162.7 s** (about -32 % vs step 0) | 285.9 s |
+| Step 7 (GPU, integrated AMD Radeon, tracks one after the other) | **124.6 s** (about -48 % vs step 0) | 243.4 s |
 
 Another call: ASR 259.4 s → 238.8 s (step 1) → 218.0 s (step 2), about -16 % in all. Numbers move about 10 % between runs. Details: [docs/roadmap-speed.md](docs/roadmap-speed.md). Source review: [docs/reviews/](docs/reviews/).
 
@@ -104,7 +106,8 @@ No recording found so far loses quiet words, so it stays off by default. See ste
 | Area | State |
 |---|---|
 | Echo removal, model choice, timings, thread setting | Done and measured on two real recordings (2026-11-06). All 211 Windows tests pass. |
-| Roadmap step 0 (measure) and step 1 (threads, priority) | Done. |
-| Roadmap steps 2-7 | Open: both tracks in parallel, system track during echo removal, level normalization, fewer model reloads, skip silence, GPU (Vulkan). |
+| Roadmap steps 0, 1, 2 and 7 (measure, threads, both tracks in parallel, GPU) | Done. All 232 Windows tests pass. |
+| Roadmap step 4 (level normalization) | Built, off by default. |
+| Roadmap steps 3, 5, 6 | Open: system track during echo removal, fewer model reloads, skip silence. |
 | Release builds | Windows portable zip from 0.7.0. No signing, no installer, no auto-update. |
 | Wider hardware testing | Measured on one PC (Ryzen 7 5800H). Not tested elsewhere. |
