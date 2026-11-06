@@ -95,6 +95,17 @@ on the hand-checked minute. This minute can only catch a step 4 regression, not 
 Before starting step 4, find a recording where Parakeet really misses quiet words. If none is
 found, step 4 may not be needed.
 
+Gate result (2026-11-06): **no failing case found, step 4 is on hold.** All 21 kept recordings
+were measured (RMS in 400 ms windows, hop 100 ms, floor = 10th percentile of the windows).
+- Mic speech is −40 to −60 dBFS, the far side −20 to −34 dBFS. The far side is already near the target.
+- On the 6 recordings with a Parakeet transcript, 88–98 % of the mic speech time (mic active, far
+  side quiet) is inside a "me" segment, also on the quietest mics (−54 dBFS). Only 3 gaps of 1.5 s
+  or more were found (6 s in all), and they are not quieter than the speech that was found.
+- Words per second of speech do not drop on quieter segments (correlation about 0 on both sides,
+  with the activity gate set 15 dB below the track's speech level).
+- AGC does not change the signal-to-noise ratio, and Parakeet normalizes its features per chunk.
+Open step 4 again only if a hand-checked minute shows quiet words that Parakeet misses.
+
 Plan:
 - [ ] **Measure.** For each track, compute the RMS level in dBFS over short windows (e.g. 400 ms, hop 100 ms). Estimate the noise floor (e.g. the 10th percentile) and the speech level (e.g. the median of the windows clearly above the floor). Log both per track.
 - [ ] **Decide.** Do nothing if the speech level is already in the target range (e.g. −26 to −16 dBFS). Otherwise, normalize.
