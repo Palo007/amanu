@@ -48,10 +48,27 @@ Cold first run of `1000`: echo 164.8 s, ASR 306.8 s, total 475.3 s. WER 0.0 % on
 
 ## Step 1: threads and priority (small)
 
-- [ ] Find the thread option of the transcribe.cpp CLI. Pass an explicit count (`TranscriptionServices.cs:156`).
-- [ ] Batch runs use BelowNormal priority, not Idle (`:232`). Live transcription keeps its priority.
+- [x] Find the thread option of the transcribe.cpp CLI. Pass an explicit count (`TranscriptionServices.cs:156`).
+  - Done: `--threads N` (CLI default: all cores). Amanu passes `Environment.ProcessorCount` (16 on this Ryzen 7 5800H, 8 cores). `AMANU_ASR_THREADS` overrides it, for measuring.
+- [x] Batch runs use BelowNormal priority, not Idle (`:232`). Live transcription keeps its priority.
+  - Done. Live has its own worker (`LiveSpeechWorker.cs`, AboveNormal); it is not changed.
 
-Done when: the ASR time is measured with 2–3 thread counts, and the best count is the default.
+Done when: the ASR time is measured with 2–3 thread counts, and the best count is the default. **Done (2026-11-06).**
+
+Step 1 result (`2026.11.06-1000`, AC power, Balanced plan, Amanu closed, after a warm-up run):
+
+| Threads | Echo removal | ASR me | ASR them | ASR | Total |
+|---|---|---|---|---|---|
+| Step 0 (Idle, CLI default) | 121.9 s | 117.7 s | 121.0 s | 238.7 s | 362.9 s |
+| 16 | 118.8 s | 99.2 s | 99.7 s | **199.0 s** | 319.9 s |
+| 12 | 118.0 s | 97.8 s | 101.8 s | 199.6 s | 319.7 s |
+| 8 | 118.5 s | 109.9 s | 112.3 s | 222.2 s | 342.8 s |
+
+- 16 and 12 threads are the same; 8 is about 12 % slower. So the default stays "all logical processors".
+- The gain (ASR about −17 %) comes from the priority: Idle lost CPU time to other apps.
+- `2026.11.06-1021`, 16 threads: echo 135.0 s, ASR 238.8 s (Step 0: 259.4 s, −8 %), total 376.5 s. One more run of `1000` in the same batch was slower in all stages (echo 151.1 s, ASR 215.1 s): the computer was busier then. Numbers move about ±10 % between runs.
+- Words: transcripts of both recordings are identical to Step 0 (same text and timestamps). WER: `1000` 42.1 % vs silver (same as before), `1021` quiet speaker 0.0 %.
+- A quick CLI test on three 61 s pieces gave the same words for 4, 6, 8, 12 and 16 threads.
 
 ## Step 2: both tracks at the same time (small)
 
