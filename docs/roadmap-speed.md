@@ -72,11 +72,24 @@ Step 1 result (`2026.11.06-1000`, AC power, Balanced plan, Amanu closed, after a
 
 ## Step 2: both tracks at the same time (small)
 
-- [ ] Run mic and system ASR in parallel (`TranscriptionServices.cs:104-123`), with half the threads each.
-- [ ] Take `CpuTranscriptionGate` once for the pair (`CpuTranscriptionGate.cs:7`).
-- [ ] Live preemption cancels both tracks.
+- [x] Run mic and system ASR in parallel (`TranscriptionServices.cs`, `TranscribeTracksAsync`), with half the threads each (`ShareThreads`: 16 → 8 + 8).
+- [x] Take `CpuTranscriptionGate` once for the pair (`CpuTranscriptionGate.cs:7`).
+- [x] Live preemption cancels both tracks. A finished track keeps its result; only the unfinished track runs again. If one track fails, the other is stopped and the real error is reported.
 
-Done when: ASR time is ≥25% lower and the transcripts are identical to step 1.
+Done when: ASR time is ≥25% lower and the transcripts are identical to step 1. **Partly met (2026-11-06): transcripts identical, but ASR is only 9–18 % lower.**
+
+Step 2 result (AC power, Amanu closed, after a warm-up run):
+
+| Recording | Echo removal | ASR me | ASR them | ASR | Step 1 ASR | Change | Total | Words |
+|---|---|---|---|---|---|---|---|---|
+| `2026.11.06-1000` | 120.8 s | 161.1 s | 162.7 s | **162.7 s** | 199.0 s | −18 % | 285.9 s | 1646 |
+| `2026.11.06-1021` | 139.1 s | 218.0 s | 217.9 s | **218.0 s** | 238.8 s | −9 % | 359.5 s | 2228 |
+
+- Words: both transcripts are identical to step 1 (same segments, text and timestamps). WER: `1000` 42.1 % vs silver (same as before), `1021` quiet speaker 0.0 %.
+- Threads per track, tested on `1000`: 8 + 8 = 162.7 s, 12 + 12 = 220.7 s, 16 + 16 = 388.1 s. Too many threads fight for the CPU, so half each is the best.
+- Why not −25 %: one track alone already uses most of the CPU (step 1: 8 threads is only 12 % slower than 16). Two tracks at the same time mostly share the same CPU time. The gain is the part one track left unused.
+- The warm-up run of `1000` was 193.0 s; the cold run after a publish is slower, as before.
+- Full report (code changes, measurements, thread research): [reviews/2026-11-06-step2-parallel-asr.html](reviews/2026-11-06-step2-parallel-asr.html) (Word copy beside it).
 
 ## Step 3: system track during echo removal (medium)
 

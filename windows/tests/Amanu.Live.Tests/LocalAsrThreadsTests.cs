@@ -18,6 +18,15 @@ public sealed class LocalAsrThreadsTests
         Assert.Equal(expected, LocalTranscriptionEngine.ThreadCount(setting, processors));
 
     [Theory]
+    [InlineData(16, 2, 8)]
+    [InlineData(16, 1, 16)]
+    [InlineData(15, 2, 7)]
+    [InlineData(1, 2, 1)]
+    [InlineData(8, 0, 8)]
+    public void Tracks_that_run_together_share_the_threads_evenly(int threads, int tracks, int expected) =>
+        Assert.Equal(expected, LocalTranscriptionEngine.ShareThreads(threads, tracks));
+
+    [Theory]
     [InlineData(null, true, false, "vulkan")]
     [InlineData(null, false, false, "cpu")]
     [InlineData("", true, false, "vulkan")]

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Amanu Windows: step 2, both tracks at the same time</title>
+<style>
+body { font-family: Segoe UI, Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; line-height: 1.45; color: #1a1a1a; }
+h1 { font-size: 1.6em; } h2 { font-size: 1.25em; margin-top: 1.6em; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-size: 0.93em; }
+th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
+th { background: #f0f0f0; }
+code { font-family: Consolas, monospace; font-size: 0.92em; }
+.note { color: #555; font-size: 0.92em; }
+</style>
+</head>
+<body>
+<h1>Amanu Windows: step 2, both tracks at the same time</h1>
+<p class="note">2026-11-06 · branch <code>master</code> · commit <code>e79c62b</code> · fork version 0.7.0 · Ryzen 7 5800H (8 cores, 16 logical processors), AC power, Amanu closed, warm runs. Roadmap: <code>docs/roadmap-speed.md</code>, step 2.</p>
+
+<h2>Summary</h2>
+<ul>
+<li>Amanu now transcribes the mic track and the call track at the same time. Before, it did the mic first and then the call.</li>
+<li>The transcripts are identical to step 1: the same segments, text and timestamps.</li>
+<li>ASR time is 18 % lower on the first test call and 9 % lower on the second one.</li>
+<li>The goal was 25 % lower. The goal is <b>not met</b>. The change is kept because it is faster and changes no words.</li>
+</ul>
+
+<h2>What changed in the code</h2>
+<p>All code changes are in <code>windows/src/Amanu.App/TranscriptionServices.cs</code>, class <code>LocalTranscriptionEngine</code>.</p>
+<table>
+<tr><th>Item</th><th>Before (step 1)</th><th>Now (step 2)</th></tr>
+<tr><td>Track order</td><td><code>TranscribeAsync</code> called <code>TranscribeFileAsync</code> for the mic, then for the call.</td><td><code>TranscribeAsync</code> calls the new <code>TranscribeTracksAsync</code>. It starts every track at the same time and waits for all of them (<code>Task.WhenAll</code>).</td></tr>
+<tr><td>Threads</td><td>Each <code>transcribe-cli</code> run used <code>Threads</code> (all 16 logical processors, or <code>AMANU_ASR_THREADS</code>).</td><td>Each run uses <code>ShareThreads(Threads, tracks)</code>: an even share, at least 1. Two tracks on 16 threads get 8 + 8. A recording with one track still gets all 16.</td></tr>
+<tr><td>CPU gate</td><td>Each track took its own <code>CpuTranscriptionGate</code> batch lease.</td><td>One batch lease covers all tracks. When live transcription starts, it cancels that lease, so both tracks stop at once.</td></tr>
+<tr><td>Retry after live preemption</td><td>The track that was stopped ran again from the start.</td><td>A track that already finished keeps its result. Only the unfinished track runs again. The preemption count shows in <code>transcribe.log</code>.</td></tr>
+<tr><td>One track fails</td><td>The error stopped the pass.</td><td>The failed track stops the other track. Amanu reports the real error, not the cancel of the other track.</td></tr>
+<tr><td>Output order</td><td>Mic segments, then call segments, sorted by start time.</td><td>The same. So the result is identical, also when two segments start at the same time.</td></tr>
+<tr><td>Timing log</td><td><code>timing asr.me 99.2 s (convert 0.0 s, 15 runs, preempted 0)</code></td><td>The line also shows the threads: <code>timing asr.me 161.1 s (convert 0.0 s, 15 runs, 8 threads, preempted 0)</code>. <code>asr.me</code> and <code>asr.them</code> are now times from the common start, so they overlap. <code>asr</code> is the real wall time.</td></tr>
+</table>
+<p>Not changed: the archived audio tracks (only the temporary ASR copy is read), echo removal, the model files, the live worker, and native DLL handling. Each track uses its own temporary folder, so the two runs do not share files.</p>
+<p>Test: <code>windows/tests/Amanu.Live.Tests/LocalAsrThreadsTests.cs</code> has a new test for <code>ShareThreads</code> (16/2 = 8, 16/1 = 16, 15/2 = 7, 1/2 = 1, 0 tracks = all threads). All tests pass: 51 live tests and 165 core tests.</p>
+
+<h2>Measurements</h2>
+<p>Command (Bash), one warm-up run first, then the measured run:</p>
+<p><code>pwsh -NoProfile -File windows/scripts/Measure-Transcription.ps1 &lt;recording&gt; -Reference &lt;ref&gt; -Output &lt;dir&gt; -Keep</code></p>
+<table>
+<tr><th>Recording</th><th>Echo removal</th><th>ASR me</th><th>ASR them</th><th>ASR (wall)</th><th>Step 1 ASR</th><th>Change</th><th>Total</th><th>Words</th></tr>
+<tr><td><code>2026.11.06-1000</code></td><td>120.8 s</td><td>161.1 s</td><td>162.7 s</td><td><b>162.7 s</b></td><td>199.0 s</td><td>−18 %</td><td>285.9 s</td><td>1646</td></tr>
+<tr><td><code>2026.11.06-1021</code></td><td>139.1 s</td><td>218.0 s</td><td>217.9 s</td><td><b>218.0 s</b></td><td>238.8 s</td><td>−9 %</td><td>359.5 s</td><td>2228</td></tr>
+</table>
+<p>The warm-up run of <code>1000</code> took 193.0 s for ASR. Numbers move about ±10 % between runs.</p>
+
+<h2>Are the words the same?</h2>
+<ul>
+<li><code>1000</code>: 230 of 230 segments are identical to the step 0/1 copy (text, start, end, speaker). WER vs the silver reference: 42.1 %, the same as before.</li>
+<li><code>1021</code>: 193 of 193 segments are identical to the saved transcript. Quiet speaker check (650–710 s, me only): 0.0 % WER, the same as before.</li>
+</ul>
+
+<h2>Research: how many threads per track?</h2>
+<p>I tried more threads per track on <code>1000</code>, with a test build only (the test switch is not in the commit).</p>
+<table>
+<tr><th>Threads per track</th><th>Threads in all</th><th>ASR (wall)</th><th>Words</th></tr>
+<tr><td>8 + 8 (kept)</td><td>16</td><td><b>162.7 s</b></td><td>identical</td></tr>
+<tr><td>12 + 12</td><td>24</td><td>220.7 s</td><td>identical</td></tr>
+<tr><td>16 + 16</td><td>32</td><td>388.1 s</td><td>identical</td></tr>
+</table>
+<ul>
+<li>More threads than logical processors is much slower. The threads wait for each other and fight for the CPU. 16 + 16 is about 2.4 times slower than 8 + 8.</li>
+<li>Half the threads per track is the best of the tested counts. The words are the same for all counts.</li>
+</ul>
+
+<h2>Why not 25 % faster?</h2>
+<ul>
+<li>In step 1, one track with 8 threads was only about 12 % slower than one track with 16 threads. So one track already uses most of the CPU.</li>
+<li>When two tracks run at the same time, they share the same CPU time. The gain is only the CPU time that one track left unused.</li>
+<li>The second call (<code>1021</code>) gained less (−9 %). Its tracks have more pieces (17 runs per track, not 15), and that run was also on a busier computer (echo removal was 139 s, not 121 s).</li>
+<li>To get more speed, the next steps must do less work or use other hardware, not only use the same CPU in another order: step 3 (call track during echo removal), step 7 (GPU with Vulkan).</li>
+</ul>
+
+<h2>Notes for the next measurements</h2>
+<ul>
+<li><code>dotnet publish -o &lt;other folder&gt;</code> does not copy <code>local-runtime\</code> and <code>live-runtime\</code>. Copy them from <code>windows\artifacts\publish</code> before you run a test build with <code>-Exe</code>, or the measure run stops after decode.</li>
+<li>Other sessions measure on the same computer. Use the lock file <code>%USERPROFILE%\Amanu Speed Set\measure.lock</code>: create it before a timed run, delete it after. If it exists, wait.</li>
+</ul>
+</body>
+</html>
