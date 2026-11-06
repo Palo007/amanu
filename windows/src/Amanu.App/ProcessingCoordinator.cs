@@ -22,7 +22,8 @@ public sealed record ProcessingLedger(
     bool HookRan = false,
     bool NamesAsked = false,
     string? LastError = null,
-    EchoCancellationRecord? AudioEchoCancellation = null);
+    EchoCancellationRecord? AudioEchoCancellation = null,
+    LevelNormalizationRecord? AudioLevelNormalization = null);
 
 /// <summary>Which audio recognition heard: LocalVQE's cleaned mic, the exact mic (no playback), or — skipped — the raw tracks.</summary>
 public sealed record EchoCancellationRecord(
@@ -270,6 +271,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                     "Звук этой записи не сохранён, расшифровывать заново нечего."));
             ProviderCache.Clear(directory);
             OfflineEchoAudio.Clear(directory);
+            LevelAudio.Clear(directory);
             foreach (var file in new[] { "transcribe.failed", "transcribe.deferred", "transcribe.off",
                          "speakers.failed", "speakers.deferred", "summary.failed", "summary.deferred" })
                 File.Delete(Path.Combine(directory, file));
@@ -419,15 +421,19 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
 
         // Recognition hears an echo-cleaned copy of the mic; the archive and
         // keep_audio below still settle the original tracks in `audio`.
-        var (heard, cleaned) = await HearAsync(directory, audio, current, cancellationToken).ConfigureAwait(false);
+        var (echoed, cleaned) = await HearAsync(directory, audio, current, cancellationToken).ConfigureAwait(false);
+        LevelAudio.Result? leveled = null;
 
         try
         {
+            (var heard, leveled) = await LevelAsync(directory, echoed, current, cancellationToken).ConfigureAwait(false);
             var recognition = Stopwatch.StartNew();
             var transcript = await RunPlanAsync(plan, heard, directory, current, cancellationToken).ConfigureAwait(false);
             LogTiming(directory, "asr", recognition.Elapsed);
             cleaned?.Delete();
             cleaned = null;
+            leveled?.Delete();
+            leveled = null;
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
             if (transcript.Segments.All(segment => string.IsNullOrWhiteSpace(segment.Text)))
@@ -505,7 +511,52 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         {
             // A retry recomputes the cleaned audio; only provider caches stay for it.
             cleaned?.RemoveAudio();
+            leveled?.RemoveAudio();
         }
+    }
+
+    /// <summary>
+    /// The tracks recognition hears after speech level normalization (roadmap-speed
+    /// step 4), when it is on and some track needs it; `heard` itself otherwise.
+    /// Like echo removal, it improves a transcript and is not what makes one: a
+    /// failure leaves the tracks as they were, and processing.json says why.
+    /// </summary>
+    private async Task<(SessionAudio Heard, LevelAudio.Result? Leveled)> LevelAsync(
+        string directory, SessionAudio heard, AppSettings current, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(current.Transcription.LevelNormalization, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            WriteLedger(directory, ReadLedger(directory) with { AudioLevelNormalization = null });
+            return (heard, null);
+        }
+        var log = Path.Combine(directory, "transcribe.log");
+        var timer = Stopwatch.StartNew();
+        LevelAudio.Result result;
+        try
+        {
+            result = await Task.Run(() => LevelAudio.Prepare(directory, heard, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} level normalization skipped — {exception.Message}; transcribing the tracks as they were{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+            WriteLedger(directory, ReadLedger(directory) with
+            {
+                AudioLevelNormalization = new LevelNormalizationRecord(SpeechLevels.Version, "auto", [], Skipped: exception.Message),
+            });
+            return (heard, null);
+        }
+        WriteLedger(directory, ReadLedger(directory) with { AudioLevelNormalization = result.Record });
+        var tracks = string.Join("; ", result.Record.Tracks.Select(track => track.Skipped is { } why
+            ? FormattableString.Invariant($"{track.Side} speech {track.SpeechDb:0.0} dBFS left as is ({why})")
+            : FormattableString.Invariant($"{track.Side} speech {track.SpeechDb:0.0} -> {track.SpeechDbAfter:0.0} dBFS, gain {track.MinGainDb:+0.0;-0.0}..{track.MaxGainDb:+0.0;-0.0} dB")));
+        await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} level normalization: {tracks}; original tracks kept{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+        LogTiming(directory, "levels", timer.Elapsed, result.Changed ? null : "no change");
+        if (!result.Changed)
+        {
+            result.Delete();
+            return (heard, null);
+        }
+        return (result.Audio, result);
     }
 
     /// <summary>
@@ -559,9 +610,11 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         var plan = EngineResolver.Plan(engine, current.Transcription.Cloud, current.Transcription.LocalEngine,
             _ => false, models.IsReady);
         if (plan.Local is null) throw new InvalidOperationException($"No local model for '{engine}': {plan.Missing}");
-        var (heard, cleaned) = await HearAsync(output, audio, current, cancellationToken).ConfigureAwait(false);
+        var (echoed, cleaned) = await HearAsync(output, audio, current, cancellationToken).ConfigureAwait(false);
+        LevelAudio.Result? leveled = null;
         try
         {
+            (var heard, leveled) = await LevelAsync(output, echoed, current, cancellationToken).ConfigureAwait(false);
             var recognition = Stopwatch.StartNew();
             var transcript = await RunPlanAsync(plan with { Cloud = null }, heard, output, current, cancellationToken).ConfigureAwait(false);
             LogTiming(output, "asr", recognition.Elapsed);
@@ -574,6 +627,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         finally
         {
             cleaned?.Delete();
+            leveled?.Delete();
         }
     }
 
