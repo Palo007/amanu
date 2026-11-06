@@ -33,6 +33,11 @@ public partial class App : System.Windows.Application
             Environment.ExitCode = LiveSpeechWorker.Main(arguments);
             return;
         }
+        if (arguments.Length >= 3 && arguments[0] == "--measure-transcription")
+        {
+            Environment.ExitCode = MeasureTranscription.Run(arguments);
+            return;
+        }
         VelopackApp.Build().SetAutoApplyOnStartup(true).Run();
         var app = new App();
         app.InitializeComponent();

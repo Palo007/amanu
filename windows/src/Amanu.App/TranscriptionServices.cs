@@ -98,6 +98,15 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
 
     public string Name => model;
 
+    /// <summary>Told each track's time: ("asr.me", wall time, detail).</summary>
+    public Action<string, TimeSpan, string>? Timing { get; set; }
+
+    private sealed class TrackTiming
+    {
+        public TimeSpan Convert;
+        public int Runs;
+    }
+
     public async Task<TranscriptDocument> TranscribeAsync(SessionAudio audio, CancellationToken cancellationToken)
     {
         var segments = new List<TranscriptSegment>();
@@ -118,20 +127,30 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
     private async Task<IReadOnlyList<TranscriptSegment>> TranscribeFileAsync(
         string source, string side, int offsetMs, CancellationToken cancellationToken)
     {
+        var wall = Stopwatch.StartNew();
+        var preempted = 0;
         while (true)
         {
             using var cpu = await models.CpuTranscription.EnterBatchAsync(cancellationToken).ConfigureAwait(false);
-            try { return await TranscribeFileCoreAsync(source, side, offsetMs, cpu.Token).ConfigureAwait(false); }
+            var timing = new TrackTiming();
+            try
+            {
+                var segments = await TranscribeFileCoreAsync(source, side, offsetMs, timing, cpu.Token).ConfigureAwait(false);
+                Timing?.Invoke($"asr.{side}", wall.Elapsed, string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"convert {timing.Convert.TotalSeconds:0.0} s, {timing.Runs} runs, preempted {preempted}"));
+                return segments;
+            }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 // Live preempted this pass. Wait and retry without spending a
                 // processing attempt or changing the saved recording.
+                preempted++;
             }
         }
     }
 
     private async Task<IReadOnlyList<TranscriptSegment>> TranscribeFileCoreAsync(
-        string source, string side, int offsetMs, CancellationToken cancellationToken)
+        string source, string side, int offsetMs, TrackTiming timing, CancellationToken cancellationToken)
     {
         var cli = models.CliPath ?? throw new ProcessingFailure(FailureKind.Environmental,
             T("The local transcription runtime is missing from this installation.", "В этой установке нет локального движка расшифровки."));
@@ -143,7 +162,9 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
         try
         {
             var wave = Path.Combine(temp, "input.wav");
+            var convert = Stopwatch.StartNew();
             AudioPreprocessor.ConvertToMono16k(source, wave);
+            timing.Convert = convert.Elapsed;
             cancellationToken.ThrowIfCancellationRequested();
             if (ModelCatalog.IsParakeet(model))
             {
@@ -156,6 +177,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
                     var args = new List<string> { "-m", modelPath, "--backend", "cpu", "-q", "--timestamps", "word" };
                     if (!string.IsNullOrWhiteSpace(languagePin)) args.AddRange(["--language", languagePin]);
                     args.Add(chunk.Path);
+                    timing.Runs++;
                     var answer = await RunCliAsync(cli, args, cancellationToken).ConfigureAwait(false);
                     var parsed = LocalCliWords.Parse(answer);
                     words.AddRange(parsed.Select(word => word with
@@ -183,6 +205,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             await File.WriteAllLinesAsync(batch, pieces.Select(piece => piece.Path), cancellationToken).ConfigureAwait(false);
             arguments.AddRange(["--batch", batch, "--batch-jsonl", "--timestamps", "auto"]);
             if (!string.IsNullOrWhiteSpace(languagePin)) arguments.AddRange(["--language", languagePin]);
+            timing.Runs++;
             var output = await RunCliAsync(cli, arguments, cancellationToken).ConfigureAwait(false);
             if (model == "gigaam")
             {

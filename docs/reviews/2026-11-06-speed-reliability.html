@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Amanu Windows: speed and reliability review</title>
+<style>
+body { font-family: Segoe UI, Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; line-height: 1.45; color: #1a1a1a; }
+h1 { font-size: 1.6em; } h2 { font-size: 1.25em; margin-top: 1.6em; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-size: 0.93em; }
+th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
+th { background: #f0f0f0; }
+code { font-family: Consolas, monospace; font-size: 0.92em; }
+.note { color: #555; font-size: 0.92em; }
+</style>
+</head>
+<body>
+<h1>Amanu Windows: speed and reliability review</h1>
+<p class="note">2026-11-06 · branch <code>windows-echo-models</code> · read-only code review plus short web research. Gains are estimates, not measurements.</p>
+
+<h2>Baseline (measured)</h2>
+<p>A 14-minute call with mic and system tracks, on CPU only, with the GPU idle:</p>
+<ul>
+<li>Echo removal (LocalVQE): 120 s.</li>
+<li>Transcription (Parakeet Slovak): about 240 s.</li>
+<li>Total: about 6 minutes.</li>
+</ul>
+<p>The freeze after transcription is fixed in <code>4f1e8e5</code>: the LocalVQE DLL is no longer unloaded.</p>
+
+<h2>1. Transcription speed</h2>
+<p>What the code does now:</p>
+<ul>
+<li>The two tracks run one after the other: first mic, then system (<code>TranscriptionServices.cs:104-108</code>).</li>
+<li>Each 60-second chunk starts a new CLI process (<code>:150-159</code>), so the model loads again about 14 times per track.</li>
+<li>The process runs with <code>--backend cpu</code> and no thread flag (<code>:156</code>), at Idle priority (<code>:232</code>).</li>
+<li>The Vulkan GPU backend is turned off at build time (<code>Build-LocalRuntime.ps1:40</code>).</li>
+<li>Echo removal must finish before any transcription starts. But it only changes the mic track. The system track does not need it.</li>
+</ul>
+<table>
+<tr><th>#</th><th>Idea</th><th>Where</th><th>Gain</th><th>Effort</th><th>Risk</th></tr>
+<tr><td>1</td><td>Transcribe the mic and system tracks at the same time: 2 processes, half the threads each.</td><td><code>TranscriptionServices.cs:104-123</code>, <code>CpuTranscriptionGate.cs:7</code></td><td>0–45% of the transcription time</td><td>S</td><td>Low. Uses about 2× model memory.</td></tr>
+<tr><td>2</td><td>Set the thread count in each call, and use a higher priority than Idle for batch runs.</td><td><code>TranscriptionServices.cs:156, 232</code></td><td>0–30%</td><td>S</td><td>Low. Other apps on the PC may get slower.</td></tr>
+<tr><td>3</td><td>Start transcribing the system track while echo removal runs on the mic.</td><td><code>ProcessingCoordinator.cs:420-437</code></td><td>About 25–30% of the total time</td><td>M</td><td>Medium. Both steps compete for CPU.</td></tr>
+<tr><td>4</td><td>Use one process per track (<code>--batch</code>, as the Whisper path already does) to stop the model reloads.</td><td><code>TranscriptionServices.cs:150-159, 184</code></td><td>5–20%</td><td>M</td><td>Medium. Not checked whether batch mode works with word timestamps.</td></tr>
+<tr><td>5</td><td>Skip silent chunks before transcription with a simple energy-based voice detector.</td><td>Before <code>:153</code></td><td>10–40%</td><td>M</td><td>Medium. Quiet speech can be cut.</td></tr>
+<tr><td>6</td><td>Build with Vulkan and fall back to CPU if it fails.</td><td><code>Build-LocalRuntime.ps1:40</code></td><td>Possibly 2–5×</td><td>L</td><td>High. Driver problems, bigger download, accuracy must be checked again.</td></tr>
+<tr><td>7</td><td>Decode and resample the audio only once. Cut chunks in memory, without writing temp WAV files.</td><td><code>OfflineEchoAudio.cs:49</code>, <code>TranscriptionServices.cs:146</code></td><td>2–5%</td><td>S–M</td><td>Low.</td></tr>
+</table>
+<p><b>Recommendation:</b> do ideas 1 and 2 first. They are small changes. Then measure, then do idea 3.</p>
+
+<h2>2. Speaker detection and naming</h2>
+<p>Main finding: local engines do not split speakers (no diarization). The whole system track becomes one speaker, "them" (<code>TranscriptionServices.cs:106-107</code>). This is why the table shows results such as 1/2, 1/7 and 0/1.</p>
+<table>
+<tr><th>#</th><th>Idea</th><th>Where</th><th>Effort</th><th>Risk</th></tr>
+<tr><td>1</td><td>Run sherpa-onnx speaker diarization (it has a C# API) on the system track only, so the remote people become "them A", "them B" and so on. One report: 29 minutes of audio in about 3.5 minutes on 4 CPU threads.</td><td><code>TranscriptionServices.cs</code>, <code>SpeakerLabels.cs</code></td><td>M</td><td>Too many or too few speakers. Set a maximum speaker count. A Windows crash is reported (sherpa-onnx issue 3253).</td></tr>
+<tr><td>2</td><td>Give the naming prompt more context: meeting title and names the user typed. Also accept "medium" confidence when the quote check passes.</td><td><code>LanguageServices.cs:327-334</code>, <code>ProcessingPolicy.cs:71</code></td><td>S</td><td>More wrong names. Keep the quote check.</td></tr>
+<tr><td>3</td><td>Compare quotes without case, punctuation and extra spaces. Today an exact match is required (<code>ProcessingPolicy.cs:73</code>).</td><td><code>ProcessingPolicy.cs:73</code></td><td>S</td><td>Low.</td></tr>
+<tr><td>4</td><td>Retry once when the answer is empty or cannot be read. Split long transcripts into parts.</td><td><code>ProcessingCoordinator.cs:635-646</code>, <code>LanguageServices.cs:325</code></td><td>S</td><td>One more model call.</td></tr>
+</table>
+
+<h2>3. Echo and noise removal</h2>
+<ul>
+<li>The echo delay is measured once for the whole file. If the tracks drift apart, or a device changes during the call, nothing follows the change (<code>EchoCancellation.cs:335-356</code>).</li>
+<li>The fallback works only when there is an exception. If the model runs but makes the mic too quiet during double talk (both sides talking at once), nothing notices.</li>
+<li>One bad sample (not a finite number) throws away the whole echo pass (<code>EchoCancellation.cs:180</code>).</li>
+<li><b>Do not add a general noise remover before transcription.</b> Research found that speech enhancement made Whisper and Parakeet worse in all 40 tested setups (arXiv 2512.17562). A DeepFilterNet issue reports about 20% more word errors.</li>
+</ul>
+<table>
+<tr><th>#</th><th>Idea</th><th>Effort</th><th>Risk</th></tr>
+<tr><td>1</td><td>Check the cleaned mic track. If it looks worse than the raw mic (for example, too much speech energy lost), use the raw mic.</td><td>M</td><td>Needs a good measure and tests.</td></tr>
+<tr><td>2</td><td>Replace a bad sample with silence and log it, instead of failing the whole pass.</td><td>S</td><td>Low.</td></tr>
+<tr><td>3</td><td>Measure LocalVQE with more threads, or split the file into parts that run in parallel, with overlap.</td><td>M</td><td>The model's state breaks at each cut, so check the joins.</td></tr>
+<tr><td>4</td><td>Measure the delay again every few minutes, to follow drift.</td><td>M</td><td>Medium.</td></tr>
+</table>
+
+<h2>Not checked</h2>
+<ul>
+<li>The native source of transcribe.cpp and LocalVQE: their thread options, and batch mode with word timestamps.</li>
+<li>WebRTC AEC3, SpeexDSP and DTLN-aec as other echo removers.</li>
+<li>No idea above was timed on this PC.</li>
+</ul>
+</body>
+</html>

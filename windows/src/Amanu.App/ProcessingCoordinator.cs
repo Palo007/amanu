@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Text.Json;
@@ -397,7 +398,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     {
         var current = settings();
         Publish(directory, "transcribing", T("Transcribing…", "Расшифровываю…"), true);
+        var total = Stopwatch.StartNew();
+        var decode = Stopwatch.StartNew();
         var audio = await LoadAudioAsync(directory, cancellationToken).ConfigureAwait(false);
+        LogTiming(directory, "decode", decode.Elapsed);
         if (!audio.HasAudio)
         {
             await GiveUpAsync(directory, T("No track in this recording has any audio.", "Ни на одной дорожке записи нет звука."), cancellationToken).ConfigureAwait(false);
@@ -415,26 +419,13 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
 
         // Recognition hears an echo-cleaned copy of the mic; the archive and
         // keep_audio below still settle the original tracks in `audio`.
-        var heard = audio;
-        OfflineEchoAudio.Result? cleaned = null;
-        if (current.OfflineEchoCancellation && audio.BothSides)
-        {
-            cleaned = await CancelEchoAsync(directory, audio, cancellationToken).ConfigureAwait(false);
-            if (cleaned is not null)
-                heard = audio with
-                {
-                    Directory = cleaned.Directory,
-                    Microphone = cleaned.Microphone,
-                    System = cleaned.System,
-                    MicrophoneOffsetMs = cleaned.OffsetMs,
-                    SystemOffsetMs = cleaned.OffsetMs,
-                };
-        }
-        else WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = null });
+        var (heard, cleaned) = await HearAsync(directory, audio, current, cancellationToken).ConfigureAwait(false);
 
         try
         {
+            var recognition = Stopwatch.StartNew();
             var transcript = await RunPlanAsync(plan, heard, directory, current, cancellationToken).ConfigureAwait(false);
+            LogTiming(directory, "asr", recognition.Elapsed);
             cleaned?.Delete();
             cleaned = null;
             if (current.TranscriptEchoFilter && audio.BothSides)
@@ -453,6 +444,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             if (replacing && Has(directory, "summary.md"))
                 await AtomicFiles.WriteTextAsync(Path.Combine(directory, "summary.stale"), "retranscribed", cancellationToken).ConfigureAwait(false);
             await TranscriptWriter.WriteAsync(directory, title, transcript, names, cancellationToken).ConfigureAwait(false);
+            LogTiming(directory, "total", total.Elapsed, $"{CountWords(transcript)} words");
             if (replacing)
             {
                 if (names.Count == 0) File.Delete(Path.Combine(directory, "speakers.json"));
@@ -514,6 +506,92 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             // A retry recomputes the cleaned audio; only provider caches stay for it.
             cleaned?.RemoveAudio();
         }
+    }
+
+    /// <summary>
+    /// The tracks recognition hears: the echo-cleaned mic copy when there is
+    /// one, the tracks as recorded otherwise. `audio` itself is never changed.
+    /// </summary>
+    private async Task<(SessionAudio Heard, OfflineEchoAudio.Result? Cleaned)> HearAsync(
+        string directory, SessionAudio audio, AppSettings current, CancellationToken cancellationToken)
+    {
+        if (!current.OfflineEchoCancellation || !audio.BothSides)
+        {
+            WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = null });
+            return (audio, null);
+        }
+        var echo = Stopwatch.StartNew();
+        var cleaned = await CancelEchoAsync(directory, audio, cancellationToken).ConfigureAwait(false);
+        LogTiming(directory, "echo", echo.Elapsed, cleaned is null ? "skipped" : null);
+        if (cleaned is null) return (audio, null);
+        return (audio with
+        {
+            Directory = cleaned.Directory,
+            Microphone = cleaned.Microphone,
+            System = cleaned.System,
+            MicrophoneOffsetMs = cleaned.OffsetMs,
+            SystemOffsetMs = cleaned.OffsetMs,
+        }, cleaned);
+    }
+
+    /// <summary>
+    /// Measurement only (roadmap-speed step 0): transcribes a copy of one
+    /// recording in `output` on this computer's model, with the same stages
+    /// and timing lines as a real pass. The recording itself is only read:
+    /// no archive, no names, no summary, no analytics, no cloud.
+    /// </summary>
+    public async Task<TranscriptDocument> MeasureAsync(string recording, string output, string? engine, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(output);
+        foreach (var path in Directory.EnumerateFiles(recording))
+        {
+            var name = Path.GetFileName(path);
+            if (name is "meta.json" or "transcribe.engine" || (!name.StartsWith('.') && IsMedia(path)))
+                File.Copy(path, Path.Combine(output, name), overwrite: true);
+        }
+        var current = settings();
+        var total = Stopwatch.StartNew();
+        var decode = Stopwatch.StartNew();
+        var audio = await LoadAudioAsync(output, cancellationToken).ConfigureAwait(false);
+        LogTiming(output, "decode", decode.Elapsed);
+        if (!audio.HasAudio) throw new InvalidOperationException("No track in this recording has any audio.");
+        engine ??= ReadText(output, "transcribe.engine") ?? current.Transcription.Engine;
+        var plan = EngineResolver.Plan(engine, current.Transcription.Cloud, current.Transcription.LocalEngine,
+            _ => false, models.IsReady);
+        if (plan.Local is null) throw new InvalidOperationException($"No local model for '{engine}': {plan.Missing}");
+        var (heard, cleaned) = await HearAsync(output, audio, current, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var recognition = Stopwatch.StartNew();
+            var transcript = await RunPlanAsync(plan with { Cloud = null }, heard, output, current, cancellationToken).ConfigureAwait(false);
+            LogTiming(output, "asr", recognition.Elapsed);
+            if (current.TranscriptEchoFilter && audio.BothSides)
+                transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
+            await TranscriptWriter.WriteAsync(output, audio.Title, transcript, null, cancellationToken).ConfigureAwait(false);
+            LogTiming(output, "total", total.Elapsed, $"{CountWords(transcript)} words");
+            return transcript;
+        }
+        finally
+        {
+            cleaned?.Delete();
+        }
+    }
+
+    private static int CountWords(TranscriptDocument transcript) =>
+        transcript.Segments.Sum(segment => segment.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length);
+
+    /// <summary>
+    /// One "timing" line in transcribe.log, with a dot for decimals whatever the
+    /// culture, so Measure-Transcription.ps1 can read it back.
+    /// </summary>
+    internal static void LogTiming(string directory, string stage, TimeSpan elapsed, string? detail = null)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(directory, "transcribe.log"), string.Create(CultureInfo.InvariantCulture,
+                $"{DateTimeOffset.UtcNow:O} timing {stage} {elapsed.TotalSeconds:0.0} s{(detail is null ? "" : $" ({detail})")}{Environment.NewLine}"));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
     }
 
     /// <summary>
@@ -598,7 +676,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                     $"{DateTimeOffset.UtcNow:O} {cloud} → {plan.Local}: {failure.Message}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
             }
         }
-        return await CreateLocal(plan.Local!, current).TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+        var local = CreateLocal(plan.Local!, current);
+        if (local is LocalTranscriptionEngine timed)
+            timed.Timing = (stage, elapsed, detail) => LogTiming(directory, stage, elapsed, detail);
+        return await local.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
     }
 
     public ITranscriptionEngine CreateCloud(string provider, AppSettings current, bool cache)
