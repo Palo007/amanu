@@ -21,7 +21,11 @@ Engine `parakeet-sk`, mic + system tracks, LocalVQE echo removal on.
 - [ ] Keep 2–3 fixed test recordings, at least one Slovak call with a quiet speaker. For each, keep a hand-checked reference transcript of 2–3 minutes for WER (word error rate) checks.
   - Done: `2026.11.06-1000` and `2026.11.06-1021`, window 120–300 s. References are in `%USERPROFILE%\Amanu Speed Set\*.ref.txt` (outside git: private call text).
   - Quiet speaker and echo case: `2026.11.06-1021`. The mic is very quiet: speech alone about −45 dBFS (about 25 dB under the step 4 target), median −46, max −30. The call side is median −29, peak −5. The mic also picks up the call side (echo) about 16 dB under it. `gemini-web\me.m4a` and `them.m4a` in that folder are the same call, split, and are easy to listen to when correcting the reference.
-  - Open: the references are drafts copied from parakeet-sk output. They must be corrected by hand.
+  - References (decided 2026-11-06): no full hand check.
+    - `*.ref.txt`, window 120–300 s: the old `gemini-3.5-flash-lite` transcript (silver, not hand-checked). Today Parakeet differs from it by 42.1 % (`1000`) and 30.8 % (`1021`). Use it only for "better or worse than before".
+    - `2026.11.06-1021.me-check.txt`, window 650–710 s, `me` only: the quiet speaker. Parakeet hears 152 words here, Gemini 185. It shows both texts side by side in 10 s blocks; each block gets `=> P`, `=> G`, `=> -` or the right words. The script reads this file directly (`-Reference ...me-check.txt`).
+  - Open: fill in the `=>` lines of `me-check.txt` (about 10 minutes). Then tick this box.
+  - Score an existing transcript without a new run: `Measure-Transcription.ps1 <recording> -ScoreOnly -Reference <file>`.
 
 Done when: one command gives the baseline numbers again within ±10%. **Done for timings (2026-11-06).**
 
