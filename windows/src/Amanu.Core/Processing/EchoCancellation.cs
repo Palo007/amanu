@@ -88,9 +88,13 @@ public sealed record DelayPrime(int? ShiftSamples, string Status)
 /// <summary>
 /// liblocalvqe.dll, loaded by full path so it can never pick up, or be picked
 /// up as, another ggml in the process. Noise gate off: echo-only.
+/// The library is loaded once per path and never unloaded: its ggml/MinGW
+/// worker threads outlive localvqe_free, and FreeLibrary under them left the
+/// loader lock held, so no new thread could start and the queue froze.
 /// </summary>
 public sealed unsafe class LocalVqeBackend : IEchoCancellationBackend, IEchoDelayPrimer
 {
+    private static readonly Dictionary<string, nint> Loaded = new(StringComparer.OrdinalIgnoreCase);
     private readonly nint library;
     private nint context;
     private readonly delegate* unmanaged[Cdecl]<nint, int> primeBegin;
@@ -107,7 +111,7 @@ public sealed unsafe class LocalVqeBackend : IEchoCancellationBackend, IEchoDela
     {
         if (LocalVqeAssets.Sha256(modelPath) != LocalVqeAssets.ModelSha256)
             throw new EchoCancellationException($"LocalVQE model failed its SHA-256 check: {modelPath}");
-        try { library = NativeLibrary.Load(libraryPath); }
+        try { library = LoadOnce(libraryPath); }
         catch (Exception exception) when (exception is DllNotFoundException or BadImageFormatException)
         {
             throw new EchoCancellationException($"could not load LocalVQE library at {libraryPath}: {exception.Message}", exception);
@@ -149,7 +153,6 @@ public sealed unsafe class LocalVqeBackend : IEchoCancellationBackend, IEchoDela
         {
             if (context != 0) free(context);
             context = 0;
-            NativeLibrary.Free(library);
             throw;
         }
         finally
@@ -206,7 +209,17 @@ public sealed unsafe class LocalVqeBackend : IEchoCancellationBackend, IEchoDela
         if (context == 0) return;
         free(context);
         context = 0;
-        NativeLibrary.Free(library);
+    }
+
+    private static nint LoadOnce(string libraryPath)
+    {
+        var key = Path.GetFullPath(libraryPath);
+        lock (Loaded)
+        {
+            if (!Loaded.TryGetValue(key, out var handle))
+                Loaded[key] = handle = NativeLibrary.Load(key);
+            return handle;
+        }
     }
 
     /// <summary>
