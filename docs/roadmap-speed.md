@@ -18,13 +18,13 @@ Engine `parakeet-sk`, mic + system tracks, LocalVQE echo removal on.
 
 - [x] Write per-stage timings to `transcribe.log`: decode, echo, ASR per track, total.
 - [x] Add a small script (`windows/scripts/Measure-Transcription.ps1`) that runs one recording again and prints the timings and the word count.
-- [ ] Keep 2–3 fixed test recordings, at least one Slovak call with a quiet speaker. For each, keep a hand-checked reference transcript of 2–3 minutes for WER (word error rate) checks.
+- [x] Keep 2–3 fixed test recordings, at least one Slovak call with a quiet speaker. For each, keep a hand-checked reference transcript of 2–3 minutes for WER (word error rate) checks.
   - Done: `2026.11.06-1000` and `2026.11.06-1021`, window 120–300 s. References are in `%USERPROFILE%\Amanu Speed Set\*.ref.txt` (outside git: private call text).
   - Quiet speaker and echo case: `2026.11.06-1021`. The mic is very quiet: speech alone about −45 dBFS (about 25 dB under the step 4 target), median −46, max −30. The call side is median −29, peak −5. The mic also picks up the call side (echo) about 16 dB under it. `gemini-web\me.m4a` and `them.m4a` in that folder are the same call, split, and are easy to listen to when correcting the reference.
   - References (decided 2026-11-06): no full hand check.
     - `*.ref.txt`, window 120–300 s: the old `gemini-3.5-flash-lite` transcript (silver, not hand-checked). Today Parakeet differs from it by 42.1 % (`1000`) and 30.8 % (`1021`). Use it only for "better or worse than before".
     - `2026.11.06-1021.me-check.txt`, window 650–710 s, `me` only: the quiet speaker. Parakeet hears 152 words here, Gemini 185. It shows both texts side by side in 10 s blocks; each block gets `=> P`, `=> G`, `=> -` or the right words. The script reads this file directly (`-Reference ...me-check.txt`).
-  - Open: fill in the `=>` lines of `me-check.txt` (about 10 minutes). Then tick this box.
+  - Hand check done 2026-11-06: Parakeet was right in all 6 blocks (`=> P`). WER on the quiet speaker: **0.0 %** (152 words). So Gemini was about 25 % off here, and most of the 31–42 % difference above is Gemini's error, not Parakeet's.
   - Score an existing transcript without a new run: `Measure-Transcription.ps1 <recording> -ScoreOnly -Reference <file>`.
 
 Done when: one command gives the baseline numbers again within ±10%. **Done for timings (2026-11-06).**
@@ -72,6 +72,11 @@ Done when: total time is ≥20% lower than step 2, and the echo filter results a
 
 Problem: quiet speakers (far from the mic, or a quiet remote participant) are often
 missed or misheard. Some speakers in the same track are loud and some are quiet.
+
+Step 0 finding: on `1021` the mic speech is at about −45 dBFS, and Parakeet still got 0.0 % WER
+on the hand-checked minute. This minute can only catch a step 4 regression, not show a gain.
+Before starting step 4, find a recording where Parakeet really misses quiet words. If none is
+found, step 4 may not be needed.
 
 Plan:
 - [ ] **Measure.** For each track, compute the RMS level in dBFS over short windows (e.g. 400 ms, hop 100 ms). Estimate the noise floor (e.g. the 10th percentile) and the speech level (e.g. the median of the windows clearly above the floor). Log both per track.
