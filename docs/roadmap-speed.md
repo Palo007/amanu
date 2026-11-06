@@ -20,7 +20,8 @@ Engine `parakeet-sk`, mic + system tracks, LocalVQE echo removal on.
 - [x] Add a small script (`windows/scripts/Measure-Transcription.ps1`) that runs one recording again and prints the timings and the word count.
 - [ ] Keep 2–3 fixed test recordings, at least one Slovak call with a quiet speaker. For each, keep a hand-checked reference transcript of 2–3 minutes for WER (word error rate) checks.
   - Done: `2026.11.06-1000` and `2026.11.06-1021`, window 120–300 s. References are in `%USERPROFILE%\Amanu Speed Set\*.ref.txt` (outside git: private call text).
-  - Open: the references are drafts copied from parakeet-sk output. They must be corrected by hand. A quiet-speaker recording is not chosen yet.
+  - Quiet speaker and echo case: `2026.11.06-1021`. The mic is very quiet: speech alone about −45 dBFS (about 25 dB under the step 4 target), median −46, max −30. The call side is median −29, peak −5. The mic also picks up the call side (echo) about 16 dB under it. `gemini-web\me.m4a` and `them.m4a` in that folder are the same call, split, and are easy to listen to when correcting the reference.
+  - Open: the references are drafts copied from parakeet-sk output. They must be corrected by hand.
 
 Done when: one command gives the baseline numbers again within ±10%. **Done for timings (2026-11-06).**
 
