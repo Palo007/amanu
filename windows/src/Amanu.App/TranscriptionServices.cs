@@ -118,51 +118,78 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
         public int Runs;
     }
 
+    /// <summary>Threads for each of <paramref name="tracks"/> runs at the same time: an even share, at least one.</summary>
+    public static int ShareThreads(int threads, int tracks) => Math.Max(1, threads / Math.Max(1, tracks));
+
     public async Task<TranscriptDocument> TranscribeAsync(SessionAudio audio, CancellationToken cancellationToken)
     {
-        var segments = new List<TranscriptSegment>();
-        if (audio.BothSides)
-        {
-            segments.AddRange(await TranscribeFileAsync(audio.Microphone!, SpeakerLabels.Me, audio.MicrophoneOffsetMs, cancellationToken));
-            segments.AddRange(await TranscribeFileAsync(audio.System!, SpeakerLabels.Them, audio.SystemOffsetMs, cancellationToken));
-        }
-        else
-        {
-            var (path, side, offset) = audio.Only;
-            segments.AddRange(await TranscribeFileAsync(path, side, offset, cancellationToken));
-        }
-        return new TranscriptDocument(model, model, DateTimeOffset.UtcNow,
-            SpeakerLabels.Assign(segments.OrderBy(segment => segment.StartMs).ToArray()));
+        (string Source, string Side, int OffsetMs)[] tracks = audio.BothSides
+            ? [(audio.Microphone!, SpeakerLabels.Me, audio.MicrophoneOffsetMs), (audio.System!, SpeakerLabels.Them, audio.SystemOffsetMs)]
+            : [audio.Only];
+        var parts = await TranscribeTracksAsync(tracks, cancellationToken).ConfigureAwait(false);
+        // Mic first, then the call, as before: equal start times keep the same order.
+        var segments = parts.SelectMany(part => part).OrderBy(segment => segment.StartMs).ToArray();
+        return new TranscriptDocument(model, model, DateTimeOffset.UtcNow, SpeakerLabels.Assign(segments));
     }
 
-    private async Task<IReadOnlyList<TranscriptSegment>> TranscribeFileAsync(
-        string source, string side, int offsetMs, CancellationToken cancellationToken)
+    /// <summary>
+    /// Runs every track at the same time, with an even share of the threads.
+    /// One CPU gate lease covers all tracks, so live preemption cancels all of them.
+    /// A finished track keeps its result; only unfinished tracks run again.
+    /// </summary>
+    private async Task<IReadOnlyList<TranscriptSegment>[]> TranscribeTracksAsync(
+        (string Source, string Side, int OffsetMs)[] tracks, CancellationToken cancellationToken)
     {
+        var results = new IReadOnlyList<TranscriptSegment>?[tracks.Length];
         var wall = Stopwatch.StartNew();
         var preempted = 0;
         while (true)
         {
             using var cpu = await models.CpuTranscription.EnterBatchAsync(cancellationToken).ConfigureAwait(false);
-            var timing = new TrackTiming();
+            var pending = Enumerable.Range(0, tracks.Length).Where(index => results[index] is null).ToArray();
+            var threads = ShareThreads(Threads, pending.Length);
+            // A failed track stops the others; the failure is reported, not their cancellation.
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cpu.Token);
+            var runs = pending.Select(async index =>
+            {
+                var (source, side, offsetMs) = tracks[index];
+                var timing = new TrackTiming();
+                try
+                {
+                    results[index] = await TranscribeFileCoreAsync(source, side, offsetMs, threads, timing, stop.Token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    try { stop.Cancel(); } catch (ObjectDisposedException) { }
+                    throw;
+                }
+                Timing?.Invoke($"asr.{side}", wall.Elapsed, string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"convert {timing.Convert.TotalSeconds:0.0} s, {timing.Runs} runs, {threads} threads, preempted {preempted}"));
+            }).ToArray();
+            var all = Task.WhenAll(runs);
             try
             {
-                var segments = await TranscribeFileCoreAsync(source, side, offsetMs, timing, cpu.Token).ConfigureAwait(false);
-                Timing?.Invoke($"asr.{side}", wall.Elapsed, string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                    $"convert {timing.Convert.TotalSeconds:0.0} s, {timing.Runs} runs, preempted {preempted}"));
-                return segments;
+                await all.ConfigureAwait(false);
+                return results!;
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch when (!cancellationToken.IsCancellationRequested && cpu.Token.IsCancellationRequested)
             {
                 // Live preempted this pass. Wait and retry without spending a
                 // processing attempt or changing the saved recording.
                 preempted++;
             }
+            catch when (all.Exception?.InnerExceptions.FirstOrDefault(exception => exception is not OperationCanceledException) is { } failure)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                throw;
+            }
         }
     }
 
     private async Task<IReadOnlyList<TranscriptSegment>> TranscribeFileCoreAsync(
-        string source, string side, int offsetMs, TrackTiming timing, CancellationToken cancellationToken)
+        string source, string side, int offsetMs, int threads, TrackTiming timing, CancellationToken cancellationToken)
     {
+        var threadArgument = threads.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var cli = models.CliPath ?? throw new ProcessingFailure(FailureKind.Environmental,
             T("The local transcription runtime is missing from this installation.", "В этой установке нет локального движка расшифровки."));
         var modelPath = models.ModelPath(model);
@@ -185,7 +212,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
                 foreach (var chunk in chunks)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var args = new List<string> { "-m", modelPath, "--backend", "cpu", "--threads", Threads.ToString(System.Globalization.CultureInfo.InvariantCulture), "-q", "--timestamps", "word" };
+                    var args = new List<string> { "-m", modelPath, "--backend", "cpu", "--threads", threadArgument, "-q", "--timestamps", "word" };
                     if (!string.IsNullOrWhiteSpace(languagePin)) args.AddRange(["--language", languagePin]);
                     args.Add(chunk.Path);
                     timing.Runs++;
@@ -211,7 +238,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             IReadOnlyList<(string Path, long StartMs, long EndMs)> pieces = model == "gigaam"
                 ? AudioPreprocessor.Split(wave, temp, GigaAmChunkSeconds)
                 : [(wave, 0L, 0L)];
-            var arguments = new List<string> { "-m", modelPath, "--backend", "cpu", "--threads", Threads.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+            var arguments = new List<string> { "-m", modelPath, "--backend", "cpu", "--threads", threadArgument };
             var batch = Path.Combine(temp, "batch.txt");
             await File.WriteAllLinesAsync(batch, pieces.Select(piece => piece.Path), cancellationToken).ConfigureAwait(false);
             arguments.AddRange(["--batch", batch, "--batch-jsonl", "--timestamps", "auto"]);

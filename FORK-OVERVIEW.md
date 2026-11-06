@@ -48,15 +48,17 @@ Run `windows\artifacts\publish\Amanu.exe`. Fork builds are not code-signed, so W
 | Per-stage timings in `transcribe.log` | You can see where the time goes: decode, echo removal, ASR per track. | Windows | `windows/src/Amanu.App/ProcessingCoordinator.cs` |
 | `Amanu.exe --measure-transcription` and `Measure-Transcription.ps1` | Repeat a run on a copy of a recording. Prints timings, words and WER. | Windows | `windows/scripts/Measure-Transcription.ps1`, `windows/src/Amanu.App/MeasureTranscription.cs` |
 | Explicit thread count and BelowNormal priority | ASR is faster because batch work no longer loses CPU to other apps. | Windows | `windows/src/Amanu.App/TranscriptionServices.cs` |
+| Mic and call tracks transcribed at the same time | ASR is faster: two tracks with half the threads each. Live speech still stops both. | Windows | `windows/src/Amanu.App/TranscriptionServices.cs` |
 
 Measured on a 14-minute call (CPU only, same words in the output):
 
 | Step | ASR time | Total |
 |---|---|---|
 | Step 0 (Idle priority, CLI default threads) | 238.7 s | 362.9 s |
-| Step 1 (16 threads, BelowNormal) | **199.0 s** (about -17 %) | 319.9 s |
+| Step 1 (16 threads, BelowNormal) | 199.0 s (about -17 %) | 319.9 s |
+| Step 2 (both tracks at once, 8 + 8 threads) | **162.7 s** (about -32 % vs step 0) | 285.9 s |
 
-Another call: ASR 259.4 s down to 238.8 s (-8 %). Numbers move about 10 % between runs. Details: [docs/roadmap-speed.md](docs/roadmap-speed.md). Source review: [docs/reviews/](docs/reviews/).
+Another call: ASR 259.4 s → 238.8 s (step 1) → 218.0 s (step 2), about -16 % in all. Numbers move about 10 % between runs. Details: [docs/roadmap-speed.md](docs/roadmap-speed.md). Source review: [docs/reviews/](docs/reviews/).
 
 Quality check on a quiet speaker (one minute, hand-checked): Parakeet had 0.0 % WER over 152 words.
 
@@ -71,7 +73,7 @@ Quality check on a quiet speaker (one minute, hand-checked): Parakeet had 0.0 % 
 | Item | Benefit | Platform | Where |
 |---|---|---|---|
 | Echo removal tests | Guards the echo code. | Windows | `windows/tests/Amanu.Core.Tests/OfflineEchoTests.cs` |
-| ASR thread test | Guards the thread-count rule. | Windows | `windows/tests/Amanu.Live.Tests/LocalAsrThreadsTests.cs` |
+| ASR thread test | Guards the thread-count rule and the even split between tracks. | Windows | `windows/tests/Amanu.Live.Tests/LocalAsrThreadsTests.cs` |
 | Measure script with reference scoring | Scores a transcript against a reference. Supports one-speaker references and `-ScoreOnly`. | Windows | `windows/scripts/Measure-Transcription.ps1` |
 
 ## Who should use it
