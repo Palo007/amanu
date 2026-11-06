@@ -58,7 +58,8 @@ Measured on a 14-minute call (CPU only, same words in the output):
 | Step 0 (Idle priority, CLI default threads) | 238.7 s | 362.9 s |
 | Step 1 (16 threads, BelowNormal) | 199.0 s (about -17 %) | 319.9 s |
 | Step 2 (both tracks at once, 8 + 8 threads) | **162.7 s** (about -32 % vs step 0) | 285.9 s |
-| Step 7 (GPU, integrated AMD Radeon, tracks one after the other) | **124.6 s** (about -48 % vs step 0) | 243.4 s |
+| Step 7 (GPU, integrated AMD Radeon, tracks one after the other) | 124.6 s | 243.4 s |
+| Step 7 + step 2 (GPU, both tracks at once) | **100.1 s** (about -58 % vs step 0) | 222.7 s |
 
 Another call: ASR 259.4 s → 238.8 s (step 1) → 218.0 s (step 2), about -16 % in all. Numbers move about 10 % between runs. Details: [docs/roadmap-speed.md](docs/roadmap-speed.md). Source review: [docs/reviews/](docs/reviews/).
 

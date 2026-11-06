@@ -179,7 +179,17 @@ Step 7 result (`2026.11.06-1000`, AC power, Amanu closed, after a warm-up run, s
 | CPU, 16 threads | 123.8 s | 96.9 s | 105.9 s | 202.8 s | 328.8 s | 42.1 % |
 | Vulkan (iGPU) | 116.7 s | 59.0 s | 65.5 s | **124.6 s** | 243.4 s | 42.5 % |
 
-ASR is 39 % faster. The CPU is also more free during ASR. Not measured yet: Vulkan together with Step 2 (both tracks at the same time on one iGPU).
+ASR is 39 % faster. The CPU is also more free during ASR.
+
+Vulkan together with Step 2 (both tracks at the same time on one iGPU, 8 + 8 CPU threads; master code, after a warm-up run):
+
+| Recording | Echo removal | ASR me | ASR them | ASR | Step 2 CPU ASR | Change | Total | Words | WER (120–300 s) |
+|---|---|---|---|---|---|---|---|---|---|
+| `2026.11.06-1000` | 120.3 s | 98.4 s | 100.1 s | **100.1 s** | 162.7 s | −38 % | 222.7 s | 1639 | 42.5 % (CPU 42.1 %) |
+| `2026.11.06-1021` | 139.0 s | 109.8 s | 111.5 s | **111.6 s** | 218.0 s | −49 % | 253.1 s | 2225 | 30.8 % (CPU 30.8 %) |
+
+- Both tracks share the one iGPU without errors. Together they are faster than one after the other (100.1 s vs 124.6 s).
+- GPU beats Step 2 on the CPU on both recordings. Echo removal is now the largest stage (Step 3).
 
 ## Later (other review items, not speed)
 
