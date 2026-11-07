@@ -141,17 +141,36 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
     {
         var backend = BackendFor(cli);
         if (!timing.Backend.EndsWith("(vulkan failed)", StringComparison.Ordinal)) timing.Backend = backend;
+        void Record(string error) { lock (timing.Used) timing.Used.Add(UsedBackend(error) ?? "unknown"); }
         try
         {
-            return await RunCliAsync(cli, ["--backend", backend, .. arguments], cancellationToken).ConfigureAwait(false);
+            return await RunCliAsync(cli, ["--backend", backend, .. arguments], cancellationToken, Record).ConfigureAwait(false);
         }
         catch (ProcessingFailure) when (backend == "vulkan" && !cancellationToken.IsCancellationRequested)
         {
             vulkanFailed = true;
             timing.Backend = "cpu (vulkan failed)";
-            return await RunCliAsync(cli, ["--backend", "cpu", .. arguments], cancellationToken).ConfigureAwait(false);
+            return await RunCliAsync(cli, ["--backend", "cpu", .. arguments], cancellationToken, Record).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// The backend that really ran, from transcribe-cli's stderr line
+    /// "parakeet: using vulkan backend: Vulkan0" or "using cpu backend (strict)":
+    /// "vulkan Vulkan0" or "cpu". Null when the CLI did not say.
+    /// </summary>
+    public static string? UsedBackend(string? stderr)
+    {
+        if (string.IsNullOrEmpty(stderr)) return null;
+        var matches = System.Text.RegularExpressions.Regex.Matches(stderr, @"using (\w+) backend(?:: (\S+))?");
+        if (matches.Count == 0) return null;
+        var last = matches[^1];
+        return last.Groups[2].Success ? $"{last.Groups[1].Value} {last.Groups[2].Value}" : last.Groups[1].Value;
+    }
+
+    /// <summary>The backends that ran a track's runs, for the log: "vulkan Vulkan0", or "unknown".</summary>
+    public static string RanOn(IEnumerable<string> used) =>
+        used.Any() ? string.Join(" + ", used.Order(StringComparer.Ordinal)) : "unknown";
 
     /// <summary>Told each track's time: ("asr.me", wall time, detail).</summary>
     public Action<string, TimeSpan, string>? Timing { get; set; }
@@ -161,6 +180,8 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
         public TimeSpan Convert;
         public int Runs;
         public string Backend = "cpu";
+        /// <summary>What transcribe-cli said it really ran on, one entry per kind.</summary>
+        public readonly HashSet<string> Used = new(StringComparer.Ordinal);
         public double AudioSeconds;
     }
 
@@ -225,7 +246,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
                     throw;
                 }
                 Timing?.Invoke($"asr.{side}", wall.Elapsed, string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                    $"convert {timing.Convert.TotalSeconds:0.0} s, {timing.Runs} runs, {threads} threads, preempted {preempted}, backend {timing.Backend}, audio sent {timing.AudioSeconds:0.0} s"));
+                    $"convert {timing.Convert.TotalSeconds:0.0} s, {timing.Runs} runs, {threads} threads, preempted {preempted}, backend {timing.Backend}, ran on {RanOn(timing.Used)}, audio sent {timing.AudioSeconds:0.0} s"));
             }).ToArray();
             var all = Task.WhenAll(runs);
             try
@@ -366,7 +387,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
         }
     }
 
-    private static async Task<string> RunCliAsync(string cli, IEnumerable<string> arguments, CancellationToken cancellationToken)
+    private static async Task<string> RunCliAsync(string cli, IEnumerable<string> arguments, CancellationToken cancellationToken, Action<string>? stderr = null)
     {
         var start = new ProcessStartInfo(cli)
         {
@@ -390,6 +411,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
         if (process.ExitCode != 0)
             throw new ProcessingFailure(process.ExitCode < 0 ? FailureKind.Environmental : FailureKind.Recording,
                 T("Local transcription failed: ", "Локальная расшифровка не удалась: ") + $"({process.ExitCode}) " + error.Trim());
+        stderr?.Invoke(error);
         return output;
     }
 }

@@ -37,4 +37,20 @@ public sealed class LocalAsrThreadsTests
     [InlineData("vulkan", true, true, "cpu")]
     public void Backend_uses_the_gpu_module_when_present_and_the_cpu_after_a_failure(string? setting, bool module, bool failed, string expected) =>
         Assert.Equal(expected, LocalTranscriptionEngine.Backend(setting, module, failed));
+
+    [Theory]
+    [InlineData("load_backend: loaded Vulkan backend from x\nparakeet: using vulkan backend: Vulkan0\n", "vulkan Vulkan0")]
+    [InlineData("load_backend: loaded Vulkan backend from x\nparakeet: using cpu backend (strict)\n", "cpu")]
+    [InlineData("load_backend: loaded Vulkan backend from x\n", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void Used_backend_is_read_from_the_cli_stderr_not_from_the_request(string? stderr, string? expected) =>
+        Assert.Equal(expected, LocalTranscriptionEngine.UsedBackend(stderr));
+
+    [Fact]
+    public void Ran_on_lists_every_backend_or_says_unknown()
+    {
+        Assert.Equal("unknown", LocalTranscriptionEngine.RanOn([]));
+        Assert.Equal("cpu + vulkan Vulkan0", LocalTranscriptionEngine.RanOn(["vulkan Vulkan0", "cpu"]));
+    }
 }
