@@ -11,7 +11,7 @@ Download the Windows portable zip from [Releases](https://github.com/Palo007/ama
 Or build from source:
 
 ```powershell
-dotnet publish windows\src\Amanu.App\Amanu.App.csproj -c Release -r win-x64 --self-contained true --property:Version=0.7.0 -o windows\artifacts\publish
+dotnet publish windows\src\Amanu.App\Amanu.App.csproj -c Release -r win-x64 --self-contained true --property:Version=0.8.0 -o windows\artifacts\publish
 ```
 
 Run `windows\artifacts\publish\Amanu.exe`. Fork builds are not code-signed, so Windows SmartScreen may warn you.
