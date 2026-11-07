@@ -421,14 +421,15 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
 
         // Recognition hears an echo-cleaned copy of the mic; the archive and
         // keep_audio below still settle the original tracks in `audio`.
-        var (echoed, cleaned) = await HearAsync(directory, audio, current, cancellationToken).ConfigureAwait(false);
+        var overlap = OverlapFor(plan, audio, current, directory);
+        var (echoed, cleaned) = await HearAsync(directory, audio, current, overlap, cancellationToken).ConfigureAwait(false);
         LevelAudio.Result? leveled = null;
 
         try
         {
             (var heard, leveled) = await LevelAsync(directory, echoed, current, cancellationToken).ConfigureAwait(false);
             var recognition = Stopwatch.StartNew();
-            var transcript = await RunPlanAsync(plan, heard, directory, current, cancellationToken).ConfigureAwait(false);
+            var transcript = await RunPlanAsync(plan, heard, directory, current, cancellationToken, cleaned is null ? null : overlap?.Result).ConfigureAwait(false);
             LogTiming(directory, "asr", recognition.Elapsed);
             cleaned?.Delete();
             cleaned = null;
@@ -564,7 +565,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// one, the tracks as recorded otherwise. `audio` itself is never changed.
     /// </summary>
     private async Task<(SessionAudio Heard, OfflineEchoAudio.Result? Cleaned)> HearAsync(
-        string directory, SessionAudio audio, AppSettings current, CancellationToken cancellationToken)
+        string directory, SessionAudio audio, AppSettings current, SystemOverlap? overlap, CancellationToken cancellationToken)
     {
         if (!current.OfflineEchoCancellation || !audio.BothSides)
         {
@@ -572,7 +573,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             return (audio, null);
         }
         var echo = Stopwatch.StartNew();
-        var cleaned = await CancelEchoAsync(directory, audio, cancellationToken).ConfigureAwait(false);
+        var cleaned = await CancelEchoAsync(directory, audio, overlap, cancellationToken).ConfigureAwait(false);
         LogTiming(directory, "echo", echo.Elapsed, cleaned is null ? "skipped" : null);
         if (cleaned is null) return (audio, null);
         return (audio with
@@ -610,13 +611,15 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         var plan = EngineResolver.Plan(engine, current.Transcription.Cloud, current.Transcription.LocalEngine,
             _ => false, models.IsReady);
         if (plan.Local is null) throw new InvalidOperationException($"No local model for '{engine}': {plan.Missing}");
-        var (echoed, cleaned) = await HearAsync(output, audio, current, cancellationToken).ConfigureAwait(false);
+        var measurePlan = plan with { Cloud = null };
+        var overlap = OverlapFor(measurePlan, audio, current, output);
+        var (echoed, cleaned) = await HearAsync(output, audio, current, overlap, cancellationToken).ConfigureAwait(false);
         LevelAudio.Result? leveled = null;
         try
         {
             (var heard, leveled) = await LevelAsync(output, echoed, current, cancellationToken).ConfigureAwait(false);
             var recognition = Stopwatch.StartNew();
-            var transcript = await RunPlanAsync(plan with { Cloud = null }, heard, output, current, cancellationToken).ConfigureAwait(false);
+            var transcript = await RunPlanAsync(measurePlan, heard, output, current, cancellationToken, cleaned is null ? null : overlap?.Result).ConfigureAwait(false);
             LogTiming(output, "asr", recognition.Elapsed);
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
@@ -656,7 +659,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// processing.json say what was skipped and why. Shares the CPU with local
     /// recognition, so live transcription preempts it like a batch pass.
     /// </summary>
-    private async Task<OfflineEchoAudio.Result?> CancelEchoAsync(string directory, SessionAudio audio, CancellationToken cancellationToken)
+    private async Task<OfflineEchoAudio.Result?> CancelEchoAsync(string directory, SessionAudio audio, SystemOverlap? overlap, CancellationToken cancellationToken)
     {
         var log = Path.Combine(directory, "transcribe.log");
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} removing acoustic echo from a microphone copy before transcription{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
@@ -667,6 +670,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             while (true)
             {
                 using var cpu = await models.CpuTranscription.EnterBatchAsync(cancellationToken).ConfigureAwait(false);
+                // The call track is not changed by echo removal: hear it now, under this lease.
+                var side = overlap?.RunAsync(cpu.Token);
                 try
                 {
                     prepared = await Task.Run(() => OfflineEchoAudio.Prepare(audio, () =>
@@ -679,6 +684,16 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
                     // Live preempted this pass; the model starts again from t=0 once it is done.
+                }
+                finally
+                {
+                    // Never leave the lease with a recognizer still running; a failed
+                    // overlap only means that track runs later as usual.
+                    if (side is not null)
+                    {
+                        try { await side.ConfigureAwait(false); }
+                        catch (OperationCanceledException) { }
+                    }
                 }
             }
         }
@@ -709,10 +724,26 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     }
 
     /// <summary>
+    /// Call-track recognition to run during echo removal (roadmap-speed step 3), or
+    /// null when it cannot: a cloud plan, no echo removal, level normalization (it
+    /// would change the track), a replaced engine, or AMANU_ASR_OVERLAP not set to 1 (off by default).
+    /// </summary>
+    private SystemOverlap? OverlapFor(EnginePlan plan, SessionAudio audio, AppSettings current, string directory)
+    {
+        if (plan.Cloud is not null || plan.Local is null || !audio.BothSides || !current.OfflineEchoCancellation) return null;
+        if (string.Equals(current.Transcription.LevelNormalization, "auto", StringComparison.OrdinalIgnoreCase)) return null;
+        if (!SystemOverlap.Enabled(Environment.GetEnvironmentVariable("AMANU_ASR_OVERLAP"))) return null;
+        if (CreateLocal(plan.Local, current) is not LocalTranscriptionEngine engine) return null;
+        var threads = SystemOverlap.OverlapThreads(Environment.GetEnvironmentVariable("AMANU_ASR_OVERLAP_THREADS"), LocalTranscriptionEngine.Threads);
+        return new SystemOverlap(engine, audio, threads, (stage, elapsed, detail) => LogTiming(directory, stage, elapsed, detail));
+    }
+
+    /// <summary>
     /// The cloud first when the plan has one, and this computer's model only when
     /// the cloud could not be reached or was busy — for this session alone.
     /// </summary>
-    private async Task<TranscriptDocument> RunPlanAsync(EnginePlan plan, SessionAudio audio, string directory, AppSettings current, CancellationToken cancellationToken)
+    private async Task<TranscriptDocument> RunPlanAsync(EnginePlan plan, SessionAudio audio, string directory, AppSettings current, CancellationToken cancellationToken,
+        IReadOnlyList<TranscriptSegment>? system = null)
     {
         if (plan.Cloud is { } cloud)
         {
@@ -732,7 +763,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         }
         var local = CreateLocal(plan.Local!, current);
         if (local is LocalTranscriptionEngine timed)
+        {
             timed.Timing = (stage, elapsed, detail) => LogTiming(directory, stage, elapsed, detail);
+            timed.PrecomputedSystem = system;
+        }
         return await local.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
     }
 

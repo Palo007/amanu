@@ -166,6 +166,18 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
     /// <summary>Threads for each of <paramref name="tracks"/> runs at the same time: an even share, at least one.</summary>
     public static int ShareThreads(int threads, int tracks) => Math.Max(1, threads / Math.Max(1, tracks));
 
+    /// <summary>
+    /// The call track's segments, when they were made while the mic was being
+    /// echo-cleaned (roadmap-speed step 3). Used instead of running that track
+    /// again; the caller sets them only for the same audio and offset.
+    /// </summary>
+    public IReadOnlyList<TranscriptSegment>? PrecomputedSystem { get; set; }
+
+    /// <summary>One track on its own, under the caller's CPU gate lease.</summary>
+    public Task<IReadOnlyList<TranscriptSegment>> TranscribeTrackAsync(
+        string source, string side, int offsetMs, int threads, CancellationToken cancellationToken) =>
+        TranscribeFileCoreAsync(source, side, offsetMs, threads, new TrackTiming(), cancellationToken);
+
     public async Task<TranscriptDocument> TranscribeAsync(SessionAudio audio, CancellationToken cancellationToken)
     {
         (string Source, string Side, int OffsetMs)[] tracks = audio.BothSides
@@ -186,13 +198,16 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
         (string Source, string Side, int OffsetMs)[] tracks, CancellationToken cancellationToken)
     {
         var results = new IReadOnlyList<TranscriptSegment>?[tracks.Length];
+        if (PrecomputedSystem is not null && tracks.Length == 2)
+            results[1] = PrecomputedSystem;
         var wall = Stopwatch.StartNew();
         var preempted = 0;
         while (true)
         {
             using var cpu = await models.CpuTranscription.EnterBatchAsync(cancellationToken).ConfigureAwait(false);
             var pending = Enumerable.Range(0, tracks.Length).Where(index => results[index] is null).ToArray();
-            var threads = ShareThreads(Threads, pending.Length);
+            // A track left alone still gets only its share: a single run on all threads was slower than half.
+            var threads = ShareThreads(Threads, PrecomputedSystem is null ? pending.Length : tracks.Length);
             // A failed track stops the others; the failure is reported, not their cancellation.
             using var stop = CancellationTokenSource.CreateLinkedTokenSource(cpu.Token);
             var runs = pending.Select(async index =>
