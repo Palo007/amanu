@@ -47,4 +47,42 @@ public sealed class LongAudioChunkTests
         }
         finally { Directory.Delete(root, true); }
     }
+
+    [Fact]
+    public void Silence_is_left_out_of_chunks_and_times_map_back()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "amanu-silence-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var wave = Path.Combine(root, "input.wav");
+            var random = new Random(3);
+            using (var writer = new WaveFileWriter(wave, new WaveFormat(16000, 16, 1)))
+            {
+                // 0-20 s speech-like tone, 20-100 s noise floor, 100-110 s tone again.
+                var samples = new short[110 * 16000];
+                for (var index = 0; index < samples.Length; index++)
+                {
+                    var second = index / 16000.0;
+                    var tone = second < 20 || second >= 100;
+                    samples[index] = (short)(tone ? 3000 * Math.Sin(index * 0.05) : random.Next(-3, 4));
+                }
+                var bytes = new byte[samples.Length * 2];
+                Buffer.BlockCopy(samples, 0, bytes, 0, bytes.Length);
+                writer.Write(bytes, 0, bytes.Length);
+            }
+            var keep = AudioPreprocessor.MeasureSpeechBlocks(wave);
+            Assert.NotNull(keep);
+            var chunks = AudioPreprocessor.SplitWithContext(wave, root, 60, 1, keep);
+            Assert.Equal(2, chunks.Count);
+            var sent = chunks.Sum(chunk => new FileInfo(chunk.Path).Length / 32000.0);
+            Assert.InRange(sent, 25, 50);
+            // A time on the short chunk is a time on the track: the second chunk's tone starts 100 s in.
+            var last = chunks[1];
+            var map = Assert.IsType<Amanu.Core.Processing.SilenceSkip.TimeMap>(last.Map);
+            Assert.InRange(last.OffsetMs + map.ToOriginal(map.ShortLengthMs - 1), 109_000, 110_000);
+            Assert.Equal(60_000, last.StartMs);
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }

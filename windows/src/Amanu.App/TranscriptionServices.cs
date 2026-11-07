@@ -161,6 +161,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
         public TimeSpan Convert;
         public int Runs;
         public string Backend = "cpu";
+        public double AudioSeconds;
     }
 
     /// <summary>Threads for each of <paramref name="tracks"/> runs at the same time: an even share, at least one.</summary>
@@ -209,7 +210,7 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
                     throw;
                 }
                 Timing?.Invoke($"asr.{side}", wall.Elapsed, string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                    $"convert {timing.Convert.TotalSeconds:0.0} s, {timing.Runs} runs, {threads} threads, preempted {preempted}, backend {timing.Backend}"));
+                    $"convert {timing.Convert.TotalSeconds:0.0} s, {timing.Runs} runs, {threads} threads, preempted {preempted}, backend {timing.Backend}, audio sent {timing.AudioSeconds:0.0} s"));
             }).ToArray();
             var all = Task.WhenAll(runs);
             try
@@ -251,7 +252,15 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             cancellationToken.ThrowIfCancellationRequested();
             if (ModelCatalog.IsParakeet(model))
             {
-                var chunks = AudioPreprocessor.SplitWithContext(wave, temp, 60, 1);
+                // Step 6: long noise-only stretches are left out of each chunk; chunk times map back below.
+                IReadOnlyList<(int From, int To)>? keep = null;
+                if (!string.Equals(Environment.GetEnvironmentVariable("AMANU_SKIP_SILENCE"), "0", StringComparison.Ordinal))
+                {
+                    try { keep = AudioPreprocessor.MeasureSpeechBlocks(wave); }
+                    catch (Exception exception) when (exception is IOException or InvalidDataException or FormatException) { keep = null; }
+                }
+                var chunks = AudioPreprocessor.SplitWithContext(wave, temp, 60, 1, keep);
+                timing.AudioSeconds = chunks.Sum(chunk => new FileInfo(chunk.Path).Length / 32000.0);
                 var words = new List<TimedWord>();
                 var fallback = new List<TranscriptSegment>();
                 foreach (var chunk in chunks)
@@ -265,8 +274,8 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
                     var parsed = LocalCliWords.Parse(answer);
                     words.AddRange(parsed.Select(word => word with
                     {
-                        StartMs = word.StartMs + chunk.OffsetMs,
-                        EndMs = word.EndMs + chunk.OffsetMs,
+                        StartMs = (chunk.Map?.ToOriginal(word.StartMs) ?? word.StartMs) + chunk.OffsetMs,
+                        EndMs = (chunk.Map?.ToOriginal(word.EndMs) ?? word.EndMs) + chunk.OffsetMs,
                     }).Where(word => (word.StartMs + word.EndMs) / 2 >= chunk.StartMs
                         && (word.StartMs + word.EndMs) / 2 < chunk.EndMs));
                     if (parsed.Count == 0 && LocalCliWords.FullText(answer) is { Length: > 0 } text)
