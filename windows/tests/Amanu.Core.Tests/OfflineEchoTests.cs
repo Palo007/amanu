@@ -69,6 +69,31 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
         return ([.. cleaned], [.. system]);
     }
 
+    /// <summary>Several blocks at once must give the same samples as one stream, hangover and partial last hop included.</summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(7)]
+    public void Parallel_blocks_match_one_stream(int workers)
+    {
+        const int frames = 16_000 * 9 + 137;
+        var mic = Signal(11, frames);
+        var reference = new float[frames];
+        // Playback early, then silence longer than the one-second hangover, then playback again.
+        Array.Copy(Signal(12, 20_000), 3_000, reference, 3_000, 17_000);
+        Array.Copy(Signal(13, 20_000), 0, reference, 100_000, 20_000);
+        var (expected, _) = Run(mic, reference, new DelayedBackend());
+        var cancellers = Enumerable.Range(0, workers).Select(_ => new EchoCanceller(new DelayedBackend())).ToList();
+        var cleaned = new float[frames];
+        try
+        {
+            OfflineEcho.RunParallel(() => new ArraySampleSource(mic), () => new ArraySampleSource(reference), frames, cancellers, 1_024, cleaned);
+        }
+        finally { foreach (var canceller in cancellers) canceller.Dispose(); }
+        Assert.Equal(expected, cleaned);
+    }
+
     /// <summary>Records the order of calls; End answers with <paramref name="endCode"/>, Begin with <paramref name="beginCode"/>.</summary>
     private sealed class PrimingBackend(int beginCode, int endCode) : IEchoCancellationBackend, IEchoDelayPrimer
     {

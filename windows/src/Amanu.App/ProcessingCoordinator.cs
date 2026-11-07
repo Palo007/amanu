@@ -669,10 +669,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                 using var cpu = await models.CpuTranscription.EnterBatchAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    prepared = await Task.Run(() => OfflineEchoAudio.Prepare(audio, () =>
+                    prepared = await Task.Run(() => OfflineEchoAudio.Prepare(audio, threads =>
                     {
                         var assets = LocalVqeAssets.Resolve();
-                        return new LocalVqeBackend(assets.Library, assets.Model);
+                        return new LocalVqeBackend(assets.Library, assets.Model, threads);
                     }, cpu.Token), cpu.Token).ConfigureAwait(false);
                     break;
                 }
@@ -691,6 +691,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             });
             return null;
         }
+        await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo stages: {prepared.Timings}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         WriteLedger(directory, ReadLedger(directory) with
         {
             AudioEchoCancellation = new EchoCancellationRecord(LocalVqeAssets.ProcessorVersion,
