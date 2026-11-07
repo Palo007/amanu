@@ -85,4 +85,25 @@ public sealed class LongAudioChunkTests
         }
         finally { Directory.Delete(root, true); }
     }
+
+    [Fact]
+    public void Pause_cuts_split_the_track_where_given_and_cover_it_once()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "amanu-pause-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var wave = Path.Combine(root, "input.wav");
+            using (var writer = new WaveFileWriter(wave, new WaveFormat(16000, 16, 1)))
+            {
+                var bytes = new byte[125 * 32000];
+                writer.Write(bytes, 0, bytes.Length);
+            }
+            var chunks = AudioPreprocessor.SplitWithContext(wave, root, 60, 1, null, [520, 1120, 1250]);
+            Assert.Equal(new long[] { 0, 52000, 112000 }, chunks.Select(chunk => chunk.StartMs));
+            Assert.Equal(new long[] { 52000, 112000, 125000 }, chunks.Select(chunk => chunk.EndMs));
+            Assert.Equal(new long[] { 0, 51000, 111000 }, chunks.Select(chunk => chunk.OffsetMs));
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }
