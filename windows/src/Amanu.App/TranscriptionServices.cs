@@ -364,7 +364,8 @@ public sealed class AssemblyAiTranscriptionEngine(
     string apiKey,
     IReadOnlyList<string> expectedLanguages,
     string? speechModel,
-    bool cache = true) : ITranscriptionEngine
+    bool cache = true,
+    IReadOnlyList<string>? keyTerms = null) : ITranscriptionEngine
 {
     private const string Service = "AssemblyAI";
 
@@ -397,7 +398,7 @@ public sealed class AssemblyAiTranscriptionEngine(
             var shift = audio.BothSides ? Math.Min(audio.MicrophoneOffsetMs, audio.SystemOffsetMs) : audio.Only.OffsetMs;
             var cachePath = cache
                 ? ProviderCache.PathFor(audio.Directory, "assemblyai", "code-switching-v1", Model, string.Join('+', expectedLanguages),
-                    multichannel ? "multichannel" : "mono", side, new FileInfo(source).Length.ToString())
+                    multichannel ? "multichannel" : "mono", side, new FileInfo(source).Length.ToString(), CustomWords.Digest(keyTerms))
                 : null;
 
             JsonElement result;
@@ -468,7 +469,7 @@ public sealed class AssemblyAiTranscriptionEngine(
         var uploadUrl = (await upload.Content.ReadFromJsonAsync<JsonElement>(cancellationToken).ConfigureAwait(false))
             .GetProperty("upload_url").GetString();
 
-        var body = RequestBody(uploadUrl!, multichannel, expectedLanguages, speechModel);
+        var body = RequestBody(uploadUrl!, multichannel, expectedLanguages, speechModel, keyTerms);
 
         using var created = await Http.SendAsync(httpClient, () =>
         {
@@ -485,7 +486,7 @@ public sealed class AssemblyAiTranscriptionEngine(
     }
 
     internal static Dictionary<string, object?> RequestBody(string audioUrl, bool multichannel,
-        IReadOnlyList<string> expectedLanguages, string? speechModel)
+        IReadOnlyList<string> expectedLanguages, string? speechModel, IReadOnlyList<string>? keyTerms = null)
     {
         // Universal-2 requires code switching explicitly even on automatic
         // language selection. Keep one request and the existing channel layout.
@@ -506,6 +507,8 @@ public sealed class AssemblyAiTranscriptionEngine(
         };
         if (multichannel) body["multichannel"] = true;
         if (speechModel is not null) body["speech_model"] = speechModel;
+        // The user's word list; up to 200 phrases of six words fit every model.
+        if (keyTerms is { Count: > 0 }) body["keyterms_prompt"] = keyTerms.Take(200).ToArray();
         return body;
     }
 
@@ -690,7 +693,7 @@ public sealed class OpenAiTranscriptionEngine(
 }
 
 /// <summary>ElevenLabs Scribe, each track on its own: the track says the side, diarization the voice.</summary>
-public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string apiKey, bool cache = true) : ITranscriptionEngine
+public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string apiKey, bool cache = true, IReadOnlyList<string>? keyTerms = null) : ITranscriptionEngine
 {
     private const string Service = "ElevenLabs";
     private const string Model = "scribe_v2";
@@ -709,7 +712,7 @@ public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string 
             try
             {
                 AudioPreprocessor.ConvertToMono16k(path, temp);
-                var cachePath = cache ? ProviderCache.PathFor(audio.Directory, "elevenlabs", Model, side, new FileInfo(temp).Length.ToString()) : null;
+                var cachePath = cache ? ProviderCache.PathFor(audio.Directory, "elevenlabs", Model, side, new FileInfo(temp).Length.ToString(), CustomWords.Digest(keyTerms)) : null;
                 string json;
                 if (cachePath is not null && File.Exists(cachePath)) json = await File.ReadAllTextAsync(cachePath, cancellationToken).ConfigureAwait(false);
                 else
@@ -725,6 +728,9 @@ public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string 
                             { new StringContent("false"), "tag_audio_events" },
                             { new StringContent("true"), "diarize" },
                         };
+                        // Up to 100 terms: more would bill a 20 s minimum per request (and +20 % in all).
+                        foreach (var term in keyTerms?.Take(100) ?? [])
+                            content.Add(new StringContent(term), "keyterms");
                         var file = new StreamContent(File.OpenRead(temp));
                         file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
                         content.Add(file, "file", "audio.wav");
