@@ -107,7 +107,8 @@ public sealed unsafe class LocalVqeBackend : IEchoCancellationBackend, IEchoDela
     public int SampleRate { get; }
     public int HopSize { get; }
 
-    public LocalVqeBackend(string libraryPath, string modelPath)
+    /// <param name="threads">Compute threads of this context; null keeps the library default.</param>
+    public LocalVqeBackend(string libraryPath, string modelPath, int? threads = null)
     {
         if (LocalVqeAssets.Sha256(modelPath) != LocalVqeAssets.ModelSha256)
             throw new EchoCancellationException($"LocalVQE model failed its SHA-256 check: {modelPath}");
@@ -140,7 +141,13 @@ public sealed unsafe class LocalVqeBackend : IEchoCancellationBackend, IEchoDela
             }
 
             var native = NativeModelPath(modelPath, out copied);
-            fixed (byte* path = native) context = create(path);
+            lock (ThreadSetting)
+            {
+                // The library reads GGML_NTHREADS from the C runtime's environment when it builds a context.
+                if (threads is { } count) PutEnvironment("GGML_NTHREADS", count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                try { fixed (byte* path = native) context = create(path); }
+                finally { if (threads is not null) PutEnvironment("GGML_NTHREADS", ""); }
+            }
             if (context == 0) throw new EchoCancellationException("could not load the LocalVQE echo model: native loader returned an empty context");
             SampleRate = sampleRate(context);
             HopSize = hopLength(context);
@@ -287,6 +294,13 @@ public sealed unsafe class LocalVqeBackend : IEchoCancellationBackend, IEchoDela
         try { File.Delete(path); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
     }
 
+    private static readonly object ThreadSetting = new();
+
+    private static void PutEnvironment(string name, string value) => _putenv_s(name, value);
+
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    private static extern int _putenv_s(string name, string value);
+
     [DllImport("kernel32.dll")]
     private static extern uint GetACP();
 
@@ -332,6 +346,20 @@ public sealed class EchoCanceller : IDisposable
     /// freezes after ~3.5 s and can lock a wrong delay for the whole file. A
     /// backend that cannot prime, or is not confident, keeps online acquisition.
     /// </summary>
+    /// <summary>
+    /// Starts the playback history as if every sample before this stream had been
+    /// seen: for a stream that begins in the middle of a recording.
+    /// </summary>
+    public void SeedReferenceHistory(bool seenActiveReference, int silentSamples)
+    {
+        if (hasPending || finished) throw new EchoCancellationException("the reference history must be set before the stream");
+        hasSeenActiveReference = seenActiveReference;
+        silentReferenceSamples = seenActiveReference ? Math.Clamp(silentSamples, 0, ReferenceHangoverSamples + 1) : 0;
+    }
+
+    /// <summary>Time spent inside the model call (frame processing only).</summary>
+    public TimeSpan NativeTime { get; private set; }
+
     public DelayPrime PrimeDelay(IMonoSampleSource microphone, IMonoSampleSource reference, long frames, CancellationToken cancellationToken = default)
     {
         if (hasPending || finished) throw new EchoCancellationException("the LocalVQE delay prime must come before the stream");
@@ -364,7 +392,9 @@ public sealed class EchoCanceller : IDisposable
         if (finished) throw new EchoCancellationException("LocalVQE stream was already finished");
         if (microphone.Length != FrameSize || reference.Length != FrameSize)
             throw new EchoCancellationException($"LocalVQE needs {FrameSize} samples per hop; got mic {microphone.Length}, reference {reference.Length}");
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         backend.Process(microphone, reference, candidate);
+        NativeTime += System.Diagnostics.Stopwatch.GetElapsedTime(started);
         var had = hasPending;
         if (had) Select(output);
         microphone.CopyTo(pendingMicrophone);
@@ -543,6 +573,96 @@ public static class OfflineEcho
         }
         if (canceller is not null && canceller.Finish(cleaned))
             writeMicrophone(cleaned.AsSpan(0, pendingFrames ?? throw new EchoCancellationException("LocalVQE flushed without input")));
+    }
+
+    /// <summary>Warm-up before each block that starts mid-file, in seconds of audio.</summary>
+    public const int DefaultWarmupSeconds = 10;
+
+    /// <summary>
+    /// Echo removal on several blocks at once. Every canceller owns its own model
+    /// state, so each block after the first starts <paramref name="warmupSamples"/>
+    /// earlier and drops that output: the state has settled when the block begins.
+    /// Block edges sit on hop edges; hop framing, delay prime and the
+    /// playback-silence rule are the same as in <see cref="Run"/>. Returns the
+    /// prime of the first canceller.
+    /// </summary>
+    public static DelayPrime RunParallel(
+        Func<IMonoSampleSource> openMicrophone, Func<IMonoSampleSource> openReference, long frames,
+        IReadOnlyList<EchoCanceller> cancellers, int warmupSamples, float[] cleaned, CancellationToken cancellationToken = default)
+    {
+        const int hop = EchoCanceller.FrameSize;
+        if (cleaned.Length < frames) throw new ArgumentException("output buffer is shorter than the recording", nameof(cleaned));
+        var totalHops = (frames + hop - 1) / hop;
+        var perWorker = Math.Max(1, (totalHops + cancellers.Count - 1) / cancellers.Count);
+        var warmupHops = warmupSamples / hop;
+        var primes = new DelayPrime[cancellers.Count];
+        Parallel.For(0, cancellers.Count, new ParallelOptions { MaxDegreeOfParallelism = cancellers.Count, CancellationToken = cancellationToken }, worker =>
+        {
+            var canceller = cancellers[worker];
+            var hopStart = worker * perWorker;
+            var hopEnd = Math.Min(totalHops, hopStart + perWorker);
+            if (hopStart >= hopEnd) return;
+            var first = Math.Max(0, hopStart - warmupHops);
+
+            var microphone = openMicrophone();
+            var reference = openReference();
+            try
+            {
+                var primeMic = openMicrophone();
+                var primeFar = openReference();
+                try { primes[worker] = canceller.PrimeDelay(primeMic, primeFar, frames, cancellationToken); }
+                finally { (primeMic as IDisposable)?.Dispose(); (primeFar as IDisposable)?.Dispose(); }
+
+                // Playback history before the first hop this canceller sees.
+                var skipped = (long)first * hop;
+                var seen = false;
+                var silent = 0L;
+                var scratch = new float[WindowSamples];
+                var micScratch = new float[WindowSamples];
+                for (long done = 0; done < skipped;)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var count = (int)Math.Min(scratch.Length, skipped - done);
+                    Fill(reference, scratch.AsSpan(0, count));
+                    Fill(microphone, micScratch.AsSpan(0, count));
+                    for (var index = 0; index < count; index++)
+                    {
+                        if (scratch[index] != 0) { seen = true; silent = 0; }
+                        else if (seen) silent++;
+                    }
+                    done += count;
+                }
+                canceller.SeedReferenceHistory(seen, (int)Math.Min(silent, int.MaxValue));
+
+                var local = new float[hop];
+                var remote = new float[hop];
+                var output = new float[hop];
+                for (var k = first; k <= hopEnd; k++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (k == hopEnd && hopEnd == totalHops) break;
+                    Array.Clear(local);
+                    Array.Clear(remote);
+                    var length = (int)Math.Min(hop, frames - (long)k * hop);
+                    Fill(microphone, local.AsSpan(0, length));
+                    Fill(reference, remote.AsSpan(0, length));
+                    if (!canceller.Process(local, remote, output)) continue;
+                    var previous = k - 1;
+                    if (previous < hopStart) continue;
+                    var previousLength = (int)Math.Min(hop, frames - (long)previous * hop);
+                    output.AsSpan(0, previousLength).CopyTo(cleaned.AsSpan((int)((long)previous * hop), previousLength));
+                }
+                if (hopEnd == totalHops)
+                {
+                    if (!canceller.Finish(output)) throw new EchoCancellationException("LocalVQE flushed without input");
+                    var last = totalHops - 1;
+                    var lastLength = (int)Math.Min(hop, frames - last * hop);
+                    output.AsSpan(0, lastLength).CopyTo(cleaned.AsSpan((int)(last * hop), lastLength));
+                }
+            }
+            finally { (microphone as IDisposable)?.Dispose(); (reference as IDisposable)?.Dispose(); }
+        });
+        return primes[0];
     }
 
     /// <summary>Reads exactly the span's length, with silence past the end of the source.</summary>

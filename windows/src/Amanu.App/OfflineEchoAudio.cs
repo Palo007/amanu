@@ -24,6 +24,8 @@ public static class OfflineEchoAudio
         /// <summary>Null when the model did not run (no playback in the whole recording).</summary>
         public DelayPrime? DelayPrime { get; init; }
 
+        public string Timings { get; init; } = "";
+
         /// <summary>The derived audio goes; the provider caches beside it stay for a retry.</summary>
         public void RemoveAudio() => OfflineEchoAudio.RemoveAudio(Directory);
 
@@ -34,7 +36,7 @@ public static class OfflineEchoAudio
         }
     }
 
-    public static Result Prepare(SessionAudio audio, Func<IEchoCancellationBackend> backendFactory, CancellationToken cancellationToken)
+    public static Result Prepare(SessionAudio audio, Func<int?, IEchoCancellationBackend> backendFactory, CancellationToken cancellationToken)
     {
         if (!audio.BothSides) throw new InvalidOperationException("Echo cancellation needs both the mic and the system track.");
         var work = WorkDirectory(audio);
@@ -44,10 +46,15 @@ public static class OfflineEchoAudio
         var completed = false;
         try
         {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var marks = new List<string>();
+            var native = TimeSpan.Zero;
+            void Mark(string name) { marks.Add($"{name} {clock.Elapsed.TotalSeconds:0.0}s"); clock.Restart(); }
             var micSource = Path.Combine(work, ".decoded-mic.wav");
             var systemSource = Path.Combine(work, ".decoded-system.wav");
             Decode(audio.Microphone!, micSource, cancellationToken);
             Decode(audio.System!, systemSource, cancellationToken);
+            Mark("decode");
 
             // One timeline from the earlier track's start, as the archive and the
             // engines already do; both outputs then carry that start as their offset.
@@ -63,28 +70,51 @@ public static class OfflineEchoAudio
             using (var reference = new WaveSource(systemSource))
                 active = OfflineEcho.HasReferenceActivity(new DelayedSampleSource(reference, systemLead), cancellationToken);
 
+            Mark("scan");
             var result = new Result(work, Path.Combine(work, "mic.wav"), Path.Combine(work, "system.wav"), start, frames, active);
-            using var canceller = active ? new EchoCanceller(backendFactory()) : null;
-            if (canceller is not null)
+            var workers = active ? Workers(frames) : 0;
+            var cancellers = new List<EchoCanceller>();
+            try
             {
-                // The prime scans exactly the aligned signal the stream will see, from t=0.
-                using var mic = new WaveSource(micSource);
-                using var reference = new WaveSource(systemSource);
-                result = result with
+                if (active)
+                    for (var index = 0; index < workers; index++)
+                        cancellers.Add(new EchoCanceller(backendFactory(workers > 1 ? 1 : ModelThreads())));
+                float[]? cleaned = null;
+                if (active)
                 {
-                    DelayPrime = canceller.PrimeDelay(new DelayedSampleSource(mic, micLead), new DelayedSampleSource(reference, systemLead), frames, cancellationToken),
-                };
+                    cleaned = new float[frames];
+                    // Each block: own model state, warmed up on the audio before it; the prime scans the whole aligned signal.
+                    result = result with
+                    {
+                        DelayPrime = OfflineEcho.RunParallel(
+                            () => new LeadSource(micSource, micLead), () => new LeadSource(systemSource, systemLead), frames,
+                            cancellers, WarmupSeconds() * EchoCanceller.SampleRate, cleaned, cancellationToken),
+                    };
+                    foreach (var canceller in cancellers) native += canceller.NativeTime;
+                }
+                Mark("model");
+                using (var mic = new WaveSource(micSource))
+                using (var reference = new WaveSource(systemSource))
+                using (var micOut = new WaveFileWriter(result.Microphone, WaveFormat.CreateIeeeFloatWaveFormat(EchoCanceller.SampleRate, 1)))
+                using (var systemOut = new WaveFileWriter(result.System, WaveFormat.CreateIeeeFloatWaveFormat(EchoCanceller.SampleRate, 1)))
+                {
+                    var position = 0L;
+                    OfflineEcho.Run(new DelayedSampleSource(mic, micLead), new DelayedSampleSource(reference, systemLead), frames, null,
+                        samples =>
+                        {
+                            // The mic copy is exact when the model did not run; else the cleaned block.
+                            if (cleaned is null) micOut.Write(MemoryMarshal.AsBytes(samples));
+                            else micOut.Write(MemoryMarshal.AsBytes(cleaned.AsSpan((int)position, samples.Length)));
+                            position += samples.Length;
+                        },
+                        samples => systemOut.Write(MemoryMarshal.AsBytes(samples)),
+                        cancellationToken);
+                }
             }
-            using (var mic = new WaveSource(micSource))
-            using (var reference = new WaveSource(systemSource))
-            using (var micOut = new WaveFileWriter(result.Microphone, WaveFormat.CreateIeeeFloatWaveFormat(EchoCanceller.SampleRate, 1)))
-            using (var systemOut = new WaveFileWriter(result.System, WaveFormat.CreateIeeeFloatWaveFormat(EchoCanceller.SampleRate, 1)))
-            {
-                OfflineEcho.Run(new DelayedSampleSource(mic, micLead), new DelayedSampleSource(reference, systemLead), frames, canceller,
-                    samples => micOut.Write(MemoryMarshal.AsBytes(samples)),
-                    samples => systemOut.Write(MemoryMarshal.AsBytes(samples)),
-                    cancellationToken);
-            }
+            finally { foreach (var canceller in cancellers) canceller.Dispose(); }
+            Mark("write");
+            marks.Add($"workers {Math.Max(1, workers)}, native total {native.TotalSeconds:0.0}s");
+            result = result with { Timings = string.Join(", ", marks) };
             foreach (var path in new[] { result.Microphone, result.System })
             {
                 using var check = new WaveFileReader(path);
@@ -151,6 +181,46 @@ public static class OfflineEchoAudio
             cancellationToken.ThrowIfCancellationRequested();
             writer.Write(MemoryMarshal.AsBytes(buffer.AsSpan(0, read)));
         }
+    }
+
+    private static int WarmupSeconds() =>
+        int.TryParse(Environment.GetEnvironmentVariable("AMANU_ECHO_WARMUP_S"), out var forced) && forced >= 0 ? forced : OfflineEcho.DefaultWarmupSeconds;
+
+    /// <summary>
+    /// Compute threads for one model stream; the library default unless AMANU_ECHO_THREADS says otherwise.
+    /// The per-hop graph is tiny, so threads gain little (1: 141 s, 2: 120, 4: 109-117, 8: 114, 16: 172 on
+    /// 16 logical cores; default 115-127). Output is bit-identical for every count.
+    /// </summary>
+    private static int? ModelThreads()
+    {
+        var forced = Environment.GetEnvironmentVariable("AMANU_ECHO_THREADS");
+        if (int.TryParse(forced, out var count)) return count > 0 ? count : null;
+        return null;
+    }
+
+    /// <summary>
+    /// Blocks processed at once. 1 (default) keeps the stream exact. More blocks are faster
+    /// (8 blocks: 3x) but the model state has a memory of minutes, so a block starting
+    /// mid-file gives slightly different audio than one stream, whatever the warm-up.
+    /// Opt in with AMANU_ECHO_WORKERS.
+    /// </summary>
+    public static int Workers(long frames)
+    {
+        _ = frames;
+        return int.TryParse(Environment.GetEnvironmentVariable("AMANU_ECHO_WORKERS"), out var forced) && forced > 0 ? forced : 1;
+    }
+
+    /// <summary>A track on the shared timeline: a wave file read after <paramref name="lead"/> samples of silence.</summary>
+    private sealed class LeadSource : IMonoSampleSource, IDisposable
+    {
+        private readonly WaveSource wave;
+        private readonly DelayedSampleSource delayed;
+
+        public LeadSource(string path, long lead) { wave = new WaveSource(path); delayed = new DelayedSampleSource(wave, lead); }
+
+        public int Read(Span<float> buffer) => delayed.Read(buffer);
+
+        public void Dispose() => wave.Dispose();
     }
 
     private sealed class WaveSource(string path) : IMonoSampleSource, IDisposable

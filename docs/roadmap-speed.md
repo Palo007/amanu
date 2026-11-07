@@ -254,3 +254,22 @@ Test (2026-11-07). The ASR is not changed by this feature, so the correction ran
 - Speaker diarization on the system track (sherpa-onnx).
 - Easier speaker naming: medium confidence, loose quote matching, one retry.
 - Echo removal: fall back to the raw mic when the result looks worse; do not fail the whole pass on one bad sample; measure the delay again over time.
+
+## Echo speed (branch `echo-speed`)
+
+Goal: faster offline echo removal with the same result. Recording `2026.11.06-1000` (14.2 min), echo stage only, CPU (LocalVQE has no GPU path).
+
+**Where the time goes** (stage log `echo stages:` in `transcribe.log`): decode 0.1 s, delay scan 0.0 s, delay prime 3.5 s, model 122 s, write 0.3 s. The model call is 98 % of the stage. Resampling, file I/O, copies and the whole-file delay prime are not worth work. The cost is 2.3 ms per 16 ms hop, one hop at a time.
+
+**Threads** (`GGML_NTHREADS`, read by the library when it makes a context; output bit-identical, max sample difference 0): 1 thread 141 s, 2: 120 s, 4: 109 and 117 s, 8: 114 s, 16: 172 s, library default 115 to 127 s. The graph is too small for threads. Gain is inside the noise (about 5 %). Default not changed. Override: `AMANU_ECHO_THREADS`.
+
+**Blocks on several threads** (`AMANU_ECHO_WORKERS=n`, warm-up `AMANU_ECHO_WARMUP_S`, default 10 s): each block has its own model state and starts earlier to warm up; the playback-silence rule is seeded from the audio before the block. With 1 worker or a warm-up that covers the whole file, the audio is bit-identical to one stream (tested). With 8 workers: model 42 s (-66 %), echo stage 46 s against 131 s on `1021` and 40 s against 118 s on `1000`. But the model state has a memory of minutes: warm-up 10, 30 and 60 s all give the same size of difference, and it is not only at block starts. Measured against one stream (`1000`): first block identical, later blocks max sample difference 0.01 to 0.02, RMS of the difference -76 dBFS (cleaned mic is -54 dBFS); echo suppression 9.00 dB against 8.99 dB. Words: `1021` 2228 against 2216, quiet speaker WER 0.0 % -> 2.6 %; `1000` 1646 against 1638, WER 42.1 % both. The rule is "same result" and the quiet speaker must stay 0.0 %, so blocks are **off by default**. A native fix is possible (a bigger model state hand-over is not exposed by the library), but cannot be built on this PC.
+
+**Lighter model:** none found. Only `localvqe-v1.4-aec-200K-f32.gguf` is shipped; no f16 or quantized file exists in the repo, the build folder or `echo-runtime`. A quantized file would also need a new SHA-256 pin and an echo-quality check.
+
+**Result:** no safe change reaches the 25 % target. Kept in the branch: the stage timings in `transcribe.log` (new), the thread and block options (opt in, default exact), and a test that blocks equal one stream. A rebuild of the library with a model state hand-over (or a smaller model) would be the next step.
+
+- [x] Profile the echo stage
+- [x] Thread count (no gain)
+- [x] Blocks in parallel (-66 %, not identical: opt in only)
+- [ ] Lighter model (none available)
