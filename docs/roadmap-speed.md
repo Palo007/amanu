@@ -93,10 +93,25 @@ Step 2 result (AC power, Amanu closed, after a warm-up run):
 
 ## Step 3: system track during echo removal (medium)
 
-- [ ] Echo removal changes only the mic. Start system-track ASR on the original system audio while echo removal runs (`ProcessingCoordinator.cs:420-437`, `OfflineEchoAudio.cs`).
-- [ ] Then run mic ASR on the cleaned mic.
+- [x] Echo removal changes only the mic. System-track ASR starts on the original system audio while echo removal runs (`SystemOverlap.cs`, `ProcessingCoordinator.CancelEchoAsync`, `OfflineEchoAudio.PrepareSystemOnly`). It runs under the echo pass's CPU gate lease, so live preemption cancels it too. Off by default: `AMANU_ASR_OVERLAP=1` turns it on, `AMANU_ASR_OVERLAP_THREADS` sets its threads.
+- [x] Then mic ASR runs on the cleaned mic (`LocalTranscriptionEngine.PrecomputedSystem`).
 
-Done when: total time is ≥20% lower than step 2, and the echo filter results are unchanged.
+Result (2026-11-07, recording 1000, GPU, same build, overlap off = master behaviour): **no gain, goal not met.**
+
+| Run | echo | system ASR (overlap) | mic ASR | total |
+|---|---|---|---|---|
+| off (master) | 129.9 | - | 101.5 (both tracks together, 8 threads each) | 235.6 |
+| on, system 8 threads, mic 16 threads | 145.7 | 75.4 | 132.8 | 280.8 |
+| on, system 4 threads, mic 16 threads | 142.5 | 72.6 | 129.7 | 274.5 |
+| on, system 2 threads, mic 16 threads | 141.5 | 74.1 | 132.7 | 276.5 |
+| on, system 4 threads, mic 8 threads | 153.7 | 93.6 | 76.4 | 232.4 |
+
+- Words identical to the master baseline in all runs (228 segments, same text and times).
+- Why no gain: on master both tracks already run at the same time, so the longer one (the mic) sets the ASR time. Hiding the system track does not shorten the mic track. Mic ASR alone is faster (76 s vs 101 s) but echo removal gets slower (130 s to 154 s) because ASR and LocalVQE share the CPU. Net: -1 %.
+- A single ASR run on all 16 threads is slower than on 8 (133 s vs 76 s on the GPU path). The overlap code keeps the mic at an even share of the threads.
+- To get 20 %, the mic ASR itself must overlap with echo removal: start mic chunk k when the echo output has passed chunk k+1. Echo then ends about one chunk before the total. That changes the per-chunk loop (Step 5 area) and the echo output writer.
+
+Done when: total time is ≥20% lower than step 2, and the echo filter results are unchanged. **Not reached with system-only overlap. Code kept, off by default.**
 
 ## Step 4: speech level normalization (medium) — quality
 

@@ -133,6 +133,35 @@ public static class OfflineEchoAudio
     }
 
     /// <summary>
+    /// The system track as <see cref="Prepare"/> will write it to system.wav, made
+    /// without the mic: the same decode, with the same lead of silence. Echo removal
+    /// does not change this track, so recognition can start on it while the mic is
+    /// cleaned. Only the tail (silence up to the longer track) is left out.
+    /// </summary>
+    public static void PrepareSystemOnly(SessionAudio audio, string destination, CancellationToken cancellationToken)
+    {
+        if (!audio.BothSides) throw new InvalidOperationException("Needs both the mic and the system track.");
+        var start = Math.Min(audio.MicrophoneOffsetMs, audio.SystemOffsetMs);
+        var lead = (long)(audio.SystemOffsetMs - start) * EchoCanceller.SampleRate / 1000;
+        using var reader = new AudioFileReader(audio.System!);
+        var samples = AudioPreprocessor.Mono16k(reader);
+        using var writer = new WaveFileWriter(destination, WaveFormat.CreateIeeeFloatWaveFormat(EchoCanceller.SampleRate, 1));
+        var buffer = new float[OfflineEcho.WindowSamples];
+        for (var remaining = lead; remaining > 0;)
+        {
+            var count = (int)Math.Min(remaining, buffer.Length);
+            writer.Write(MemoryMarshal.AsBytes(new ReadOnlySpan<float>(new float[count])));
+            remaining -= count;
+        }
+        int read;
+        while ((read = samples.Read(buffer.AsSpan())) > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            writer.Write(MemoryMarshal.AsBytes(buffer.AsSpan(0, read)));
+        }
+    }
+
+    /// <summary>
     /// The session's hidden folder for this processor and these exact sources.
     /// A changed track, offset or processor revision is a different folder.
     /// </summary>
