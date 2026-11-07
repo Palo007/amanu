@@ -7,10 +7,16 @@ namespace Amanu.App;
 
 public static class AudioPreprocessor
 {
-    public sealed record ContextChunk(string Path, long OffsetMs, long StartMs, long EndMs);
+    public sealed record ContextChunk(string Path, long OffsetMs, long StartMs, long EndMs, SilenceSkip.TimeMap? Map = null);
 
     /// <summary>Bound Parakeet's attention memory while retaining context on each side of a cut.</summary>
-    public static IReadOnlyList<ContextChunk> SplitWithContext(string wave, string directory, int seconds, int contextSeconds)
+    /// <param name="keep">
+    /// Block ranges to keep (<see cref="MeasureSpeechBlocks"/>), or null for all audio. A chunk
+    /// is written without the audio outside them, with a <see cref="ContextChunk.Map"/> from
+    /// its own time back to the track; a chunk with nothing to keep is not written.
+    /// </param>
+    public static IReadOnlyList<ContextChunk> SplitWithContext(string wave, string directory, int seconds, int contextSeconds,
+        IReadOnlyList<(int From, int To)>? keep = null)
     {
         if (seconds <= 0 || contextSeconds < 0) throw new ArgumentOutOfRangeException(nameof(seconds));
         using var reader = new WaveFileReader(wave);
@@ -24,23 +30,72 @@ public static class AudioPreprocessor
             var end = Math.Min(reader.Length, start + coreBytes);
             var from = Math.Max(0, start - contextBytes);
             var through = Math.Min(reader.Length, end + contextBytes);
-            reader.Position = from;
             var path = Path.Combine(directory, $"context-{result.Count:0000}.wav");
-            using (var writer = new WaveFileWriter(path, format))
+            var bytesPerBlock = (long)format.AverageBytesPerSecond / 10;
+            var offsetMs = from * 1000 / format.AverageBytesPerSecond;
+            SilenceSkip.TimeMap? map = null;
+            (long From, long Through)[] ranges = [(from, through)];
+            if (keep is not null)
             {
-                var remaining = through - from;
-                while (remaining > 0)
+                var local = keep
+                    .Select(span => (From: Math.Max(from, span.From * bytesPerBlock), To: Math.Min(through, span.To * bytesPerBlock)))
+                    .Where(span => span.To > span.From)
+                    .ToArray();
+                if (local.Length == 0) continue;
+                if (!(local.Length == 1 && local[0].From == from && local[0].To == through))
                 {
-                    var read = reader.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
-                    if (read == 0) throw new EndOfStreamException("Audio ended before its declared length.");
-                    writer.Write(buffer, 0, read);
-                    remaining -= read;
+                    ranges = local.Select(span => (span.From, span.To)).ToArray();
+                    map = new SilenceSkip.TimeMap(
+                        ranges.Select(span => ((int)((span.From - from) / bytesPerBlock), (int)((span.Through - from + bytesPerBlock - 1) / bytesPerBlock))).ToArray(),
+                        100);
                 }
             }
-            result.Add(new ContextChunk(path, from * 1000 / format.AverageBytesPerSecond,
-                start * 1000 / format.AverageBytesPerSecond, end * 1000 / format.AverageBytesPerSecond));
+            using (var writer = new WaveFileWriter(path, format))
+            {
+                foreach (var (rangeFrom, rangeThrough) in ranges)
+                {
+                    reader.Position = rangeFrom;
+                    var remaining = rangeThrough - rangeFrom;
+                    while (remaining > 0)
+                    {
+                        var read = reader.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                        if (read == 0) throw new EndOfStreamException("Audio ended before its declared length.");
+                        writer.Write(buffer, 0, read);
+                        remaining -= read;
+                    }
+                }
+            }
+            result.Add(new ContextChunk(path, offsetMs, start * 1000 / format.AverageBytesPerSecond,
+                end * 1000 / format.AverageBytesPerSecond, map));
         }
         return result;
+    }
+
+    /// <summary>
+    /// Roadmap step 6. Measures a 16-bit mono 16 kHz track and returns the block
+    /// ranges (100 ms each) to keep, or null when nothing can be left out.
+    /// </summary>
+    public static IReadOnlyList<(int From, int To)>? MeasureSpeechBlocks(string wave)
+    {
+        var meter = new SpeechLevels.Meter();
+        using (var reader = new WaveFileReader(wave))
+        {
+            if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm || reader.WaveFormat.BitsPerSample != 16
+                || reader.WaveFormat.Channels != 1 || reader.WaveFormat.SampleRate != SpeechLevels.SampleRate)
+                return null;
+            var bytes = new byte[SpeechLevels.BlockSamples * 20];
+            var floats = new float[bytes.Length / 2];
+            int read;
+            while ((read = reader.Read(bytes, 0, bytes.Length)) > 0)
+            {
+                var count = read / 2;
+                for (var index = 0; index < count; index++) floats[index] = BitConverter.ToInt16(bytes, index * 2) / 32768f;
+                meter.Add(floats.AsSpan(0, count));
+            }
+        }
+        var blocks = meter.Finish();
+        var keep = SilenceSkip.KeepBlocks(blocks);
+        return keep.Count == 1 && keep[0].From == 0 && keep[0].To >= blocks.Length ? null : keep;
     }
 
     public static int DurationSeconds(string source)

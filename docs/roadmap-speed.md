@@ -156,9 +156,21 @@ Done when: ASR time is lower and word timestamps are the same.
 
 ## Step 6: skip silence (medium)
 
-- [ ] Reuse the step 4 level measurement. Drop chunks that are only at the noise floor before ASR. Keep the timestamps right.
+- [x] Reuse the step 4 level measurement. Drop chunks that are only at the noise floor before ASR. Keep the timestamps right.
+  - `SilenceSkip` (Core) uses the `SpeechLevels` windows. "Quiet" is relative to the track's own floor (10th percentile) plus 6 dB, so a quiet speaker is far above it. A quiet run of 5 s or more is left out; 1 s of audio stays on each side. Short pauses stay.
+  - The 60 s chunk grid does not move. Each chunk file is written without the left-out parts; a chunk with nothing left is not run. Each chunk has its own time map back to the track, so word times stay right. `AMANU_SKIP_SILENCE=0` turns it off. The timing line shows `audio sent`.
+  - First try (cut the whole track, then make chunks) moved the chunk grid: 1.3 % WER on the quiet speaker. Dropped.
 
-Done when: ASR time is lower on calls with long silence, with no lost words in the WER set.
+Done when: ASR time is lower on calls with long silence, with no lost words in the WER set. **Done on branch `step6-silence` (2026-11-07), not merged.**
+
+Step 6 result (Vulkan GPU, AC power, same build, `AMANU_SKIP_SILENCE=0` for the baseline):
+
+| Recording | ASR off | ASR on | Audio sent off / on | Words off / on | WER |
+|---|---|---|---|---|---|
+| 1000 | 108.4 s | 88.5 s (-18 %) | 881 / 677-809 s | 1639 / 1652 | 42.5 % / 41.7 % (silver) |
+| 1021 | 118.5 s | 102.1 s (-14 %) | 995 / 858-925 s | 2225 / 2228 | quiet speaker 2.0 % / 0.0 % |
+
+The master GPU baseline of the step 7 report is 100.1 s (1000) and 111.6 s (1021); this PC was busier now. CPU path, 1021: 180.9 s off, 170.7 s on (-6 %; this was the first build, the one that moved the grid). Words are not byte-identical: 25 (1021) and 34 (1000) small substitutions, both ways, at about the size of the GPU/CPU noise. No word was lost in a speech part. The disk was full for part of the run, so the 1021 "on" figure is the warm-up run of the same build.
 
 ## Step 7: GPU (large, optional)
 
