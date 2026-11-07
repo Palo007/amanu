@@ -254,12 +254,29 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             {
                 // Step 6: long noise-only stretches are left out of each chunk; chunk times map back below.
                 IReadOnlyList<(int From, int To)>? keep = null;
-                if (!string.Equals(Environment.GetEnvironmentVariable("AMANU_SKIP_SILENCE"), "0", StringComparison.Ordinal))
+                IReadOnlyList<int>? cuts = null;
+                var skipSilence = !string.Equals(Environment.GetEnvironmentVariable("AMANU_SKIP_SILENCE"), "0", StringComparison.Ordinal);
+                // Off by default: it did not keep the quiet speaker at 0.0 % WER (docs/roadmap-speed.md, "Pause cuts").
+                var pauseCuts = string.Equals(Environment.GetEnvironmentVariable("AMANU_PAUSE_CUTS"), "1", StringComparison.Ordinal);
+                if (skipSilence || pauseCuts)
                 {
-                    try { keep = AudioPreprocessor.MeasureSpeechBlocks(wave); }
-                    catch (Exception exception) when (exception is IOException or InvalidDataException or FormatException) { keep = null; }
+                    try
+                    {
+                        var blocks = AudioPreprocessor.MeasureBlocks(wave);
+                        if (blocks is not null)
+                        {
+                            if (skipSilence)
+                            {
+                                var spans = SilenceSkip.KeepBlocks(blocks);
+                                keep = spans.Count == 1 && spans[0].From == 0 && spans[0].To >= blocks.Length ? null : spans;
+                            }
+                            // Roadmap "pause cuts": cut at a pause between 40 s and 60 s, not inside a word.
+                            if (pauseCuts) cuts = PauseCuts.Boundaries(blocks, 600, 400);
+                        }
+                    }
+                    catch (Exception exception) when (exception is IOException or InvalidDataException or FormatException) { keep = null; cuts = null; }
                 }
-                var chunks = AudioPreprocessor.SplitWithContext(wave, temp, 60, 1, keep);
+                var chunks = AudioPreprocessor.SplitWithContext(wave, temp, 60, 1, keep, cuts);
                 timing.AudioSeconds = chunks.Sum(chunk => new FileInfo(chunk.Path).Length / 32000.0);
                 var words = new List<TimedWord>();
                 var fallback = new List<TranscriptSegment>();

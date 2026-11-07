@@ -172,6 +172,25 @@ Step 6 result (Vulkan GPU, AC power, same build, `AMANU_SKIP_SILENCE=0` for the 
 
 The master GPU baseline of the step 7 report is 100.1 s (1000) and 111.6 s (1021); this PC was busier now. CPU path, 1021: 180.9 s off, 170.7 s on (-6 %; this was the first build, the one that moved the grid). Words are not byte-identical: 25 (1021) and 34 (1000) small substitutions, both ways, at about the size of the GPU/CPU noise. No word was lost in a speech part. The disk was full for part of the run, so the 1021 "on" figure is the warm-up run of the same build.
 
+## Pause cuts
+
+Idea: cut the track for ASR at a pause, not every 60 s, so a cut is not inside a word. Branch `pause-cuts` (on top of `step6-silence`), **not merged, off by default** (`AMANU_PAUSE_CUTS=1` turns it on).
+
+- `PauseCuts` (Core) uses the `SpeechLevels` blocks. In each chunk it searches 40-60 s after the chunk start for the quietest 300 ms (under the track's floor + 10 dB). No pause: cut at 60 s. A chunk is never longer than 60 s; context stays 1 s each side. `SilenceSkip` still works on top.
+- Result (same build, CPU path: the runs used `backend cpu`; AC power; `AMANU_SKIP_SILENCE`/`AMANU_PAUSE_CUTS` 0/1 select the mode):
+
+| Mode | 1000 ASR | 1000 WER (silver) | 1021 ASR | 1021 quiet speaker WER | Runs 1021 |
+|---|---|---|---|---|---|
+| master (both off) | 166.3 s | 42.1 % | 189.7 s | 0.0 % | 17 |
+| step 6 | 143.3 s | 41.7 % | 168.0 s | 0.7 % | 17 |
+| pause cuts only | 187.3 s | 41.9 % | 185.7 s | 3.9 % | 20 |
+| step 6 + pause cuts | 167.1 s | 41.9 % | 169.1 s | 3.9 % | 20 |
+
+- Gate failed: the quiet-speaker minute went from 0.0 % to 3.9 % (6 errors). ASR time is not better than step 6 (more chunks: 20 against 17 runs on one track).
+- Word differences: 1021 has 35 differences against master with pause cuts only (28 for step 6); 1000 has 43 (44 for step 6). They are small substitutions, inserts and deletes spread over the whole track, not only near old 60 s points. Moving one cut moves every later chunk, and the model hears each chunk with different context. This is the same effect that hurt the quiet speaker in the first step 6 try.
+- A grid that stays at 60 s (cut only in 55-60 s, no drift) cannot keep chunks at or under 60 s, so it was not tried.
+- Next: only worth it with a measured gain for a fixed-grid method, or on GPU with more runs. Tests: `PauseCutsTests`, `LongAudioChunkTests` (all pass).
+
 ## Step 7: GPU (large, optional)
 
 - [x] Build transcribe.cpp with Vulkan (`Build-LocalRuntime.ps1:40`). Use `--backend vulkan` with CPU fallback.

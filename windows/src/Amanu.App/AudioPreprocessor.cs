@@ -16,7 +16,7 @@ public static class AudioPreprocessor
     /// its own time back to the track; a chunk with nothing to keep is not written.
     /// </param>
     public static IReadOnlyList<ContextChunk> SplitWithContext(string wave, string directory, int seconds, int contextSeconds,
-        IReadOnlyList<(int From, int To)>? keep = null)
+        IReadOnlyList<(int From, int To)>? keep = null, IReadOnlyList<int>? cutBlocks = null)
     {
         if (seconds <= 0 || contextSeconds < 0) throw new ArgumentOutOfRangeException(nameof(seconds));
         using var reader = new WaveFileReader(wave);
@@ -25,9 +25,25 @@ public static class AudioPreprocessor
         var contextBytes = checked(format.AverageBytesPerSecond * contextSeconds);
         var buffer = new byte[checked(coreBytes + 2 * contextBytes)];
         var result = new List<ContextChunk>();
-        for (long start = 0; start < reader.Length; start += coreBytes)
+        var blockBytes = (long)format.AverageBytesPerSecond / 10;
+        // Core spans: the fixed grid, or the pause cuts (each at most `seconds` long).
+        var cores = new List<(long Start, long End)>();
+        if (cutBlocks is { Count: > 0 })
         {
-            var end = Math.Min(reader.Length, start + coreBytes);
+            long previous = 0;
+            foreach (var block in cutBlocks)
+            {
+                var at = Math.Min(reader.Length, Math.Min(previous + coreBytes, (long)block * blockBytes));
+                if (at <= previous) continue;
+                cores.Add((previous, at));
+                previous = at;
+            }
+            if (previous < reader.Length) cores.Add((previous, reader.Length));
+        }
+        else
+            for (long at = 0; at < reader.Length; at += coreBytes) cores.Add((at, Math.Min(reader.Length, at + coreBytes)));
+        foreach (var (start, end) in cores)
+        {
             var from = Math.Max(0, start - contextBytes);
             var through = Math.Min(reader.Length, end + contextBytes);
             var path = Path.Combine(directory, $"context-{result.Count:0000}.wav");
@@ -77,6 +93,15 @@ public static class AudioPreprocessor
     /// </summary>
     public static IReadOnlyList<(int From, int To)>? MeasureSpeechBlocks(string wave)
     {
+        var blocks = MeasureBlocks(wave);
+        if (blocks is null) return null;
+        var keep = SilenceSkip.KeepBlocks(blocks);
+        return keep.Count == 1 && keep[0].From == 0 && keep[0].To >= blocks.Length ? null : keep;
+    }
+
+    /// <summary>Mean square of each 100 ms block of a 16-bit mono 16 kHz track, or null for another format.</summary>
+    public static double[]? MeasureBlocks(string wave)
+    {
         var meter = new SpeechLevels.Meter();
         using (var reader = new WaveFileReader(wave))
         {
@@ -93,9 +118,7 @@ public static class AudioPreprocessor
                 meter.Add(floats.AsSpan(0, count));
             }
         }
-        var blocks = meter.Finish();
-        var keep = SilenceSkip.KeepBlocks(blocks);
-        return keep.Count == 1 && keep[0].From == 0 && keep[0].To >= blocks.Length ? null : keep;
+        return meter.Finish();
     }
 
     public static int DurationSeconds(string source)
