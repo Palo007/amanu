@@ -165,7 +165,10 @@ Done when: WER is lower (or the same) on all test recordings and lower on the qu
 
 ## Step 5: fewer model reloads (medium)
 
-- [ ] Today each 60 s chunk starts a new process (~14 per track). Test `--batch` with `--timestamps word` (the Whisper path uses `--batch`, `:184`). If it works, use one process per track.
+- [x] Today each 60 s chunk starts a new process (~14 per track). Test `--batch` with `--timestamps word` (the Whisper path uses `--batch`, `:184`). If it works, use one process per track.
+  - Tested 2026-11-07 by hand with the prebuilt `transcribe-cli.exe` (CPU, 3 chunks of 61 s). Result: **not possible with this CLI.** With `--batch` (with or without `--batch-jsonl`) and `--timestamps word`, the output has no word lines and no word list. The JSONL has one segment per file (whole span) and no words. Amanu needs the words to cut chunk overlap and to group segments, so the output is not the same as one process per chunk.
+  - Gain would be small: batch header shows `load_ms` 776 (model load per process, warm cache) against about 5.8 s of ASR per 61 s chunk, so at most 15 x 0.8 s = about 12 s per track.
+  - No code change. A fix needs a change in transcribe.cpp (word timestamps in batch output), which cannot be rebuilt on this PC.
 
 Done when: ASR time is lower and word timestamps are the same.
 
