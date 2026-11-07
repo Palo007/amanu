@@ -222,6 +222,33 @@ Vulkan together with Step 2 (both tracks at the same time on one iGPU, 8 + 8 CPU
 - Both tracks share the one iGPU without errors. Together they are faster than one after the other (100.1 s vs 124.6 s).
 - GPU beats Step 2 on the CPU on both recordings. Echo removal is now the largest stage (Step 3).
 
+## Custom words (names and company words) — quality
+
+Names are often misheard. One list helps: `custom-words.txt` in the app data folder (`%LOCALAPPDATA%\Amanu Data`), one entry per line, `#` for comments. It is never in git. `AMANU_CUSTOM_WORDS=<file>` points to another file (for measuring). The list is read at each transcription, so an edit needs no restart. With no file or an empty list, nothing changes and nothing is written.
+
+Research (2026-11-07):
+
+| Engine | Takes a word list? | What Amanu does |
+|---|---|---|
+| Local Parakeet (`transcribe-cli` 0.1.3) | No. `--help` has `--initial-prompt` for Whisper only. No hotwords or context biasing for Parakeet. | Post-ASR correction (below). |
+| AssemblyAI | Yes: `keyterms_prompt`, up to 200 phrases (Universal-2) or 1000 (Universal-3.5 Pro), 6 words each. | Sent, first 200 entries. |
+| ElevenLabs Scribe v2 | Yes: `keyterms`, up to 1000, 50 characters and 5 words each. +20 % cost; over 100 terms a 20 s minimum per request. | Sent, first 100 entries. |
+| OpenAI diarizing model | `prompt` is not documented for it (the docs page was not readable; not verified). | Post-ASR correction. |
+
+Cloud cache keys include a digest of the list, so a changed list asks the cloud again. An empty list keeps the old keys.
+
+Post-ASR correction (`CustomWords.Correct`, local engine and OpenAI): a run of heard words is replaced by a list entry only when all of these hold. The entry has 5 letters or more. The run has the entry's word count, one more or one less, with only blanks between the words. The letters are within 1 edit (2 for entries of 8 letters or more; a swap of two neighbours counts as 1). The first letter is the same. The consonant skeleton is the same (ph=f, ck=k, c/q=k, x=ks, b=p, d=t, g=k, z=s, v=f; vowels, y, h, w dropped). A Slovak case ending (-om, -ou, -ovi and so on) is kept. A run that already holds a list entry is left alone. The raw transcript is saved as `transcript.raw.json` and every change goes to `processing.json` (`custom_word_corrections`: segment, start, heard, word, distance).
+
+Test (2026-11-07). The ASR is not changed by this feature, so the correction ran on the recordings' own Parakeet `transcript.json` files (no new publish: the disk had 1.4 GB free). A private list of 6 names from the test recordings, kept outside git.
+
+| Reference | WER before | WER after |
+|---|---|---|
+| `2026.11.06-1000` (silver) | 42.1 % (206/489) | 41.7 % (204/489) |
+| `2026.11.06-1021` (silver) | 30.8 % (144/467) | 30.0 % (140/467) |
+| `2026.11.06-1021` hand-checked quiet speaker | 0.0 % | 0.0 % |
+
+12 corrections in all: 6 inside the reference windows, all good; 6 outside the windows, all look right by sound and context; 0 wrong. Three list names were not corrected (too far in spelling): the strict limits trade recall for no false changes. Not tested: a real run through the app, and the cloud request bodies against the live APIs (no keys used).
+
 ## Later (other review items, not speed)
 
 - Speaker diarization on the system track (sherpa-onnx).

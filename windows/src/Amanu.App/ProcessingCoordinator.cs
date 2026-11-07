@@ -23,7 +23,9 @@ public sealed record ProcessingLedger(
     bool NamesAsked = false,
     string? LastError = null,
     EchoCancellationRecord? AudioEchoCancellation = null,
-    LevelNormalizationRecord? AudioLevelNormalization = null);
+    LevelNormalizationRecord? AudioLevelNormalization = null,
+    // Custom words put in place of close-sounding words (roadmap "Custom words"); the raw text is in transcript.raw.json.
+    IReadOnlyList<CustomWordCorrection>? CustomWordCorrections = null);
 
 /// <summary>Which audio recognition heard: LocalVQE's cleaned mic, the exact mic (no playback), or — skipped — the raw tracks.</summary>
 public sealed record EchoCancellationRecord(
@@ -430,6 +432,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             var recognition = Stopwatch.StartNew();
             var transcript = await RunPlanAsync(plan, heard, directory, current, cancellationToken).ConfigureAwait(false);
             LogTiming(directory, "asr", recognition.Elapsed);
+            transcript = ApplyCustomWords(directory, transcript);
             cleaned?.Delete();
             cleaned = null;
             leveled?.Delete();
@@ -618,6 +621,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             var recognition = Stopwatch.StartNew();
             var transcript = await RunPlanAsync(plan with { Cloud = null }, heard, output, current, cancellationToken).ConfigureAwait(false);
             LogTiming(output, "asr", recognition.Elapsed);
+            transcript = ApplyCustomWords(output, transcript);
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
             await TranscriptWriter.WriteAsync(output, audio.Title, transcript, null, cancellationToken).ConfigureAwait(false);
@@ -744,9 +748,39 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         return provider switch
         {
             "openai" => new OpenAiTranscriptionEngine(httpClient, key, current.Transcription.OpenAi.Model, MeetingLanguages.Pin(expected), cache),
-            "elevenlabs" => new ElevenLabsTranscriptionEngine(httpClient, key, cache),
-            _ => new AssemblyAiTranscriptionEngine(httpClient, key, expected, current.Transcription.AssemblyAi.SpeechModel, cache),
+            "elevenlabs" => new ElevenLabsTranscriptionEngine(httpClient, key, cache, LoadCustomWords()),
+            _ => new AssemblyAiTranscriptionEngine(httpClient, key, expected, current.Transcription.AssemblyAi.SpeechModel, cache, LoadCustomWords()),
         };
+    }
+
+    /// <summary>The user's word list (empty when there is none): read at each use, so an edit needs no restart.</summary>
+    internal static IReadOnlyList<string> LoadCustomWords()
+    {
+        var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var dataDirectory = Path.Combine(localData, "Amanu Data");
+#if DEBUG
+        if (Environment.GetEnvironmentVariable("AMANU_TEST_DATA") is { Length: > 0 } testDirectory)
+            dataDirectory = Path.GetFullPath(testDirectory);
+#endif
+        return CustomWords.Load(CustomWords.DefaultPath(dataDirectory));
+    }
+
+    /// <summary>
+    /// Engines that take the list (AssemblyAI, ElevenLabs) were given it. For the
+    /// rest (local models, OpenAI's diarizing model) close-sounding words are
+    /// replaced by list entries. The raw text is kept and every change is
+    /// logged in processing.json. An empty list changes nothing and writes nothing.
+    /// </summary>
+    private static TranscriptDocument ApplyCustomWords(string directory, TranscriptDocument transcript)
+    {
+        if (transcript.Engine is "assemblyai" or "elevenlabs") return transcript;
+        var words = LoadCustomWords();
+        if (words.Count == 0) return transcript;
+        var (segments, corrections) = CustomWords.Correct(transcript.Segments, words);
+        if (corrections.Count == 0) return transcript;
+        File.WriteAllText(Path.Combine(directory, "transcript.raw.json"), JsonSerializer.Serialize(transcript));
+        WriteLedger(directory, ReadLedger(directory) with { CustomWordCorrections = corrections });
+        return transcript with { Segments = segments };
     }
 
     public ITranscriptionEngine CreateLocal(string model, AppSettings current) =>
