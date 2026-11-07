@@ -110,5 +110,12 @@ No recording found so far loses quiet words, so it stays off by default. See ste
 | Roadmap steps 0, 1, 2 and 7 (measure, threads, both tracks in parallel, GPU) | Done. All 232 Windows tests pass. |
 | Roadmap step 4 (level normalization) | Built, off by default. |
 | Roadmap steps 3, 5, 6 | Open: system track during echo removal, fewer model reloads, skip silence. |
-| Release builds | Windows portable zip from 0.7.0. No signing, no installer, no auto-update. |
+| Release builds | Windows portable zip from 0.8.0. No signing, no installer, no auto-update. |
 | Wider hardware testing | Measured on one PC (Ryzen 7 5800H). Not tested elsewhere. |
+
+## 0.8.0 (speed and quality round)
+
+- Skip long silence before ASR (Parakeet): ASR about 14-18 % faster. Off switch: `AMANU_SKIP_SILENCE=0`.
+- Custom words: `%LOCALAPPDATA%\Amanu Data\custom-words.txt`, one entry per line. Empty list = no change. Sent to AssemblyAI and ElevenLabs; strict post-ASR fix for local/OpenAI. Raw text kept in `transcript.raw.json`.
+- Off by default, opt-in switches: `AMANU_PAUSE_CUTS=1` (fails quiet-speaker test), `AMANU_ASR_OVERLAP=1` (no gain), `AMANU_ECHO_WORKERS=8` (faster echo, audio differs), `AMANU_ECHO_THREADS`.
+- Details and numbers: `docs/roadmap-speed.md`.

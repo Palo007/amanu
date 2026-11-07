@@ -54,7 +54,7 @@ public sealed class SystemOverlapTests
         {
             var audio = new SessionAudio(directory, "t", Tone(Path.Combine(directory, "mic.wav"), 1.2, 300, 16_000),
                 Tone(Path.Combine(directory, "system.wav"), 1.0, 440, 48_000), null, micOffsetMs, systemOffsetMs);
-            var prepared = OfflineEchoAudio.Prepare(audio, () => new PassBackend(), CancellationToken.None);
+            var prepared = OfflineEchoAudio.Prepare(audio, _ => new PassBackend(), CancellationToken.None);
             var only = Path.Combine(directory, "only.wav");
             OfflineEchoAudio.PrepareSystemOnly(audio, only, CancellationToken.None);
 

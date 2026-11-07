@@ -1,6 +1,6 @@
 # Amanu
 
-> **This is a fork of [gsamat/amanu](https://github.com/gsamat/amanu), version 0.7.0.**
+> **This is a fork of [gsamat/amanu](https://github.com/gsamat/amanu), version 0.8.0.**
 > It adds offline echo removal, local Parakeet models (including Slovak) and faster
 > Windows transcription. See [FORK-OVERVIEW.md](FORK-OVERVIEW.md) for what it adds
 > and who it is for. Fork download: [Releases](https://github.com/Palo007/amanu/releases/latest)
