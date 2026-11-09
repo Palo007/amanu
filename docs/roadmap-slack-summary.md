@@ -25,7 +25,7 @@ breaks each time Google changes the page.
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
 | 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measure first; wiring waits for my decision |
 | 7 | Slovak Whisper (`whisper-sk`): measure | M | C: Engines | Measured; not better (higher WER, 4 times slower) |
-| 8 | Slovak Canary (`canary-sk`): research, measure | L | C: Engines | Research first, then measure |
+| 8 | Slovak Canary (`canary-sk`): research, measure | L | C: Engines | Measured; not better (higher WER, a little slower) |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
 | 10 | Summaries on demand, several per recording | M | B: Slack card | Done, checked by hand |
 
@@ -535,7 +535,7 @@ Model: kinit/canary-1b-v2-sk (the KInIT fine-tune of nvidia/canary-1b-v2, about
 Canary. `amanu_local.py` in amanu-gemini ran a Canary model through a
 `transcribe-cli`, so check that first.
 
-- [ ] Research (subagent, cheap model, report of 15 lines or less): does a
+- [x] Research (subagent, cheap model, report of 15 lines or less): does a
   Slovak Canary exist, and does it run on this PC? Check `transcribe-cli` (the
   version that `amanu_local.py` used, or a newer one), sherpa-onnx (the library
   of step 4), an ONNX export, and a Python runtime. Write down CPU or Vulkan,
@@ -555,9 +555,32 @@ Research (2026-11-09):
 - Disk: the `.nemo` plus the F32 GGUF need about 10.5 GB. C: has 8.6 GB
   free, so this does not fit now.
 
-- [ ] If one runs: ask me before the download, then measure it as in step 7.
-- [ ] Write the result table here. If it is as good as `parakeet-sk` or better,
+- [x] If one runs: ask me before the download, then measure it as in step 7.
+- [x] Write the result table here. If it is as good as `parakeet-sk` or better,
   ask me whether to wire it.
+
+Result (2026-11-09): **not better.** `canary-sk` has a clearly higher WER than
+`parakeet-sk` on both recordings, it is a little slower, and it writes a line
+in nearly every near-silent chunk. It stays out of the app.
+
+| Model (Vulkan) | WER 1021 (me, them) | WER 1000 (me, them) | ASR s 1021 | ASR s 1000 | Near-silent chunks with text | Loops |
+|---|---|---|---|---|---|---|
+| `parakeet-sk` Q8_0 | **29.6 %** (47.9, 16.5) | **42.9 %** (77.5, 26.1) | 137 | 115 | 19 lines (1021), 104 lines (1000) | 4 / 1 |
+| `canary-sk` Q8_0 (1.14 GB) | 39.6 % (55.2, 28.6) | 48.1 % (75.6, 34.7) | 161 | 148 | 8 of 8 (1021), 13 of 15 (1000) | 5 / 3 |
+
+How it was measured: the same echo-cleaned 60 s chunk WAVs as in step 7, one
+`transcribe-cli` batch per recording, one segment per chunk (Canary gives no
+time stamps), and the same per-side scorer.
+
+- Conversion: `convert-canary.py` needs NeMo. A shim that reads the `.nemo`
+  tar directly and feeds the converter worked at once: F32 GGUF 3.74 GB
+  (1476 tensors), then Q8_0.
+- In `1000`, 2 of 30 chunks failed every time with "output truncated: decode
+  hit the context/generation cap", and `transcribe-cli` exited with code 1. Both
+  are outside the scored window, so they do not change the WER above. In the
+  app this would need shorter chunks.
+- The base model (`canary-1b-v2`) was not run: its GGUF is not on this PC
+  (only an empty lock file in the Hugging Face cache).
 
 ## Step 9: a Settings screen for more engines (size: M, session D)
 
