@@ -49,6 +49,10 @@ internal sealed class SetupForm
     private readonly TextBlock keySavedText = Ui.Status();
     private string? pendingProvider;
     private bool replacingKey;
+    /// <summary>True while the key field takes one more Gemini key instead of replacing the first.</summary>
+    private bool addingKey;
+    private Button addKey = null!;
+    private Button removeExtraKeys = null!;
 
     private readonly CheckBox local = Ui.Switch(T("On this computer", "На этом компьютере"));
     private TextBlock localDetail = Ui.Detail("");
@@ -212,9 +216,17 @@ internal sealed class SetupForm
         cloudKeyStatus.Margin = new Thickness(10, 0, 0, 0);
         keyLine.Children.Add(cloudKeyStatus);
         keySaved.Children.Add(keySavedText);
-        var replace = Ui.Button(T("Replace key…", "Заменить ключ…"), () => { replacingKey = true; Refresh(); cloudKey.Focus(); });
+        var replace = Ui.Button(T("Replace key…", "Заменить ключ…"), () => { replacingKey = true; addingKey = false; Refresh(); cloudKey.Focus(); });
         replace.Margin = new Thickness(10, 0, 0, 0);
         keySaved.Children.Add(replace);
+        addKey = Ui.Button(T("Add another key…", "Добавить ещё ключ…"), () => { replacingKey = true; addingKey = true; Refresh(); cloudKey.Focus(); });
+        addKey.Margin = new Thickness(10, 0, 0, 0);
+        addKey.ToolTip = T("When one key has used up its daily quota, Amanu asks with the next.",
+            "Когда у ключа кончится дневная квота, Amanu спросит со следующим.");
+        keySaved.Children.Add(addKey);
+        removeExtraKeys = Ui.Button(T("Remove extra keys", "Удалить лишние ключи"), RemoveExtraGeminiKeys);
+        removeExtraKeys.Margin = new Thickness(10, 0, 0, 0);
+        keySaved.Children.Add(removeExtraKeys);
         var providerOptions = new StackPanel { Margin = new Thickness(16 + Ui.Indent, 0, 16, 14) };
         providerOptions.Children.Add(Ui.Cards([.. providerCards.Values]));
         providerOptions.Children.Add(keyLine);
@@ -428,6 +440,23 @@ internal sealed class SetupForm
 
     private bool HasKey(string name) => !string.IsNullOrWhiteSpace(runtime.GetSecret(name));
 
+    /// <summary>The first empty slot for one more Gemini key, or null when all of them are used.</summary>
+    private string? FreeGeminiSlot => SecretNames.GeminiExtras.FirstOrDefault(slot => !HasKey(slot));
+
+    /// <summary>Keeps the first Gemini key and deletes the others; the first is replaced, not removed, with Replace key.</summary>
+    private void RemoveExtraGeminiKeys()
+    {
+        try
+        {
+            foreach (var slot in SecretNames.GeminiExtras.Where(HasKey)) runtime.SetSecret(slot, null);
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            cloudKeyStatus.Text = T("couldn’t remove the keys: ", "не удалось удалить ключи: ") + exception.Message;
+        }
+        Refresh();
+    }
+
     private string ShownProvider => pendingProvider ?? runtime.Settings.Transcription.Cloud;
 
     private async Task SaveCloudKeyAsync()
@@ -435,10 +464,22 @@ internal sealed class SetupForm
         var key = cloudKey.Password.Trim();
         if (key.Length == 0) return;
         var provider = ShownProvider;
-        var saved = await CheckAndSaveAsync(provider, key, cloudKeyStatus);
+        var slot = provider;
+        if (addingKey && provider == SecretNames.Gemini)
+        {
+            if (SecretNames.GeminiKeys(runtime.GetSecret).Contains(key))
+            {
+                cloudKeyStatus.Text = T("this key is already saved", "этот ключ уже сохранён");
+                cloudKeyStatus.SetResourceReference(TextBlock.ForegroundProperty, Ui.Caution);
+                return;
+            }
+            slot = FreeGeminiSlot ?? provider;
+        }
+        var saved = await CheckAndSaveAsync(slot, key, cloudKeyStatus, provider);
         if (!saved) return;
         cloudKey.Clear();
         replacingKey = false;
+        addingKey = false;
         if (pendingProvider == provider)
         {
             pendingProvider = null;
@@ -468,11 +509,12 @@ internal sealed class SetupForm
         Refresh();
     }
 
-    private async Task<bool> CheckAndSaveAsync(string slot, string key, TextBlock status)
+    /// <param name="checkAs">The service the key is checked against, when the slot is not named after it ("gemini-2").</param>
+    private async Task<bool> CheckAndSaveAsync(string slot, string key, TextBlock status, string? checkAs = null)
     {
         status.Text = T("checking…", "проверяю…");
         status.SetResourceReference(TextBlock.ForegroundProperty, Ui.Secondary);
-        var (verdict, message) = await KeyCheck.CheckAsync(runtime.Http, slot, key, CancellationToken.None);
+        var (verdict, message) = await KeyCheck.CheckAsync(runtime.Http, checkAs ?? slot, key, CancellationToken.None);
         status.Text = message;
         if (verdict == KeyVerdict.Refused)
         {
@@ -685,8 +727,14 @@ internal sealed class SetupForm
             var shownHasKey = HasKey(shown);
             keyLine.Visibility = !shownHasKey || replacingKey ? Visibility.Visible : Visibility.Collapsed;
             keySaved.Visibility = keyLine.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-            keySavedText.Text = T($"The {EngineResolver.DisplayName(shown)} key is kept in Windows Credential Manager.",
-                $"Ключ {EngineResolver.DisplayName(shown)} хранится в диспетчере учётных данных Windows.");
+            var geminiKeys = shown == SecretNames.Gemini ? SecretNames.GeminiKeys(runtime.GetSecret).Count : 0;
+            keySavedText.Text = geminiKeys > 1
+                ? T($"{geminiKeys} Gemini keys are kept in Windows Credential Manager; when one runs out for the day, the next is used.",
+                    $"{geminiKeys} ключа Gemini хранятся в диспетчере учётных данных Windows; когда у одного кончится дневная квота, берётся следующий.")
+                : T($"The {EngineResolver.DisplayName(shown)} key is kept in Windows Credential Manager.",
+                    $"Ключ {EngineResolver.DisplayName(shown)} хранится в диспетчере учётных данных Windows.");
+            addKey.Visibility = shown == SecretNames.Gemini && FreeGeminiSlot is not null ? Visibility.Visible : Visibility.Collapsed;
+            removeExtraKeys.Visibility = geminiKeys > 1 ? Visibility.Visible : Visibility.Collapsed;
             if (pendingProvider is not null && cloudKeyStatus.Text.Length == 0)
                 cloudKeyStatus.Text = T($"paste a key to switch to {EngineResolver.DisplayName(pendingProvider)}",
                     $"вставьте ключ, чтобы перейти на {EngineResolver.DisplayName(pendingProvider)}");

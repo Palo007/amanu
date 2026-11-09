@@ -896,10 +896,12 @@ public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string 
 /// handed is short enough for it to keep timestamps straight, and it is off unless asked for.
 /// </summary>
 public sealed class GeminiTranscriptionEngine(
-    HttpClient httpClient, string apiKey, IReadOnlyList<string> expectedLanguages, bool cache = true,
+    HttpClient httpClient, IReadOnlyList<string> apiKeys, IReadOnlyList<string> expectedLanguages, bool cache = true,
     IReadOnlyList<string>? keyTerms = null, IReadOnlyList<TimeSpan>? backoff = null) : ITranscriptionEngine
 {
     private const string Service = "Gemini";
+
+    private readonly GeminiKeyRing keys = new(apiKeys);
     private const int PieceSeconds = 300;
 
     /// <summary>What a busy service is given before the next try: three tries, then the fallback model once.</summary>
@@ -981,18 +983,18 @@ public sealed class GeminiTranscriptionEngine(
         {
             for (var attempt = 0; ; attempt++)
             {
-                var (body, _) = await SendAsync(GeminiTranscript.Model, requestBody, cancellationToken).ConfigureAwait(false);
+                var (body, _) = await keys.SendAsync(key => SendAsync(GeminiTranscript.Model, key, requestBody, cancellationToken)).ConfigureAwait(false);
                 if (body is not null) return (body, GeminiTranscript.Model);
                 if (attempt >= delays.Count) break;
                 await Task.Delay(delays[attempt], cancellationToken).ConfigureAwait(false);
             }
         }
-        var (fallback, busy) = await SendAsync(GeminiTranscript.FallbackModel, requestBody, cancellationToken).ConfigureAwait(false);
+        var (fallback, busy) = await keys.SendAsync(key => SendAsync(GeminiTranscript.FallbackModel, key, requestBody, cancellationToken)).ConfigureAwait(false);
         return fallback is not null ? (fallback, GeminiTranscript.FallbackModel) : throw busy!;
     }
 
-    /// <summary>One request: the body, or the failure when 429, 500 or 503 says the service is busy; any other failure is thrown.</summary>
-    private async Task<(string? Body, ProcessingFailure? Busy)> SendAsync(string model, string requestBody, CancellationToken cancellationToken)
+    /// <summary>One request: the body, or the failure and status when 429, 500 or 503 says the service is busy; any other failure is thrown.</summary>
+    private async Task<(string? Body, ProcessingFailure? Busy, int Status)> SendAsync(string model, string apiKey, string requestBody, CancellationToken cancellationToken)
     {
         HttpResponseMessage response;
         try
@@ -1014,10 +1016,10 @@ public sealed class GeminiTranscriptionEngine(
         using (response)
         {
             var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            if (response.IsSuccessStatusCode) return (text, null);
+            if (response.IsSuccessStatusCode) return (text, null, 200);
             var status = (int)response.StatusCode;
             var failure = ProcessingFailure.FromHttp(Service, status, text);
-            if (status is 429 or 500 or 503) return (null, failure);
+            if (status is 429 or 500 or 503) return (null, failure, status);
             throw failure;
         }
     }

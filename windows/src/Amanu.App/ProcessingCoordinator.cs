@@ -837,7 +837,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         {
             "openai" => new OpenAiTranscriptionEngine(httpClient, key, current.Transcription.OpenAi.Model, MeetingLanguages.Pin(expected), cache),
             "elevenlabs" => new ElevenLabsTranscriptionEngine(httpClient, key, cache, LoadCustomWords(current)),
-            "gemini" => new GeminiTranscriptionEngine(httpClient, key, expected, cache, LoadCustomWords(current)),
+            "gemini" => new GeminiTranscriptionEngine(httpClient, SecretNames.GeminiKeys(secrets.Get), expected, cache, LoadCustomWords(current)),
             _ => new AssemblyAiTranscriptionEngine(httpClient, key, expected, current.Transcription.AssemblyAi.SpeechModel, cache, LoadCustomWords(current)),
         };
     }
