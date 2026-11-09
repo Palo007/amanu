@@ -25,6 +25,14 @@ public sealed record SessionAudio(
     int MicrophoneOffsetMs,
     int SystemOffsetMs)
 {
+    /// <summary>
+    /// Where a paid service's answer is kept (<see cref="ProviderCache"/>). It is the session's own
+    /// folder even after echo removal has pointed <see cref="Directory"/> at a temporary copy: that
+    /// copy is deleted when the pass ends, and a cache kept in it would make a failed pass send all
+    /// the audio again. A `with` that changes Directory leaves this as it was.
+    /// </summary>
+    public string CacheDirectory { get; init; } = Directory;
+
     public bool HasAudio => Microphone is not null || System is not null || Single is not null;
     public bool BothSides => Microphone is not null && System is not null;
 
@@ -488,7 +496,7 @@ public sealed class AssemblyAiTranscriptionEngine(
             var multichannel = side == "*";
             var shift = audio.BothSides ? Math.Min(audio.MicrophoneOffsetMs, audio.SystemOffsetMs) : audio.Only.OffsetMs;
             var cachePath = cache
-                ? ProviderCache.PathFor(audio.Directory, "assemblyai", "code-switching-v1", Model, string.Join('+', expectedLanguages),
+                ? ProviderCache.PathFor(audio.CacheDirectory, "assemblyai", "code-switching-v1", Model, string.Join('+', expectedLanguages),
                     multichannel ? "multichannel" : "mono", side, new FileInfo(source).Length.ToString(), CustomWords.Digest(keyTerms))
                 : null;
 
@@ -497,8 +505,8 @@ public sealed class AssemblyAiTranscriptionEngine(
                 result = JsonDocument.Parse(await File.ReadAllTextAsync(cachePath, cancellationToken).ConfigureAwait(false)).RootElement.Clone();
             else
             {
-                var id = await ResumableJobAsync(audio.Directory, cachePath)
-                         ?? await SubmitAsync(source, multichannel, audio.Directory, cachePath, cancellationToken).ConfigureAwait(false);
+                var id = await ResumableJobAsync(audio.CacheDirectory, cachePath)
+                         ?? await SubmitAsync(source, multichannel, audio.CacheDirectory, cachePath, cancellationToken).ConfigureAwait(false);
                 try
                 {
                     result = await PollAsync(id, cancellationToken).ConfigureAwait(false);
@@ -506,12 +514,12 @@ public sealed class AssemblyAiTranscriptionEngine(
                 catch (ProcessingFailure failure) when (failure.Kind == FailureKind.Recording)
                 {
                     // A job that errored or is gone is not resumed: the next attempt submits afresh.
-                    File.Delete(Path.Combine(audio.Directory, ".assemblyai-job.json"));
+                    File.Delete(Path.Combine(audio.CacheDirectory, ".assemblyai-job.json"));
                     throw;
                 }
                 if (cachePath is not null)
                     await AtomicFiles.WriteTextAsync(cachePath, result.GetRawText(), cancellationToken).ConfigureAwait(false);
-                File.Delete(Path.Combine(audio.Directory, ".assemblyai-job.json"));
+                File.Delete(Path.Combine(audio.CacheDirectory, ".assemblyai-job.json"));
             }
             var segments = Segments(result, side);
             if (shift != 0)
@@ -714,7 +722,7 @@ public sealed class OpenAiTranscriptionEngine(
             {
                 var part = parts[index];
                 var cachePath = cache
-                    ? ProviderCache.PathFor(audio.Directory, "openai", model, languagePin ?? "detect", $"{index}/{parts.Count}",
+                    ? ProviderCache.PathFor(audio.CacheDirectory, "openai", model, languagePin ?? "detect", $"{index}/{parts.Count}",
                         new FileInfo(part.Path).Length.ToString())
                     : null;
                 string json;
@@ -803,7 +811,7 @@ public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string 
             try
             {
                 AudioPreprocessor.ConvertToMono16k(path, temp);
-                var cachePath = cache ? ProviderCache.PathFor(audio.Directory, "elevenlabs", Model, side, new FileInfo(temp).Length.ToString(), CustomWords.Digest(keyTerms)) : null;
+                var cachePath = cache ? ProviderCache.PathFor(audio.CacheDirectory, "elevenlabs", Model, side, new FileInfo(temp).Length.ToString(), CustomWords.Digest(keyTerms)) : null;
                 string json;
                 if (cachePath is not null && File.Exists(cachePath)) json = await File.ReadAllTextAsync(cachePath, cancellationToken).ConfigureAwait(false);
                 else
@@ -926,7 +934,7 @@ public sealed class GeminiTranscriptionEngine(
                     var length = new FileInfo(piece.Path).Length.ToString();
                     var number = index.ToString();
                     string? CachePath(string model) => cache
-                        ? ProviderCache.PathFor(audio.Directory, "gemini", model, side, number, length, CustomWords.Digest(keyTerms))
+                        ? ProviderCache.PathFor(audio.CacheDirectory, "gemini", model, side, number, length, CustomWords.Digest(keyTerms))
                         : null;
                     string? body = null;
                     var asked = GeminiTranscript.Model;
