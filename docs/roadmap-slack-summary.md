@@ -20,7 +20,7 @@ breaks each time Google changes the page.
 |---|---|---|---|---|
 | 1 | Summary prompt for Slack | S | — | Installed; my review is open |
 | 2 | People list | S | A: Speakers | Done, checked by hand |
-| 3 | "Summary ready" card | M | B: Slack card | Designed |
+| 3 | "Summary ready" card | M | B: Slack card | Built; check by hand with real huddles open |
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
 | 6 | Gemini as a transcription engine | L | C: Engines | Not started |
@@ -169,19 +169,40 @@ See "The card" at the end for how it looks and when it comes up. Today Amanu's
 notifications are tray balloons (`TrayIconService.cs`, `ShowBalloonTip`). A
 balloon cannot hold buttons, so the card is a small window of its own.
 
-- [ ] Show the card when all the conditions are true.
-- [ ] "Copy and open Slack": put the summary on the clipboard as rich text (HTML)
+- [x] Show the card when all the conditions are true.
+- [x] "Copy and open Slack": put the summary on the clipboard as rich text (HTML)
   and as plain text with Slack marks (`*bold*`, `•` lists), then start
   `slack://open` to bring Slack to the front.
-- [ ] "Open summary": open the recording in the Recordings window.
-- [ ] "Not now" and `×`: close it. The recording keeps a "Copy for Slack" button.
-- [ ] Write `slack-offer.json` in the recording folder (`shown`, `copied`, time),
+- [x] "Open summary": open the recording in the Recordings window.
+- [x] "Not now" and `×`: close it. The recording keeps a "Copy for Slack" button.
+- [x] Write `slack-offer.json` in the recording folder (`shown`, `copied`, time),
   so that the card never comes up twice for one recording.
-- [ ] Settings: `slack_summary.enabled` (default on), `slack_summary.apps`
+- [x] Settings: `slack_summary.enabled` (default on), `slack_summary.apps`
   (default `["slack.exe"]`), `slack_summary.min_minutes` (default 3).
-- [ ] Tests for the conditions, with fake recording folders (no UI).
+- [x] Tests for the conditions, with fake recording folders (no UI).
 - [ ] Check by hand: paste into a Slack channel and a DM. Bold text, lists and
   names must look correct. Do not send.
+
+Facts (session B, 2026-11-09):
+
+- Rules and texts are in Core, `Processing/SlackOffer.cs`: `SlackOffer.Decide`
+  (the six conditions of "The card"), `Record` (`slack-offer.json`: `shown`,
+  `copied`, `time`), `SlackText` (plain text with Slack marks), `Preview`
+  (first line and action-item count for the card), and `ClipboardHtml.Wrap`
+  (the CF_HTML header, offsets in UTF-8 bytes). Tests: `SlackOfferTests.cs`.
+- Condition 3 is the event `ProcessingCoordinator.SummaryWritten`, raised only
+  after `SummaryService.GenerateAsync` succeeded. Condition 4 compares the local
+  date of `summary.md`'s write time with `started` in `meta.json`.
+- `AmanuRuntime.ConsiderSlackOffer` writes `slack-offer.json` before it raises
+  `SlackOfferReady`. If a recording runs, the folder waits in memory and is
+  checked again when the recording stops. A card that waits is lost if Amanu
+  quits first; the "Copy for Slack" button is still there.
+- The card is `SlackCard.cs` (App): no focus, top-most, bottom right of the work
+  area, one card at a time. The HTML comes from Markdig (emphasis extras, task
+  lists, pipe tables).
+- "Copy for Slack" is in the Recordings window's button row. It is enabled when
+  the summary is done, and hidden when `slack_summary.enabled` is off.
+- The app matches `process_family` with or without `.exe`, in any case.
 
 Done when: after 3 real huddles the card came up each time, and the paste
 needed no fixes.

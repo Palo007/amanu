@@ -81,6 +81,7 @@ public sealed class AmanuRuntime : IAsyncDisposable
         coordinator.StateChanged += (_, state) =>
         {
             StateChanged?.Invoke(this, state);
+            if (!state.IsRecording) ReleaseSlackOffers();
             if (state.IsRecording)
                 _ = analytics.RecordAsync("recording_started", new Dictionary<string, object?> { ["trigger"] = TriggerName(state.Trigger) });
         };
@@ -116,6 +117,7 @@ public sealed class AmanuRuntime : IAsyncDisposable
                 Notify(T("Amanu — processing failed", "Amanu — обработка не удалась"), status.Message, NotificationKind.Error);
         };
         processing.SessionsChanged += (_, _) => SessionsChanged?.Invoke(this, EventArgs.Empty);
+        processing.SummaryWritten += (_, directory) => ConsiderSlackOffer(directory);
         models.Progress += (_, progress) => DownloadProgressChanged?.Invoke(this, progress);
         models.DownloadStarted += (_, item) => _ = analytics.RecordAsync("model_download_started", new Dictionary<string, object?> { ["asset"] = AnalyticsAsset(item) });
         models.DownloadFinished += (_, item) =>
@@ -191,6 +193,48 @@ public sealed class AmanuRuntime : IAsyncDisposable
     public event EventHandler? SessionsChanged;
     public event EventHandler<LiveLine>? LiveLineReady;
     public event EventHandler<string>? LiveStatusChanged;
+    /// <summary>The "summary ready" card should come up for this session folder.</summary>
+    public event EventHandler<string>? SlackOfferReady;
+
+    private readonly HashSet<string> slackOffersWaiting = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Shows the card now, or keeps it for when the recording that is running
+    /// stops, so it does not come up in the middle of the next huddle. A card
+    /// kept that way is lost if Amanu quits first; the recording still has its
+    /// "Copy for Slack" button.
+    /// </summary>
+    private void ConsiderSlackOffer(string directory)
+    {
+        try
+        {
+            switch (SlackOffer.Decide(directory, Settings.SlackSummary, State.IsRecording))
+            {
+                case SlackOfferDecision.Offer:
+                    SlackOffer.Record(directory, copied: false, DateTimeOffset.Now);
+                    SlackOfferReady?.Invoke(this, directory);
+                    break;
+                case SlackOfferDecision.WaitForRecording:
+                    lock (slackOffersWaiting) slackOffersWaiting.Add(directory);
+                    break;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // No record could be written, so no card: one that could come up twice is worse than none.
+        }
+    }
+
+    private void ReleaseSlackOffers()
+    {
+        string[] waiting;
+        lock (slackOffersWaiting)
+        {
+            waiting = [.. slackOffersWaiting];
+            slackOffersWaiting.Clear();
+        }
+        foreach (var directory in waiting) ConsiderSlackOffer(directory);
+    }
     /// <summary>Settings or their problems changed — here or in the file.</summary>
     public event EventHandler? SettingsChanged;
     public event EventHandler<(string Title, string Message, NotificationKind Kind)>? NotificationRequested;

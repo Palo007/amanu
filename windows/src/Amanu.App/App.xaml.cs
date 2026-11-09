@@ -97,6 +97,7 @@ public partial class App : System.Windows.Application
         status = new StatusWindow(runtime);
         MainWindow = status;
         tray = new TrayIconService(runtime, status);
+        runtime.SlackOfferReady += (_, directory) => Dispatcher.InvokeAsync(() => SlackCard.ShowAsync(directory));
         ListenForDoorbell();
 
         // Started at sign-in, Amanu stays out of the way when its tray icon is
@@ -158,6 +159,13 @@ public partial class App : System.Windows.Application
             recordings.Closed += (_, _) => recordings = null;
         }
         Bring(recordings);
+    }
+
+    /// <summary>The Recordings window with this recording selected and its summary open.</summary>
+    public static void ShowRecording(string directory)
+    {
+        ShowRecordings();
+        recordings?.ShowRecording(directory);
     }
 
     public static void ShowSettings(int tab)

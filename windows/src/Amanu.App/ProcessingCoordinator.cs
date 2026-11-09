@@ -122,6 +122,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
 
     public event EventHandler<ProcessingStatus>? StatusChanged;
     public event EventHandler? SessionsChanged;
+    /// <summary>A new summary.md was written without errors; the argument is the session folder.</summary>
+    public event EventHandler<string>? SummaryWritten;
 
     public LanguageModels LanguageModels => languageModels;
 
@@ -969,6 +971,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             {
                 ["backend"] = answer.Backend, ["model"] = answer.Model,
             });
+            SummaryWritten?.Invoke(this, directory);
             return true;
         }
         catch (ProcessingFailure failure)

@@ -61,6 +61,9 @@ public sealed class AppSettings
     [JsonPropertyName("speaker_names")]
     public SpeakerNameSettings SpeakerNames { get; set; } = new();
 
+    [JsonPropertyName("slack_summary")]
+    public SlackSummarySettings SlackSummary { get; set; } = new();
+
     [JsonPropertyName("start_at_login")]
     public bool StartAtLogin { get; set; } = true;
 
@@ -328,6 +331,21 @@ public sealed class SpeakerNameSettings
     /// <summary>people.txt: who may be on calls. Empty means people.txt in the app data folder.</summary>
     [JsonPropertyName("people_file")]
     public string? PeopleFile { get; set; }
+}
+
+/// <summary>The "summary ready" card after a call from one of these apps.</summary>
+public sealed class SlackSummarySettings
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>The process_family values in meta.json that count as Slack.</summary>
+    [JsonPropertyName("apps")]
+    public List<string> Apps { get; set; } = ["slack.exe"];
+
+    /// <summary>A call that rang and stopped is shorter than this, and gives no card.</summary>
+    [JsonPropertyName("min_minutes")]
+    public int MinMinutes { get; set; } = 3;
 }
 
 public sealed class CommandHook

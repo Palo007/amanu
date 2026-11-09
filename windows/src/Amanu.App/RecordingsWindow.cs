@@ -46,6 +46,8 @@ internal sealed class RecordingsWindow : Window
     private readonly System.Windows.Controls.Button listen;
     private readonly System.Windows.Controls.Button folder;
     private readonly System.Windows.Controls.Button delete;
+    private readonly System.Windows.Controls.Button copySlack;
+    private string? wanted;
     private readonly Grid detail = new();
     private readonly TabControl tabs = new() { Margin = new Thickness(0, 8, 0, 0) };
     private bool loading;
@@ -82,6 +84,9 @@ internal sealed class RecordingsWindow : Window
         listen = Ui.Button(T("Listen", "Слушать"), () => { if (Selected is { } row) Listen(row); });
         folder = Ui.Button(T("Open folder", "Открыть папку"), () => { if (Selected is { } row) OpenFolder(row); });
         delete = Ui.Button(T("Delete", "Удалить"), () => { if (Selected is { } row) Delete(row); });
+        copySlack = Ui.Button(T("Copy for Slack", "Копировать для Slack"), () => { if (Selected is { } row) _ = CopyForSlackAsync(row); });
+        copySlack.ToolTip = T("Copies the summary with bold text and lists. In Slack, open the channel and press Ctrl+V.",
+            "Копирует саммари с жирным текстом и списками. В Slack откройте канал и нажмите Ctrl+V.");
 
         var toolbar = new DockPanel { Margin = new Thickness(16, 12, 16, 8) };
         var import = Ui.Button(T("Import…", "Импортировать…"), () => _ = App.ImportAsync(this));
@@ -115,7 +120,7 @@ internal sealed class RecordingsWindow : Window
         transcriptPanel.Children.Add(tabs);
 
         var actions = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
-        foreach (var button in new[] { finish, retranscribe, listen, folder, delete })
+        foreach (var button in new[] { finish, retranscribe, copySlack, listen, folder, delete })
         {
             ToolTipService.SetShowOnDisabled(button, true);
             button.Margin = new Thickness(0, 0, 8, 0);
@@ -189,6 +194,27 @@ internal sealed class RecordingsWindow : Window
 
     private Row? Selected => grid.SelectedItem as Row;
 
+    /// <summary>Selects this recording on the next reload and opens its summary.</summary>
+    public void ShowRecording(string directory)
+    {
+        wanted = directory;
+        tabs.SelectedIndex = 2;
+        _ = ReloadAsync();
+    }
+
+    private async Task CopyForSlackAsync(Row row)
+    {
+        var copied = await SlackClipboard.CopyAsync(row.Item.Directory);
+        copySlack.Content = copied ? T("Copied", "Скопировано") : T("Couldn’t copy", "Не удалось");
+        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            copySlack.Content = T("Copy for Slack", "Копировать для Slack");
+        };
+        timer.Start();
+    }
+
     /// <summary>
     /// Fluent's selected tab differs from the others only by a thin line, which
     /// dark mode all but hides; the chosen transcript gets an accent pill instead.
@@ -233,7 +259,8 @@ internal sealed class RecordingsWindow : Window
         loading = true;
         try
         {
-            var selected = Selected?.Item.Directory;
+            var selected = wanted ?? Selected?.Item.Directory;
+            wanted = null;
             var selectedTab = tabs.SelectedIndex;
             var items = await runtime.LoadSessionsAsync();
             var rows = items.Select(item => new Row(item, runtime.ProcessingStatusFor(item.Directory))).ToList();
@@ -266,7 +293,7 @@ internal sealed class RecordingsWindow : Window
         speakers.Children.Clear();
         if (Selected is not { } row)
         {
-            foreach (var button in new[] { finish, retranscribe, listen, folder, delete }) button.IsEnabled = false;
+            foreach (var button in new[] { finish, retranscribe, copySlack, listen, folder, delete }) button.IsEnabled = false;
             title.Text = "";
             summary.ShowText("");
             transcript.ShowText("");
@@ -286,6 +313,8 @@ internal sealed class RecordingsWindow : Window
         listen.IsEnabled = item.HasAudio && !recording;
         folder.IsEnabled = true;
         delete.IsEnabled = !recording && !busy;
+        copySlack.IsEnabled = item.Summary == ProcessingStep.Done;
+        copySlack.Visibility = runtime.Settings.SlackSummary.Enabled ? Visibility.Visible : Visibility.Collapsed;
         var noAudio = T("The audio was not kept for this recording.", "Звук этой записи не сохранён.");
         retranscribe.ToolTip = !item.HasAudio ? noAudio : busy ? row.Status!.Message : null;
         listen.ToolTip = !item.HasAudio ? noAudio : null;
