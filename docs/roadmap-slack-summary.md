@@ -24,7 +24,7 @@ breaks each time Google changes the page.
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
 | 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measure first; wiring waits for my decision |
-| 7 | Slovak Whisper (`whisper-sk`): measure | M | C: Engines | Measure first; wire only if as good as `parakeet-sk` |
+| 7 | Slovak Whisper (`whisper-sk`): measure | M | C: Engines | Measured; not better (higher WER, 4 times slower) |
 | 8 | Slovak Canary (`canary-sk`): research, measure | L | C: Engines | Research first, then measure |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
 | 10 | Summaries on demand, several per recording | M | B: Slack card | Done, checked by hand |
@@ -458,17 +458,54 @@ transcribe.cpp v0.1.3 (`transcribe-cli.exe`, ggml, Vulkan).
 Model: kinit/whisper-large-v3-turbo-sk (the KInIT fine-tune of
 whisper-large-v3-turbo, about 809M parameters, MIT).
 
-- [ ] Ask me before the download, and say its size.
-- [ ] Run it outside the app: a ggml/GGUF conversion that the existing
+- [x] Ask me before the download, and say its size.
+- [x] Run it outside the app: a ggml/GGUF conversion that the existing
   `transcribe-cli` loads (Q8_0, as `parakeet-sk`), or a Python runtime if the
   conversion cannot run on this PC. Language: Slovak.
-- [ ] Measure against `parakeet-sk`, with the app's audio path:
+- [x] Measure against `parakeet-sk`, with the app's audio path:
   - WER on the quiet speaker (`2026.11.06-1021`) and on `2026.11.06-1000`.
   - ASR time on the CPU and on the GPU (if the runtime has a GPU path).
   - Hallucinations: repeated or invented lines in silence.
-- [ ] Write the result table here. If it is as good or better: Status "Measured;
+- [x] Write the result table here. If it is as good or better: Status "Measured;
   waiting for decision", and ask me whether to wire it. If not: Status
   "Measured; not better", and stop.
+
+Result (2026-11-09): **not better.** `whisper-sk` has a higher WER than
+`parakeet-sk` on both recordings, and it is about 4 times slower. It stays out
+of the app. The CPU run was skipped (my decision): the GPU is the fast path.
+
+| Model | Backend | WER 1021 | WER 1000 | ASR s 1021 | ASR s 1000 | Lines in near-silent chunks (1021 / 1000) |
+|---|---|---|---|---|---|---|
+| `parakeet-sk` Q8_0 | Vulkan | **29.6 %** | **42.9 %** | 137 | 115 | 19 / 104 |
+| `whisper-sk` Q8_0 | Vulkan | 35.3 % | 44.8 % | 580 | 467 | 5 / 21 |
+| `whisper-sk` Q5_K_M | Vulkan | 35.3 % | 45.0 % | 624 | 522 | 3 / 20 |
+| `whisper-sk` Q8_0 + custom words (`--initial-prompt`) | Vulkan | 33.8 % | 45.2 % | 611 | 475 | 2 / 21 |
+
+How it was measured:
+
+- Audio: the app's own path. A small .NET program referenced the published
+  `Amanu.dll` and ran Media Foundation decode, `SplitStereo`, LocalVQE echo
+  removal (`OfflineEchoAudio.Prepare`) and the 60 s chunks with 1 s context.
+  Both models got the same chunk WAVs. Without the echo removal, Parakeet gave
+  68 %: call audio on the mic track counts as errors.
+- WER: the reference is the silver reference (Gemini, window 120-300 s, not
+  hand-checked). Each side (`me`, `them`) is aligned alone, against the best
+  matching run of words in the first 600 s. This removes two errors of the
+  app's scorer: it cuts by segment start, and Whisper's segments are about 60 s
+  long, so the cut at the window edge cost Whisper about 20 points (71 % with
+  the app's scorer); and Whisper's long segments mix the order of `me` and
+  `them`. With the app's scorer, Parakeet gives 30.8 % and 42.1 %, the same as
+  the recordings' own transcripts.
+- The 0.0 % for the quiet speaker above comes from an older state. Today's
+  `parakeet-sk` transcript of `1021` scores 30.8 % with the app's scorer.
+- The `me` side has a high WER for every model (48-79 %). The silver
+  reference is probably weak there; it does not change the order of the models.
+- Q5_K_M loses nothing against Q8_0 here, and it is not faster on this GPU.
+- Whisper writes much less text in near-silent chunks. A repeated line (3 or
+  more times in a row) did not come up in any run.
+- Conversion: `convert-whisper.py` needs `--repo-id openai/whisper-large-v3-turbo`
+  for the KInIT repo, and `safetensors`, `huggingface_hub` and `transformers`
+  in the venv. The model files and scripts were in the session scratchpad only.
 
 Research (2026-11-09):
 
