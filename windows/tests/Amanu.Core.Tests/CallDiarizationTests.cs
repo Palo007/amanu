@@ -49,7 +49,7 @@ public sealed class CallDiarizationTests
     [Fact]
     public void AVoiceWithTooLittleSpeechIsNotAPerson()
     {
-        // The one-person call 2026.11.06-1021 gave voices of 572 s, 6 s, 5 s and 2 s at threshold 0.4.
+        // The one-person call 2026.11.06-1021 gave voices of 580 s and 5 s at threshold 0.6.
         var turns = new[] { new SpeakerTurn(0, 60_000, 0), new SpeakerTurn(60_000, 65_000, 4), new SpeakerTurn(65_000, 120_000, 0) };
         var result = CallDiarization.Apply([Them(0, 30_000), Them(60_000, 65_000), Them(70_000, 90_000)], turns);
         Assert.Equal(["them", "them", "them"], result.Segments.Select(segment => segment.Speaker));

@@ -306,18 +306,41 @@ Items:
   - `1000` at 0.5: 278, 238, 68, 56, 33, 26, 10, 3, 2, 1, 1, 1.
   - `1000` at 0.4: 272, 181, 64, 55, 41, 34, 20, 15, 10, 7, 7, 4, 2, 2, 2, 2, 1, 1, 1.
 
-  Every threshold makes small "voices" of coughs and line noise, so a voice
-  with less than 7 s of speech is not a person (`CallDiarization.MinimumVoiceMs`).
-  Decision: threshold **0.4** and minimum **7 s**. This gives 1 voice on `1021`
-  and 11 on `1000` (13 ± 30 % is 9–17). At 0.5 no minimum fits both: 8 s gives
-  7 on `1000`, and 5 s gives 3 on `1021`. The margin is thin (noise up to 6 s,
-  real quiet people from 7 s). The match against the transcript labels says
-  little: the `1000` transcript has 25 call labels for about 13 people, and the
-  other three have only one. It takes 2–5 minutes per call on this PC.
+  Every threshold makes small "voices" of coughs and line noise. The match
+  against the transcript labels says little: the `1000` transcript has 25 call
+  labels for about 13 people, and the other three have only one. It takes 2–5
+  minutes per call on this PC.
+
+  First decision, 0.4 and 7 s, failed the check by hand: the app gave
+  `1021` 3 speakers (Andrea split in two) and `1001` 13. Cause: the tuning cut
+  the call channel with ffmpeg, but the app decodes `audio.m4a` with Windows
+  Media Foundation (NAudio `AudioFileReader`, `AudioPreprocessor.SplitStereo`).
+  The sound is almost the same, but the clustering flips on it. Measured again
+  with the app's own decoder and the published `Amanu.exe --diarize`:
+
+  | Recording | 0.4 | 0.5 | 0.6 | 0.7 |
+  |---|---|---|---|---|
+  | `1021` (1 person), speech per voice in s | 414, 151, 8, 6, … | 424, 157, 3, … | 580, 5 | 580, 5 |
+  | `1000` (about 13 people) | | | 265, 189, 110, 65, 49, 38, 2, 2, 1 | |
+  | `1001` | | | 180, 88, 86, 48, 48, 18, 14, 10, 7, 6, 5, … | |
+  | `1438` | | | 619, 204, 113, 94, 17, 10, 6, 6, 6, … | |
+
+  Decision (chosen with the user): threshold **0.6** and minimum **10 s**
+  (`CallDiarization.MinimumVoiceMs`). This gives 1 voice on `1021`, 6 on
+  `1000`, 8 on `1001` and 6 on `1438`. Large calls get too few voices: quiet
+  people merge. This is accepted, because the other way is worse: below 0.6 a
+  one-person call often shows 2 or 3 people. Step 5 joins labels that are one
+  person. From now on, tune with the app's decoder, not ffmpeg.
 
 Done when: `2026.11.06-1021` gives 1 speaker on the call side;
 `2026.10.29-1000` gives a count within 30 % of the real one; and the time is
 less than the speech-recognition time of the same recording.
+
+Result: the one speaker on `1021` is met at 0.6 (measured with the app's
+decoder; the check by hand is open). The count on `1000` is not met (6 of
+about 13): the user chose a stable one-person result over the count, and step
+5 makes up part of it. The time is not met: on `1021` the app took 117 s for
+speech recognition (on the GPU) and 126 s for diarization (on the CPU).
 
 ## Step 5: stricter speaker-name checks (size: M, session A)
 
@@ -333,6 +356,13 @@ against diarization errors: a label that merged two people gets no name.
   several people: give it no name.
 - [ ] Ask the model two times. Keep a name only when both answers agree.
 - [ ] Names that I typed by hand ("manual") are never replaced.
+- [ ] Join labels that are one person. Diarization can split one person into
+  two labels (step 4 saw this on `2026.11.06-1021`). When the checks above give
+  two `them` labels the same proven name, they become one label in
+  `transcript.json`, and `processing.json` `call_speakers` goes down. Also ask
+  the model, from the content and the names that people say, which call labels
+  are the same person; join only labels it is sure about, and only when no
+  check above speaks against it. Tests with a fake model answer.
 
 Done when: on `2026.10.29-1000` at least 12 of 25 labels get a name, all names
 are correct (the same as the amanu-gemini result), and on a diarized Parakeet

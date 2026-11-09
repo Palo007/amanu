@@ -38,13 +38,11 @@ public static class CallDiarization
 
     /// <summary>
     /// A voice with less speech than this in the whole call is not counted as a
-    /// person: on a one-person call the clustering also made "voices" of 2 to 7
-    /// seconds out of coughs and line noise, while on a call of 13 people real
-    /// quiet speakers had 7 to 15 seconds. The margin is thin, so the threshold
-    /// setting is the knob a user turns. Its lines go to the voices around them.
-    /// Tuned in the roadmap's step 4.
+    /// person: on every call the clustering also made "voices" of up to 7
+    /// seconds out of coughs and line noise. Its lines go to the voices around
+    /// them. Tuned in the roadmap's step 4.
     /// </summary>
-    public const long MinimumVoiceMs = 7_000;
+    public const long MinimumVoiceMs = 10_000;
 
     public sealed record Result(IReadOnlyList<TranscriptSegment> Segments, int Speakers);
 

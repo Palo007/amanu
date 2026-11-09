@@ -208,12 +208,15 @@ public sealed class TranscriptionSettings
     public string Diarization { get; set; } = "auto";
 
     /// <summary>
-    /// The tuned default for <see cref="DiarizationThreshold"/> (roadmap step 4):
-    /// with voices under <c>CallDiarization.MinimumVoiceMs</c> dropped, 0.4 gave
-    /// 1 voice on a one-person call and 11 on a call of about 13 people; 0.5
-    /// gave only 7 there, because quiet people merged with louder ones.
+    /// The tuned default for <see cref="DiarizationThreshold"/> (roadmap step 4).
+    /// At 0.4 and 0.5 one person on a one-person call became two voices with
+    /// the app's own audio decoder (and one with ffmpeg's), so the result
+    /// flipped on decoding noise; from 0.6 it is one voice either way. The cost
+    /// is that quiet people on a large call merge (6 voices for about 13
+    /// people). A split is the smaller harm: speaker naming can join two labels
+    /// it finds to be one person, but nothing can part two people under one.
     /// </summary>
-    public const double DefaultDiarizationThreshold = 0.4;
+    public const double DefaultDiarizationThreshold = 0.6;
 
     /// <summary>How alike two voices must be to count as one person: higher gives fewer people. Empty means the tuned default.</summary>
     [JsonPropertyName("diarization_threshold")]
