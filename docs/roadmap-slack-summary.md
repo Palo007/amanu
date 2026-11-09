@@ -510,10 +510,11 @@ Built (2026-11-09), commits `1e337c4` to the one with the cut-off fix:
   failed the whole transcript.
 - Not measured inside the app yet: the free key ran out of quota (HTTP 429,
   "You exceeded your current quota") during the run of `1000`.
-- Found on the way, not fixed: with echo removal on, every cloud engine is
+- Found on the way and fixed: with echo removal on, every cloud engine was
   given the echo-cleaned copy in a temp folder, so its answer cache
-  (`.cache-<provider>-*.json`) is written there and deleted with it. After a
-  failure, all audio is sent again. That costs Gemini's free quota most.
+  (`.cache-<provider>-*.json`, and AssemblyAI's job file) was written there and
+  deleted with it; after a failure all audio was sent again. `SessionAudio`
+  now has `CacheDirectory`, which stays the recording folder.
 
 
 ## Step 7: Slovak Whisper — measure only (size: M, session C)
