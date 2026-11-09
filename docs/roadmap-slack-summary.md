@@ -21,7 +21,7 @@ breaks each time Google changes the page.
 | 1 | Summary prompt for Slack | S | — | Installed; my review is open |
 | 2 | People list | S | A: Speakers | Done, checked by hand |
 | 3 | "Summary ready" card | M | B: Slack card | Designed |
-| 4 | Diarization (split the call side by voice) | M | A: Speakers | Not started |
+| 4 | Diarization (split the call side by voice) | M | A: Speakers | Done; check by hand is open |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Not started |
 | 6 | Gemini as a transcription engine | L | C: Engines | Not started |
 | 7 | Slovak Whisper (`whisper-sk`) | M | C: Engines | Not started |
@@ -219,29 +219,101 @@ Known facts:
 
 Items:
 
-- [ ] Research first (subagent, cheap model, report of 15 lines or less):
+- [x] Research first (subagent, cheap model, report of 15 lines or less):
   - the sherpa-onnx package for .NET: name, version, license, size of the
     native DLL for win-x64, and its offline speaker-diarization API;
   - the licenses of the two models;
   - whether `transcribe-cli` gives word or token times in Amanu's
     `transcript.json`.
   Write the answers here before any code.
-- [ ] Run it after the speech recognition, on the call track only, on the CPU,
+
+  Answers (2026-11-09):
+  - Package: `org.k2fsa.sherpa.onnx` 2.0.1 (Apache-2.0), with
+    `org.k2fsa.sherpa.onnx.runtime.win-x64` 2.0.1: `onnxruntime.dll` 17.8 MB and
+    `sherpa-onnx-c-api.dll` 4.3 MB (about 22 MB more in the publish folder).
+  - API (checked in `scripts/dotnet/` of the sherpa-onnx repo):
+    `OfflineSpeakerDiarizationConfig { Segmentation.Pyannote.Model,
+    Embedding.Model, Clustering.NumClusters (-1 = by threshold),
+    Clustering.Threshold, MinDurationOn, MinDurationOff }`;
+    `new OfflineSpeakerDiarization(config)`, `.SampleRate` (16 kHz),
+    `.ProcessWithCallback(float[] samples, callback, IntPtr)` returns
+    `OfflineSpeakerDiarizationSegment[]` with `Start`, `End` (seconds, float)
+    and `Speaker` (int). A higher threshold gives fewer speakers.
+  - Models, one file each (the same files as `amanu-gemini\models`, same hash):
+    | Model | URL | Size | SHA-256 | License |
+    |---|---|---|---|---|
+    | pyannote segmentation 3.0 | `https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.onnx` | 5 992 913 | `220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079` | MIT |
+    | WeSpeaker ResNet34-LM | `https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx` | 26 530 550 | `e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012` | Apache-2.0 |
+    The int8 segmentation model (1.5 MB) was not tuned in amanu-gemini, so it
+    is not used.
+  - `amanu-gemini\diarize.py` uses: threshold 0.7, clusters -1,
+    `MinDurationOn` 0.3, `MinDurationOff` 0.5, threads = CPU count, the right
+    (call) channel at 16 kHz mono.
+  - Word times: `transcribe-cli` gives them and Amanu parses them
+    (`LocalCliWords.Parse`, `TranscriptionServices.cs` about line 355), but
+    `TranscriptSegment` keeps only `start_ms` and `end_ms`. So
+    `transcript.json` has no word times. Decision: a line gets the voice with
+    the most time; splitting lines by word time is left for later.
+- [x] Run it after the speech recognition, on the call track only, on the CPU,
   at BelowNormal priority (the same as the speech recognition).
-- [ ] The models are downloaded by `ModelManager.cs`, with a SHA-256 check, as
-  `parakeet-ultra` is.
-- [ ] Give each `them` line the speaker that overlaps it most in time:
+  Done in `Amanu.App/CallDiarizer.cs`: a child process, `Amanu.exe --diarize
+  track seg emb threshold threads`, at BelowNormal, with half the cores. A
+  child process is needed because onnxruntime makes its own threads, and only
+  a process priority class reaches them. It holds the same CPU gate as the
+  speech recognition (`CpuTranscription.EnterBatchAsync`) and starts over when
+  live transcription takes the CPU back. It is called from
+  `ProcessingCoordinator.DiarizeCallAsync`, after the echo filter. If it fails,
+  the reason goes to `transcribe.log` and the transcript stays as it was.
+- [x] The models are downloaded by `ModelManager.cs`, with a SHA-256 check, as
+  `parakeet-ultra` is. Folder: `models/diarization/`. Pinned in
+  `Amanu.Core/Processing/CallDiarization.cs` (`DiarizationModels`).
+- [x] Give each `them` line the speaker that overlaps it most in time:
   `them A`, `them B` (`SpeakerLabels.cs`). When a line holds two speakers, split
   it by word times if there are any. If not, keep the speaker with the most time.
-- [ ] Only for local engines. Gemini gives its own labels.
-- [ ] Settings: `transcription.diarization` (`auto` / `off`) and
+  Done in `CallDiarization.Apply`. There are no word times (see above), so a
+  line keeps the voice with the most time. A line in a gap takes the nearest
+  voice within 2 s; else the voice of the call line before it. One voice stays
+  a bare `them`.
+- [x] Only for local engines. Gemini gives its own labels. A transcript whose
+  call side already has more than one label is left alone.
+- [x] Settings: `transcription.diarization` (`auto` / `off`) and
   `transcription.diarization_threshold` (the default comes from the tuning).
-- [ ] Write the time it took into `transcribe.log`, and the speaker count into
-  `processing.json`.
-- [ ] Tests for the line-to-speaker logic, with a fixed fake diarization result
-  (no model in the test).
-- [ ] Tune the threshold with a script that prints only the speaker count and
+  The threshold accepts a comma or a point as the decimal mark.
+- [x] Write the time it took into `transcribe.log`, and the speaker count into
+  `processing.json`. The log line is `diarization`, with "N speakers, threshold
+  X"; the count is `call_speakers`.
+- [x] Tests for the line-to-speaker logic, with a fixed fake diarization result
+  (no model in the test). `CallDiarizationTests.cs`, 8 tests.
+- [x] Tune the threshold with a script that prints only the speaker count and
   how well the labels match the Gemini labels of `2026.10.29-1000`.
+
+  Tuning (2026-11-09, 8 threads, call channel cut from `audio.m4a`):
+
+  | Recording | Threshold | All voices | ≥ 10 s | ≥ 30 s | Seconds |
+  |---|---|---|---|---|---|
+  | `2026.10.29-1000` (about 13 people) | 0.5 | 12 | 7 | 5 | 141 |
+  | | 0.6 | 8 | 5 | 2 | 149 |
+  | | 0.7 | 5 | 3 | 1 | 148 |
+  | | 0.8 | 3 | 3 | 1 | 164 |
+  | `2026.11.06-1021` (1 person) | 0.5 | 3 | 1 | 1 | 138 |
+  | | 0.6 | 2 | 1 | 1 | 136 |
+  | | 0.7 / 0.8 | 1 | 1 | 1 | 141 / 125 |
+  | `2026.11.06-1438` | 0.5 / 0.6 / 0.7 / 0.8 | 24 / 14 / 9 / 5 | 11 / 8 / 4 / 4 | 5 / 5 / 3 / 3 | 228–282 |
+  | `2026.11.09-1001` | 0.5 / 0.6 / 0.7 / 0.8 | 31 / 20 / 14 / 8 | 10 / 7 / 7 / 4 | 5 / 5 / 5 / 4 | 116–159 |
+
+  Speech per voice, in seconds:
+  - `1021` at 0.5: 574, 7, 5. At 0.4: 572, 6, 5, 2, 0, 0.
+  - `1000` at 0.5: 278, 238, 68, 56, 33, 26, 10, 3, 2, 1, 1, 1.
+  - `1000` at 0.4: 272, 181, 64, 55, 41, 34, 20, 15, 10, 7, 7, 4, 2, 2, 2, 2, 1, 1, 1.
+
+  Every threshold makes small "voices" of coughs and line noise, so a voice
+  with less than 7 s of speech is not a person (`CallDiarization.MinimumVoiceMs`).
+  Decision: threshold **0.4** and minimum **7 s**. This gives 1 voice on `1021`
+  and 11 on `1000` (13 ± 30 % is 9–17). At 0.5 no minimum fits both: 8 s gives
+  7 on `1000`, and 5 s gives 3 on `1021`. The margin is thin (noise up to 6 s,
+  real quiet people from 7 s). The match against the transcript labels says
+  little: the `1000` transcript has 25 call labels for about 13 people, and the
+  other three have only one. It takes 2–5 minutes per call on this PC.
 
 Done when: `2026.11.06-1021` gives 1 speaker on the call side;
 `2026.10.29-1000` gives a count within 30 % of the real one; and the time is

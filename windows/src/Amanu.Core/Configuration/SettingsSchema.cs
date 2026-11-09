@@ -40,7 +40,8 @@ public sealed record SettingEntry(
     string? Unit = null,
     string? DescribedAs = null,
     bool AskedInSetup = false,
-    bool NeedsRestart = false)
+    bool NeedsRestart = false,
+    bool Decimal = false)
 {
     public string[] Keys => Path.Split('.');
 }
@@ -178,6 +179,16 @@ public static class SettingsSchema
                 T("auto: makes quiet or loud speech in a copy of each track closer to normal before transcription. Can help when quiet speakers lose words. The recording itself is not changed.",
                   "auto — перед расшифровкой делает тихую или громкую речь в копии каждой дорожки ближе к обычной. Может помочь, когда у тихих собеседников теряются слова. Сама запись не меняется."),
                 SettingKind.Choice, Options: TranscriptionSettings.LevelNormalizations),
+            new("transcription.diarization",
+                T("Tell call voices apart", "Различать голоса в звонке"),
+                T("auto: after a local engine, splits the call side by voice on this computer, so \"them\" becomes \"them A\", \"them B\". Downloads about 32 MB of models once. Cloud engines do this themselves.",
+                  "auto — после локального движка делит сторону звонка по голосам прямо на этом компьютере: «они» становится «они A», «они B». Один раз скачивает около 32 МБ моделей. Облачные движки делают это сами."),
+                SettingKind.Choice, Options: TranscriptionSettings.Diarizations),
+            new("transcription.diarization_threshold",
+                T("Voice likeness threshold", "Порог сходства голосов"),
+                T("How alike two voices must be to count as one person, from 0 to 1. Higher gives fewer people; lower splits one person into several.",
+                  "Насколько похожими должны быть два голоса, чтобы считаться одним человеком, от 0 до 1. Выше — меньше людей; ниже — один человек делится на нескольких."),
+                SettingKind.Number, DescribedAs: T($"{TranscriptionSettings.DefaultDiarizationThreshold}", $"{TranscriptionSettings.DefaultDiarizationThreshold}"), Decimal: true),
             new("transcription.assemblyai.speech_model",
                 T("AssemblyAI speech model", "Модель речи AssemblyAI"),
                 T("Empty sends nothing and lets the API pick its own default.",

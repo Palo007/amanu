@@ -242,6 +242,13 @@ internal sealed class AdvancedSettings
         {
             case SettingKind.Number:
                 if (text.Length == 0) return (true, null);
+                // A decimal setting takes "0,6" too: the comma is the decimal
+                // mark in most of the languages its users type in.
+                if (entry.Decimal)
+                    return double.TryParse(text.Replace(',', '.'), System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out var share) && share is >= 0 and <= 1
+                        ? (true, JsonValue.Create(share))
+                        : (false, null);
                 return int.TryParse(text, out var number) && number >= 0 ? (true, JsonValue.Create(number)) : (false, null);
             case SettingKind.List:
                 var items = Lines(raw);

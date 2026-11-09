@@ -75,6 +75,16 @@ public sealed class ModelManager(string dataDirectory, HttpClient httpClient, st
         }
     }
 
+    public string DiarizationPath(DownloadArtifact artifact) => Path.Combine(ModelDirectory, "diarization", artifact.FileName);
+
+    /// <summary>The segmentation and voice models, downloaded once and checked against their pinned SHA-256.</summary>
+    public async Task EnsureDiarizationReadyAsync(CancellationToken cancellationToken = default)
+    {
+        foreach (var artifact in new[] { DiarizationModels.Segmentation, DiarizationModels.Embedding })
+            await DownloadVerifiedAsync($"Model {artifact.FileName}", artifact.Url!, artifact.Sha256!, artifact.Size,
+                DiarizationPath(artifact), cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task DownloadVerifiedAsync(
         string item, string url, string sha256, long size, string destination, CancellationToken cancellationToken)
     {

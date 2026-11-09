@@ -30,6 +30,7 @@ public sealed class SettingsSchemaTests
         settings.Summary.OpenAiCompatible = true;
         settings.SpeakerNames.Model = "m";
         settings.SpeakerNames.PeopleFile = "p";
+        settings.Transcription.DiarizationThreshold = 0.6;
         settings.UserName = "me";
 
         var described = SettingsSchema.Entries.Select(entry => entry.Path).ToHashSet();
@@ -51,6 +52,7 @@ public sealed class SettingsSchemaTests
         settings.Summary.OpenAiCompatible = true;
         settings.SpeakerNames.Model = "m";
         settings.SpeakerNames.PeopleFile = "p";
+        settings.Transcription.DiarizationThreshold = 0.6;
         settings.UserName = "me";
         var node = SettingsDocument.ToNode(settings);
 

@@ -198,6 +198,27 @@ public sealed class TranscriptionSettings
     [JsonPropertyName("level_normalization")]
     public string LevelNormalization { get; set; } = "off";
 
+    public static readonly IReadOnlyList<string> Diarizations = ["auto", "off"];
+
+    /// <summary>
+    /// <c>auto</c>: after a local engine, the call track is split by voice, so
+    /// "them" becomes "them A", "them B". Cloud engines label voices themselves.
+    /// </summary>
+    [JsonPropertyName("diarization")]
+    public string Diarization { get; set; } = "auto";
+
+    /// <summary>
+    /// The tuned default for <see cref="DiarizationThreshold"/> (roadmap step 4):
+    /// with voices under <c>CallDiarization.MinimumVoiceMs</c> dropped, 0.4 gave
+    /// 1 voice on a one-person call and 11 on a call of about 13 people; 0.5
+    /// gave only 7 there, because quiet people merged with louder ones.
+    /// </summary>
+    public const double DefaultDiarizationThreshold = 0.4;
+
+    /// <summary>How alike two voices must be to count as one person: higher gives fewer people. Empty means the tuned default.</summary>
+    [JsonPropertyName("diarization_threshold")]
+    public double? DiarizationThreshold { get; set; }
+
     [JsonPropertyName("openai")]
     public OpenAiTranscriptionSettings OpenAi { get; set; } = new();
 

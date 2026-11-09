@@ -51,7 +51,9 @@ public sealed record ProcessingLedger(
     EchoCancellationRecord? AudioEchoCancellation = null,
     LevelNormalizationRecord? AudioLevelNormalization = null,
     // Custom words put in place of close-sounding words (roadmap "Custom words"); the raw text is in transcript.raw.json.
-    IReadOnlyList<CustomWordCorrection>? CustomWordCorrections = null);
+    IReadOnlyList<CustomWordCorrection>? CustomWordCorrections = null,
+    // Voices diarization heard on the call track of a local transcript (roadmap step 4).
+    int? CallSpeakers = null);
 
 /// <summary>Which audio recognition heard: LocalVQE's cleaned mic, the exact mic (no playback), or — skipped — the raw tracks.</summary>
 public sealed record EchoCancellationRecord(
@@ -476,6 +478,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             leveled = null;
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
+            transcript = await DiarizeCallAsync(directory, audio, transcript, current, cancellationToken).ConfigureAwait(false);
             if (transcript.Segments.All(segment => string.IsNullOrWhiteSpace(segment.Text)))
             {
                 await GiveUpAsync(directory, T("No speech was heard in this recording.", "В записи не слышно речи."), cancellationToken).ConfigureAwait(false);
@@ -823,6 +826,37 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             "elevenlabs" => new ElevenLabsTranscriptionEngine(httpClient, key, cache, LoadCustomWords(current)),
             _ => new AssemblyAiTranscriptionEngine(httpClient, key, expected, current.Transcription.AssemblyAi.SpeechModel, cache, LoadCustomWords(current)),
         };
+    }
+
+    /// <summary>
+    /// A local engine hears the call track as one voice; this splits it into
+    /// "them A", "them B". Cloud engines label voices themselves and are left
+    /// alone. A failure here costs only the split: the transcript goes on with
+    /// "them", and the reason is in transcribe.log.
+    /// </summary>
+    private async Task<TranscriptDocument> DiarizeCallAsync(
+        string directory, SessionAudio audio, TranscriptDocument transcript, AppSettings current, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(current.Transcription.Diarization, "auto", StringComparison.OrdinalIgnoreCase)) return transcript;
+        if (!TranscriptionSettings.LocalEngines.Contains(transcript.Engine, StringComparer.OrdinalIgnoreCase)) return transcript;
+        if (audio.System is null || !transcript.Segments.Any(segment => segment.Speaker == SpeakerLabels.Them)) return transcript;
+        var threshold = current.Transcription.DiarizationThreshold ?? TranscriptionSettings.DefaultDiarizationThreshold;
+        var clock = Stopwatch.StartNew();
+        try
+        {
+            Publish(directory, "transcribing", T("Telling call voices apart…", "Различаю голоса в звонке…"), true);
+            var turns = await CallDiarizer.RunAsync(models, audio.System, audio.SystemOffsetMs, threshold, cancellationToken).ConfigureAwait(false);
+            var result = CallDiarization.Apply(transcript.Segments, turns);
+            LogTiming(directory, "diarization", clock.Elapsed,
+                string.Create(CultureInfo.InvariantCulture, $"{result.Speakers} speakers, threshold {threshold}"));
+            WriteLedger(directory, ReadLedger(directory) with { CallSpeakers = result.Speakers });
+            return transcript with { Segments = result.Segments };
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            LogTiming(directory, "diarization", clock.Elapsed, $"failed: {exception.Message}");
+            return transcript;
+        }
     }
 
     private static string DataDirectory()

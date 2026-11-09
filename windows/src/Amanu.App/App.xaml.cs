@@ -33,6 +33,11 @@ public partial class App : System.Windows.Application
             Environment.ExitCode = LiveSpeechWorker.Main(arguments);
             return;
         }
+        if (arguments.Length == 6 && arguments[0] == CallDiarizer.Argument)
+        {
+            Environment.ExitCode = CallDiarizer.Main(arguments);
+            return;
+        }
         if (arguments.Length >= 3 && arguments[0] == "--measure-transcription")
         {
             Environment.ExitCode = MeasureTranscription.Run(arguments);
