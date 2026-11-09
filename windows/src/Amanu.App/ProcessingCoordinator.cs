@@ -195,6 +195,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         if (Has(directory, "transcribe.failed")) return false;
         if (Has(directory, "transcribe.off")) return !ReadLedger(directory).HookRan;
         if (!Has(directory, "transcript.json") || Has(directory, TranscriptVersions.RequestFile)) return true;
+        if (Has(directory, SummaryVersions.RequestFile)) return true;
         var current = settings();
         // A session finished while naming or summaries were off stays that way:
         // switching them on is not a request to send every old meeting to a model.
@@ -421,7 +422,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         var transcript = await ReadTranscriptAsync(directory, cancellationToken).ConfigureAwait(false);
         var namesSettled = await NameSpeakersAsync(directory, title, transcript, cancellationToken).ConfigureAwait(false);
         var summarySettled = await SummarizeAsync(directory, cancellationToken).ConfigureAwait(false);
-        if (!namesSettled || !summarySettled) return;
+        var requestsSettled = await SummarizeOnRequestAsync(directory, cancellationToken).ConfigureAwait(false);
+        if (!namesSettled || !summarySettled || !requestsSettled) return;
 
         await RunHookOnceAsync(directory, cancellationToken).ConfigureAwait(false);
         Publish(directory, "complete", T($"Finished {title}", $"Готово: {title}"), false);
@@ -980,6 +982,62 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                 ledger => ledger.SummaryAttempts, (ledger, attempts) => ledger with { SummaryAttempts = attempts },
                 "summary_failed", current.Summary.Backend, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// "Summarize again": a summary of one transcript version with one engine,
+    /// written to summarize.requested first so that a busy queue or a restart
+    /// does not lose it.
+    /// </summary>
+    public void RequestSummary(string directory, string backend, string? transcript)
+    {
+        directory = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar);
+        SummaryVersions.Request(directory, new SummaryRequest(backend, transcript));
+        Enqueue(directory);
+    }
+
+    /// <returns>Whether every request is done or dropped; false while one waits for a model.</returns>
+    private async Task<bool> SummarizeOnRequestAsync(string directory, CancellationToken cancellationToken)
+    {
+        while (SummaryVersions.ReadRequests(directory) is [var request, ..])
+        {
+            var target = SummaryVersions.Target(directory, request);
+            var transcriptPath = Path.Combine(target, "transcript.md");
+            if (!File.Exists(transcriptPath))
+            {
+                SummaryVersions.Remove(directory, request);
+                continue;
+            }
+            Publish(directory, "summary", T($"Writing the summary with {SummaryVersions.BackendName(request.Backend)}…",
+                $"Пишу саммари через {SummaryVersions.BackendName(request.Backend)}…"), true, PassProgress.Summary);
+            try
+            {
+                var markdown = await File.ReadAllTextAsync(transcriptPath, cancellationToken).ConfigureAwait(false);
+                var (chosenModels, chosenSettings) = languageModels.WithSummaryBackend(request.Backend);
+                var answer = await new SummaryService(chosenModels, chosenSettings).GenerateAsync(target, markdown, cancellationToken).ConfigureAwait(false);
+                _ = analytics.RecordAsync("summary_finished", new Dictionary<string, object?>
+                {
+                    ["backend"] = answer.Backend, ["model"] = answer.Model,
+                });
+            }
+            catch (ProcessingFailure failure) when (failure.Kind != FailureKind.Recording)
+            {
+                // Kept for the next pass: the engine may be back, or signed in, by then.
+                Publish(directory, "deferred", T($"The summary waits: {failure.Message}", $"Саммари ждёт: {failure.Message}"), false);
+                return false;
+            }
+            catch (ProcessingFailure failure)
+            {
+                Publish(directory, "failed", T($"The summary failed: {failure.Message}", $"Саммари не получилось: {failure.Message}"), false);
+                // Dropped, so it is not tried again at every launch; the next request still runs.
+                SummaryVersions.Remove(directory, request);
+                SessionsChanged?.Invoke(this, EventArgs.Empty);
+                continue;
+            }
+            SummaryVersions.Remove(directory, request);
+            SessionsChanged?.Invoke(this, EventArgs.Empty);
+        }
+        return true;
     }
 
     /// <summary>

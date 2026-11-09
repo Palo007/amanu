@@ -535,6 +535,9 @@ public sealed class AmanuRuntime : IAsyncDisposable
 
     public Task RetranscribeAsync(string directory, string? engine) => processing.RetranscribeAsync(directory, engine);
 
+    public void RequestSummary(string directory, string backend, string? transcript) =>
+        processing.RequestSummary(directory, backend, transcript);
+
     public ProcessingStatus? ProcessingStatusFor(string directory) => processing.StatusFor(directory);
 
     public Task SetSpeakerNameAsync(string directory, string label, string name, CancellationToken cancellationToken = default, string? title = null) =>

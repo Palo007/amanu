@@ -34,6 +34,27 @@ public sealed record LanguageModelAnswer(string Text, string Backend, string? Mo
 /// </summary>
 public sealed class LanguageModels(HttpClient httpClient, SecretStore secrets, Func<AppSettings> settings)
 {
+    /// <summary>
+    /// Every summary backend that could run now, as <c>auto</c> would walk them,
+    /// for "Summarize again": there the person picks one by hand.
+    /// </summary>
+    public IReadOnlyList<LanguageModelBackend> AvailableForSummary()
+    {
+        var chosen = settings().Clone();
+        chosen.Summary.Enabled = true;
+        chosen.Summary.Backend = "auto";
+        return new LanguageModels(httpClient, secrets, () => chosen).For(EgressPurpose.Summary);
+    }
+
+    /// <summary>The same models with one summary backend chosen, for a summary asked for by hand.</summary>
+    public (LanguageModels Models, Func<AppSettings> Settings) WithSummaryBackend(string backend)
+    {
+        var chosen = settings().Clone();
+        chosen.Summary.Enabled = true;
+        chosen.Summary.Backend = backend;
+        return (new LanguageModels(httpClient, secrets, () => chosen), () => chosen);
+    }
+
     public IReadOnlyList<LanguageModelBackend> For(EgressPurpose purpose)
     {
         var current = settings();
@@ -454,9 +475,11 @@ public sealed class SummaryService(LanguageModels models, Func<AppSettings> sett
             : await models.AskAsync(EgressPurpose.Summary,
                 $"Merge these partial meeting notes into one note using this exact structure. Remove repetition.\n\n{template}\n\n{language}",
                 string.Join("\n\n---\n\n", partial.Select(item => item.Text)), cancellationToken).ConfigureAwait(false);
+        await SummaryVersions.ArchiveCurrentAsync(sessionDirectory, cancellationToken).ConfigureAwait(false);
         await AtomicFiles.WriteTextAsync(Path.Combine(sessionDirectory, "summary.md"), answer.Text.Trim() + Environment.NewLine, cancellationToken)
             .ConfigureAwait(false);
         File.Delete(Path.Combine(sessionDirectory, "summary.stale"));
+        await SummaryVersions.WriteInfoAsync(sessionDirectory, answer.Backend, answer.Model, DateTimeOffset.Now, cancellationToken).ConfigureAwait(false);
         return answer;
     }
 }

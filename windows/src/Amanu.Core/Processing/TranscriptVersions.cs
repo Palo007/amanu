@@ -26,11 +26,20 @@ public static class TranscriptVersions
         System.IO.Directory.CreateDirectory(staging);
         try
         {
-            foreach (var name in new[] { "transcript.json", "transcript.md", "speakers.json", "summary.md", "summary.stale" })
+            foreach (var name in new[] { "transcript.json", "transcript.md", "speakers.json", "summary.md", "summary.stale", SummaryVersions.InfoFile })
             {
                 var source = Path.Combine(directory, name);
                 if (File.Exists(source)) File.Copy(source, Path.Combine(staging, name));
             }
+            // Each transcript keeps its own earlier summaries.
+            var summaries = Path.Combine(directory, SummaryVersions.Folder);
+            if (System.IO.Directory.Exists(summaries))
+                foreach (var archive in System.IO.Directory.EnumerateDirectories(summaries).Where(path => !Path.GetFileName(path).StartsWith('.')))
+                {
+                    var copy = Path.Combine(staging, SummaryVersions.Folder, Path.GetFileName(archive));
+                    System.IO.Directory.CreateDirectory(copy);
+                    foreach (var file in System.IO.Directory.EnumerateFiles(archive)) File.Copy(file, Path.Combine(copy, Path.GetFileName(file)));
+                }
             cancellationToken.ThrowIfCancellationRequested();
             System.IO.Directory.Move(staging, destination);
         }

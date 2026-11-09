@@ -27,7 +27,7 @@ breaks each time Google changes the page.
 | 7 | Slovak Whisper (`whisper-sk`) | M | C: Engines | Not started |
 | 8 | Slovak Canary (`canary-sk`) | L | C: Engines (research first) | Blocked |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
-| 10 | Summaries on demand, several per recording | M | B: Slack card | Not started |
+| 10 | Summaries on demand, several per recording | M | B: Slack card | Built; check by hand on `2026.11.06-1438` open |
 
 ## How to work on this (sessions)
 
@@ -506,19 +506,47 @@ Known facts (from the code on 2026-11-09):
 
 Items:
 
-- [ ] A "Summarize again ▾" button beside "Transcribe again ▾". The menu lists
+- [x] A "Summarize again ▾" button beside "Transcribe again ▾". The menu lists
   the summary engines that can run now. It works on the transcript version that
   is open in the window.
-- [ ] Keep each summary. Copy the `TranscriptVersions` pattern: archive the
+- [x] Keep each summary. Copy the `TranscriptVersions` pattern: archive the
   current `summary.md` before a new one replaces it, and write the engine, the
   model, the time and the transcript version it came from.
-- [ ] Show one tab per summary, newest first, as the transcript tabs do.
-- [ ] A request file (like `transcribe.requested`), so a summary asked for
+- [x] Show one tab per summary, newest first, as the transcript tabs do.
+- [x] A request file (like `transcribe.requested`), so a summary asked for
   while the app is busy runs in the next processing pass, and an app restart
   does not lose it.
-- [ ] Step 3's card shows the newest summary only.
-- [ ] Tests for the archive and the request file, with no model (a fake
+- [x] Step 3's card shows the newest summary only.
+- [x] Tests for the archive and the request file, with no model (a fake
   `LanguageModels`).
+
+Facts (session B, 2026-11-09):
+
+- Core, `Processing/SummaryVersions.cs`. Before a new `summary.md` replaces the
+  current one, `SummaryService.GenerateAsync` archives it to
+  `summaries/<first 16 hex of its SHA-256>/` and writes `summary.json`
+  (`backend`, `model`, `created_at`, `transcript` = SHA-256 of
+  `transcript.json`, the name the transcript archive uses). A summary from
+  before this change is archived with `backend` empty (shown as "?").
+- A stale summary is not archived again: it is already in its transcript's
+  archive. `TranscriptVersions.ArchiveCurrentAsync` now also copies
+  `summary.json` and `summaries/`, so each transcript version keeps its own
+  summaries. `SummaryVersions.ReadAsync` shows only the summaries whose
+  `transcript` matches the folder's `transcript.json`.
+- The request file is `summarize.requested` in the recording folder: a JSON
+  list of `{backend, transcript}` (`transcript` = archive folder name, or null
+  for the current transcript), worked off in order. `NeedsWork` sees it, so a
+  restart does not lose it. `ProcessingCoordinator.SummarizeOnRequestAsync`
+  runs it after the normal summary. A model that cannot be reached keeps the
+  request for the next pass; a permanent failure drops it and shows the error.
+- The menu uses `LanguageModels.AvailableForSummary()`: what `auto` would walk,
+  whatever `summary.backend` says, because the person picks the engine by hand.
+  Ollama is always listed ("if it is running").
+- A summary made on demand does not raise `SummaryWritten`, so it never brings
+  up the Slack card. The card and the "Copy summary" button read `summary.md`;
+  in the Recordings window, "Copy summary" copies the summary tab that is open.
+- Tests: `SummaryVersionsTests.cs` (Core) and `SummaryOnDemandTests.cs` (Live,
+  Ollama's address answered by a fake `HttpMessageHandler`).
 
 Done when: on `2026.11.06-1438` I make two more summaries with two engines, see
 three tabs, and the first summary is unchanged on disk.

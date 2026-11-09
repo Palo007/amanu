@@ -47,6 +47,10 @@ internal sealed class RecordingsWindow : Window
     private readonly System.Windows.Controls.Button folder;
     private readonly System.Windows.Controls.Button delete;
     private readonly System.Windows.Controls.Button copySlack;
+    private readonly System.Windows.Controls.Button summarizeAgain;
+    private readonly TabControl summaryTabs = new() { Margin = new Thickness(0, 4, 0, 0), Visibility = Visibility.Collapsed };
+    private bool updatingSummaries;
+    private string? selectedSummaryDirectory;
     private string? wanted;
     private readonly Grid detail = new();
     private readonly TabControl tabs = new() { Margin = new Thickness(0, 8, 0, 0) };
@@ -81,6 +85,9 @@ internal sealed class RecordingsWindow : Window
         finish.ToolTip = T("Try again whatever gave up or is waiting, keeping the transcript and every name typed by hand.",
             "Ещё раз попробовать то, что не получилось или ждёт, — расшифровка и имена, введённые вручную, остаются.");
         retranscribe = Ui.Button(T("Transcribe again ▾", "Расшифровать заново ▾"), OpenRetranscribeMenu);
+        summarizeAgain = Ui.Button(T("Summarize again ▾", "Пересоздать саммари ▾"), OpenSummarizeMenu);
+        summarizeAgain.ToolTip = T("A new summary of the transcript open above. The earlier summaries stay, one tab each.",
+            "Новое саммари открытой расшифровки. Прежние саммари остаются, каждое в своей вкладке.");
         listen = Ui.Button(T("Listen", "Слушать"), () => { if (Selected is { } row) Listen(row); });
         folder = Ui.Button(T("Open folder", "Открыть папку"), () => { if (Selected is { } row) OpenFolder(row); });
         delete = Ui.Button(T("Delete", "Удалить"), () => { if (Selected is { } row) Delete(row); });
@@ -105,11 +112,23 @@ internal sealed class RecordingsWindow : Window
 
         tabs.Items.Add(new TabItem { Header = T("Transcript", "Расшифровка"), Content = transcript });
         tabs.Items.Add(new TabItem { Header = T("Speakers", "Участники"), Content = Ui.Scroll(speakers) });
-        tabs.Items.Add(new TabItem { Header = T("Summary", "Саммари"), Content = summary });
+        var summaryPanel = new Grid();
+        summaryPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        summaryPanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        summaryPanel.Children.Add(summaryTabs);
+        Grid.SetRow(summary, 1);
+        summaryPanel.Children.Add(summary);
+        summaryTabs.SelectionChanged += async (_, args) =>
+        {
+            if (args.Source != summaryTabs) return;
+            args.Handled = true;
+            if (!updatingSummaries) await ShowSelectedSummaryAsync();
+        };
+        tabs.Items.Add(new TabItem { Header = T("Summary", "Саммари"), Content = summaryPanel });
         engineTabs.SelectionChanged += async (_, args) =>
         {
             if (args.Source != engineTabs) return;
-            MarkSelectedEngineTab();
+            MarkSelectedTab(engineTabs);
             if (!updatingChoices) await ShowTranscriptAsync();
         };
         var transcriptPanel = new Grid();
@@ -120,7 +139,7 @@ internal sealed class RecordingsWindow : Window
         transcriptPanel.Children.Add(tabs);
 
         var actions = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
-        foreach (var button in new[] { finish, retranscribe, copySlack, listen, folder, delete })
+        foreach (var button in new[] { finish, retranscribe, summarizeAgain, copySlack, listen, folder, delete })
         {
             ToolTipService.SetShowOnDisabled(button, true);
             button.Margin = new Thickness(0, 0, 8, 0);
@@ -204,7 +223,9 @@ internal sealed class RecordingsWindow : Window
 
     private async Task CopyForSlackAsync(Row row)
     {
-        var copied = await SlackClipboard.CopyAsync(row.Item.Directory);
+        // The summary in the open tab; with no tabs, the recording's newest.
+        var source = (summaryTabs.SelectedItem as TabItem)?.Tag is SummaryChoice choice ? choice.Version.Directory : row.Item.Directory;
+        var copied = await SlackClipboard.CopyAsync(source);
         copySlack.Content = copied ? T("Copied", "Скопировано") : T("Couldn’t copy", "Не удалось");
         var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         timer.Tick += (_, _) =>
@@ -226,9 +247,9 @@ internal sealed class RecordingsWindow : Window
         Child = new TextBlock { Text = label },
     };
 
-    private void MarkSelectedEngineTab()
+    private static void MarkSelectedTab(TabControl control)
     {
-        foreach (var tab in engineTabs.Items.OfType<TabItem>())
+        foreach (var tab in control.Items.OfType<TabItem>())
         {
             if (tab.Header is not Border { Child: TextBlock text } pill) continue;
             if (tab.IsSelected)
@@ -293,7 +314,8 @@ internal sealed class RecordingsWindow : Window
         speakers.Children.Clear();
         if (Selected is not { } row)
         {
-            foreach (var button in new[] { finish, retranscribe, copySlack, listen, folder, delete }) button.IsEnabled = false;
+            foreach (var button in new[] { finish, retranscribe, summarizeAgain, copySlack, listen, folder, delete }) button.IsEnabled = false;
+            ClearSummaryTabs();
             title.Text = "";
             summary.ShowText("");
             transcript.ShowText("");
@@ -332,6 +354,7 @@ internal sealed class RecordingsWindow : Window
         {
             selectedTranscriptSession = item.Directory;
             selectedTranscriptKey = null;
+            selectedSummaryDirectory = null;
         }
         var entries = item.Transcripts ?? [];
         var choices = entries.Select((entry, index) => new TranscriptChoice(entry,
@@ -341,7 +364,7 @@ internal sealed class RecordingsWindow : Window
         engineTabs.ItemsSource = choices.Select(choice => new TabItem { Header = EngineTabHeader(choice.Label), Tag = choice }).ToList();
         engineTabs.SelectedItem = engineTabs.Items.Cast<TabItem>().FirstOrDefault(tab => ((TranscriptChoice)tab.Tag).Key == selectedTranscriptKey)
             ?? engineTabs.Items.Cast<TabItem>().LastOrDefault();
-        MarkSelectedEngineTab();
+        MarkSelectedTab(engineTabs);
         engineTabs.Visibility = choices.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         tabs.Margin = new Thickness(0, choices.Count > 1 ? 0 : 8, 0, 0);
         updatingChoices = false;
@@ -353,6 +376,10 @@ internal sealed class RecordingsWindow : Window
         var version = ++transcriptShown;
         speakers.Children.Clear();
         var item = Selected?.Item;
+        var open = engineTabs.SelectedItem as TabItem;
+        summarizeAgain.IsEnabled = item is not null && item.Transcript != ProcessingStep.Recording
+            && open?.Tag is TranscriptChoice { Version.State: ProcessingStep.Done };
+        ClearSummaryTabs();
         if (engineTabs.SelectedItem is not TabItem { Tag: TranscriptChoice choice })
         {
             var emptySummary = item is null ? "" : await ReadAsync(Path.Combine(item.Directory, "summary.md"))
@@ -377,6 +404,10 @@ internal sealed class RecordingsWindow : Window
             ?? (item?.Summary == ProcessingStep.Off ? T("Summaries are off.", "Саммари выключены.") : T("No summary yet.", "Саммари пока нет."));
         if (File.Exists(Path.Combine(directory, "summary.stale")))
             summaryText = T("This summary refers to the previous transcript.\n\n", "Это саммари предыдущей расшифровки.\n\n") + summaryText;
+        var shownSummary = await ShowSummariesAsync(directory, version);
+        if (version != transcriptShown) return;
+        if (shownSummary is not null)
+            summaryText = await ReadAsync(Path.Combine(shownSummary, "summary.md")) ?? summaryText;
         if (version != transcriptShown) return;
         transcript.ShowMarkdown(text);
         summary.ShowMarkdown(summaryText);
@@ -498,6 +529,81 @@ internal sealed class RecordingsWindow : Window
         }
         _ = settings;
         menu.IsOpen = true;
+    }
+
+    /// <summary>The summary engines that can run now, for the transcript version open in the window.</summary>
+    private void OpenSummarizeMenu()
+    {
+        if (Selected is not { } row || engineTabs.SelectedItem is not TabItem { Tag: TranscriptChoice choice }) return;
+        if (choice.Version.State != ProcessingStep.Done) return;
+        var transcript = choice.Version.IsCurrent ? null : Path.GetFileName(choice.Version.Directory);
+        var menu = new ContextMenu { PlacementTarget = summarizeAgain, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        var backends = runtime.LanguageModels.AvailableForSummary();
+        foreach (var backend in backends)
+        {
+            var label = SummaryVersions.BackendName(backend.Name) + (backend.Model is { Length: > 0 } model ? $" · {model}" : "");
+            if (backend.Name == "ollama") label += T(" — if it is running", " — если запущена");
+            var item = new MenuItem { Header = label };
+            item.Click += async (_, _) =>
+            {
+                try
+                {
+                    runtime.RequestSummary(row.Item.Directory, backend.Name, transcript);
+                    processingStatus.Text = T("Summary asked for. It runs in the next processing pass.", "Саммари запрошено. Оно будет в следующем проходе обработки.");
+                    selectedSummaryDirectory = null;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    Ui.ShowError(this, T("Couldn’t ask for a summary", "Не удалось запросить саммари"), exception.Message);
+                }
+                await ReloadAsync();
+            };
+            menu.Items.Add(item);
+        }
+        if (backends.Count == 0)
+            menu.Items.Add(new MenuItem
+            {
+                Header = T("No summary engine is set up", "Ни один движок саммари не настроен"),
+                IsEnabled = false,
+            });
+        menu.IsOpen = true;
+    }
+
+    private sealed record SummaryChoice(SummaryVersion Version)
+    {
+        public string Label => Version.BackendName + " · " + Version.CreatedAt.ToLocalTime().ToString("MM-dd HH:mm", Culture);
+    }
+
+    /// <summary>One tab per summary of the open transcript, newest first; the tab row hides when there is one.</summary>
+    private async Task<string?> ShowSummariesAsync(string directory, int version)
+    {
+        var versions = await SummaryVersions.ReadAsync(directory);
+        if (version != transcriptShown) return null;
+        updatingSummaries = true;
+        summaryTabs.ItemsSource = versions.Select(item => new TabItem { Header = EngineTabHeader(new SummaryChoice(item).Label), Tag = new SummaryChoice(item) }).ToList();
+        summaryTabs.SelectedItem = summaryTabs.Items.Cast<TabItem>().FirstOrDefault(tab => ((SummaryChoice)tab.Tag).Version.Directory == selectedSummaryDirectory)
+            ?? summaryTabs.Items.Cast<TabItem>().FirstOrDefault();
+        MarkSelectedTab(summaryTabs);
+        summaryTabs.Visibility = versions.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        updatingSummaries = false;
+        return (summaryTabs.SelectedItem as TabItem)?.Tag is SummaryChoice choice ? choice.Version.Directory : null;
+    }
+
+    /// <summary>No tabs left behind from another recording, so "Copy summary" never copies one of those.</summary>
+    private void ClearSummaryTabs()
+    {
+        updatingSummaries = true;
+        summaryTabs.ItemsSource = null;
+        summaryTabs.Visibility = Visibility.Collapsed;
+        updatingSummaries = false;
+    }
+
+    private async Task ShowSelectedSummaryAsync()
+    {
+        if (summaryTabs.SelectedItem is not TabItem { Tag: SummaryChoice choice }) return;
+        selectedSummaryDirectory = choice.Version.Directory;
+        MarkSelectedTab(summaryTabs);
+        summary.ShowMarkdown(await ReadAsync(Path.Combine(choice.Version.Directory, "summary.md")) ?? "");
     }
 
     private void Listen(Row row)
