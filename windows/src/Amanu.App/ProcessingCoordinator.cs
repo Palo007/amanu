@@ -797,7 +797,12 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         {
             try
             {
-                return await CreateCloud(cloud, current, cache: true).TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+                var done = await CreateCloud(cloud, current, cache: true).TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+                // Gemini may have been answered by its fallback model, and the transcript's quality depends on which; the log says so.
+                if (cloud == "gemini")
+                    await File.AppendAllTextAsync(Path.Combine(directory, "transcribe.log"),
+                        $"{DateTimeOffset.UtcNow:O} gemini model: {done.Model}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+                return done;
             }
             catch (ProcessingFailure failure) when (plan.Local is not null && failure.Kind != FailureKind.Recording)
             {
@@ -828,6 +833,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         {
             "openai" => new OpenAiTranscriptionEngine(httpClient, key, current.Transcription.OpenAi.Model, MeetingLanguages.Pin(expected), cache),
             "elevenlabs" => new ElevenLabsTranscriptionEngine(httpClient, key, cache, LoadCustomWords(current)),
+            "gemini" => new GeminiTranscriptionEngine(httpClient, key, expected, cache, LoadCustomWords(current)),
             _ => new AssemblyAiTranscriptionEngine(httpClient, key, expected, current.Transcription.AssemblyAi.SpeechModel, cache, LoadCustomWords(current)),
         };
     }
@@ -892,14 +898,14 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     }
 
     /// <summary>
-    /// Engines that take the list (AssemblyAI, ElevenLabs) were given it. For the
+    /// Engines that take the list (AssemblyAI, ElevenLabs, Gemini) were given it. For the
     /// rest (local models, OpenAI's diarizing model) close-sounding words are
     /// replaced by list entries. The raw text is kept and every change is
     /// logged in processing.json. An empty list changes nothing and writes nothing.
     /// </summary>
     private static TranscriptDocument ApplyCustomWords(string directory, TranscriptDocument transcript, AppSettings current)
     {
-        if (transcript.Engine is "assemblyai" or "elevenlabs") return transcript;
+        if (transcript.Engine is "assemblyai" or "elevenlabs" or "gemini") return transcript;
         var words = LoadCustomWords(current);
         if (words.Count == 0) return transcript;
         var (segments, corrections) = CustomWords.Correct(transcript.Segments, words);
@@ -1277,6 +1283,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         ("assemblyai", _) => "universal-3-pro",
         ("openai", "gpt-4o-transcribe-diarize") => "gpt-4o-transcribe-diarize",
         ("elevenlabs", _) => "scribe_v2",
+        ("gemini", var used) when used.StartsWith("gemini-3.7", StringComparison.Ordinal) => "gemini-3.7-flash",
+        ("gemini", _) => "gemini-3.8-flash",
         ("parakeet", _) => "parakeet-v3",
         ("parakeet-ultra", _) => "parakeet-ultra",
         ("parakeet-sk", _) => "parakeet-v3-sk",

@@ -168,7 +168,7 @@ public sealed class AutoRecordSettings
 
 public sealed class TranscriptionSettings
 {
-    public static readonly IReadOnlyList<string> CloudEngines = ["assemblyai", "openai", "elevenlabs"];
+    public static readonly IReadOnlyList<string> CloudEngines = ["assemblyai", "openai", "elevenlabs", "gemini"];
     public static readonly IReadOnlyList<string> LocalEngines = ["parakeet", "parakeet-ultra", "parakeet-sk", "whisper", "gigaam"];
 
     [JsonPropertyName("enabled")]

@@ -29,6 +29,7 @@ public static class KeyCheck
             SecretNames.AssemblyAi => Get("https://api.assemblyai.com/v2/transcript?limit=1", message => message.Headers.TryAddWithoutValidation("authorization", key)),
             SecretNames.OpenAi => Get("https://api.openai.com/v1/models", message => message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key)),
             SecretNames.ElevenLabs => Get("https://api.elevenlabs.io/v1/user", message => message.Headers.TryAddWithoutValidation("xi-api-key", key)),
+            SecretNames.Gemini => Get("https://generativelanguage.googleapis.com/v1beta/models", message => message.Headers.TryAddWithoutValidation("x-goog-api-key", key)),
             SecretNames.Anthropic => Get("https://api.anthropic.com/v1/models", message =>
             {
                 message.Headers.TryAddWithoutValidation("x-api-key", key);

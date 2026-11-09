@@ -318,6 +318,7 @@ public static class SecretNames
     public const string AssemblyAi = "assemblyai";
     public const string OpenAi = "openai";
     public const string ElevenLabs = "elevenlabs";
+    public const string Gemini = "gemini";
     public const string Anthropic = "anthropic";
     /// <summary>The key for an OpenAI-compatible Base URL that is not OpenAI's own.</summary>
     public const string OpenAiCompatible = "openai-compatible";

@@ -199,6 +199,7 @@ internal sealed class SetupForm
             ("assemblyai", "AssemblyAI", T("$0.23 an hour. No limit on meeting length.", "$0,23 за час. Без ограничения на длину встречи."), "https://www.assemblyai.com/dashboard/signup"),
             ("openai", "OpenAI", T("$0.36 an hour. Same key as summaries.", "$0,36 за час. Тот же ключ, что и для саммари."), "https://platform.openai.com/api-keys"),
             ("elevenlabs", "ElevenLabs", T("Scribe v2. $0.44 an hour for a two-channel call.", "Scribe v2. $0,44 за час разговора с двумя каналами."), "https://elevenlabs.io/app/developers/api-keys"),
+            ("gemini", "Gemini", T("Gemini 3.8 Flash. Free tier is slow; Google may use free-tier audio.", "Gemini 3.8 Flash. Бесплатный тариф медленный; Google может использовать звук с него."), "https://aistudio.google.com/apikey"),
         };
         foreach (var (id, title, detail, url) in providers)
         {

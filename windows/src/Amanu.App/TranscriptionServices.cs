@@ -881,3 +881,136 @@ public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string 
         }
     }
 }
+
+/// <summary>
+/// Gemini, each track on its own, five minutes at a time: the track says the side, the model's
+/// speaker letters say the voice. It is a language model, not a recognizer, so a piece it is
+/// handed is short enough for it to keep timestamps straight, and it is off unless asked for.
+/// </summary>
+public sealed class GeminiTranscriptionEngine(
+    HttpClient httpClient, string apiKey, IReadOnlyList<string> expectedLanguages, bool cache = true,
+    IReadOnlyList<string>? keyTerms = null, IReadOnlyList<TimeSpan>? backoff = null) : ITranscriptionEngine
+{
+    private const string Service = "Gemini";
+    private const int PieceSeconds = 300;
+
+    /// <summary>What a busy service is given before the next try: three tries, then the fallback model once.</summary>
+    private static readonly TimeSpan[] DefaultBackoff = [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(45)];
+
+    public string Name => "gemini";
+
+    public async Task<TranscriptDocument> TranscribeAsync(SessionAudio audio, CancellationToken cancellationToken)
+    {
+        var tracks = audio.BothSides
+            ? new[] { (audio.Microphone!, SpeakerLabels.Me, audio.MicrophoneOffsetMs), (audio.System!, SpeakerLabels.Them, audio.SystemOffsetMs) }
+            : [audio.Only];
+        var prompt = GeminiTranscript.Prompt(expectedLanguages, keyTerms);
+        var all = new List<TranscriptSegment>();
+        // Once the first model has used up its tries, the rest of the session goes straight to the fallback:
+        // asking a model that has just been busy four times, for every remaining piece, would add minutes for nothing.
+        var primaryBusy = false;
+        string? firstAnswer = null, fallbackAnswer = null;
+        foreach (var (path, side, offset) in tracks)
+        {
+            var work = Path.Combine(audio.Directory, $".gemini-{side}");
+            try
+            {
+                Directory.CreateDirectory(work);
+                var wave = Path.Combine(work, "track.wav");
+                AudioPreprocessor.ConvertToMono16k(path, wave);
+                var pieces = AudioPreprocessor.SplitWithContext(wave, work, PieceSeconds, 1, null, null);
+                for (var index = 0; index < pieces.Count; index++)
+                {
+                    var piece = pieces[index];
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var length = new FileInfo(piece.Path).Length.ToString();
+                    var number = index.ToString();
+                    string? CachePath(string model) => cache
+                        ? ProviderCache.PathFor(audio.Directory, "gemini", model, side, number, length, CustomWords.Digest(keyTerms))
+                        : null;
+                    string? body = null;
+                    var asked = GeminiTranscript.Model;
+                    foreach (var model in new[] { GeminiTranscript.Model, GeminiTranscript.FallbackModel })
+                    {
+                        if (CachePath(model) is { } cached && File.Exists(cached))
+                        {
+                            body = await File.ReadAllTextAsync(cached, cancellationToken).ConfigureAwait(false);
+                            asked = model;
+                            break;
+                        }
+                    }
+                    if (body is null)
+                    {
+                        var wavBytes = await File.ReadAllBytesAsync(piece.Path, cancellationToken).ConfigureAwait(false);
+                        (body, asked) = await AskAsync(GeminiTranscript.RequestBody(prompt, wavBytes), primaryBusy, cancellationToken).ConfigureAwait(false);
+                        if (asked != GeminiTranscript.Model) primaryBusy = true;
+                        if (CachePath(asked) is { } cachePath) await AtomicFiles.WriteTextAsync(cachePath, body, cancellationToken).ConfigureAwait(false);
+                    }
+                    var (text, version) = GeminiTranscript.ReadResponse(body);
+                    var answered = string.IsNullOrWhiteSpace(version) ? asked : version;
+                    if (asked == GeminiTranscript.FallbackModel) fallbackAnswer ??= answered;
+                    else firstAnswer ??= answered;
+                    all.AddRange(GeminiTranscript.Segments(text, side, piece.OffsetMs, piece.StartMs, piece.EndMs)
+                        .Select(segment => segment with { StartMs = segment.StartMs + offset, EndMs = segment.EndMs + offset }));
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+            }
+        }
+        // One model name has to describe the whole transcript. When the fallback answered any piece the
+        // fallback is the one named, because it is the weaker of the two and the reader should know it was used.
+        return new TranscriptDocument("gemini", fallbackAnswer ?? firstAnswer ?? GeminiTranscript.Model, DateTimeOffset.UtcNow,
+            SpeakerLabels.Assign(all.OrderBy(segment => segment.StartMs).ToArray()));
+    }
+
+    /// <summary>The body of a successful answer and the model that was asked for it.</summary>
+    private async Task<(string Body, string Model)> AskAsync(string requestBody, bool skipPrimary, CancellationToken cancellationToken)
+    {
+        var delays = backoff ?? DefaultBackoff;
+        if (!skipPrimary)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                var (body, _) = await SendAsync(GeminiTranscript.Model, requestBody, cancellationToken).ConfigureAwait(false);
+                if (body is not null) return (body, GeminiTranscript.Model);
+                if (attempt >= delays.Count) break;
+                await Task.Delay(delays[attempt], cancellationToken).ConfigureAwait(false);
+            }
+        }
+        var (fallback, busy) = await SendAsync(GeminiTranscript.FallbackModel, requestBody, cancellationToken).ConfigureAwait(false);
+        return fallback is not null ? (fallback, GeminiTranscript.FallbackModel) : throw busy!;
+    }
+
+    /// <summary>One request: the body, or the failure when 429, 500 or 503 says the service is busy; any other failure is thrown.</summary>
+    private async Task<(string? Body, ProcessingFailure? Busy)> SendAsync(string model, string requestBody, CancellationToken cancellationToken)
+    {
+        HttpResponseMessage response;
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
+            // The key goes in a header: a URL ends up in logs and in exception messages.
+            message.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
+            message.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+            response = await httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw ProcessingFailure.FromHttp(Service, null, exception.Message);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new ProcessingFailure(FailureKind.Transient, T($"{Service} timed out", $"{Service} не ответил вовремя"), exception);
+        }
+        using (response)
+        {
+            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode) return (text, null);
+            var status = (int)response.StatusCode;
+            var failure = ProcessingFailure.FromHttp(Service, status, text);
+            if (status is 429 or 500 or 503) return (null, failure);
+            throw failure;
+        }
+    }
+}
