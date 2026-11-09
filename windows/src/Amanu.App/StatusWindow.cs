@@ -30,6 +30,7 @@ internal sealed class StatusWindow : Window
     private readonly Ellipse dot = new() { Width = 10, Height = 10, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock state = new() { FontSize = 16, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock processingLine = Ui.Status();
+    private readonly System.Windows.Controls.ProgressBar processingBar = Ui.ProcessingBar();
     private readonly TextBlock problemLine = Ui.Status("", Ui.Caution);
     private readonly System.Windows.Controls.Button record;
     private readonly System.Windows.Controls.Button pause;
@@ -90,6 +91,8 @@ internal sealed class StatusWindow : Window
         stack.Children.Add(header);
         processingLine.Margin = new Thickness(20, 4, 0, 0);
         stack.Children.Add(processingLine);
+        processingBar.Margin = new Thickness(20, 6, 0, 2);
+        stack.Children.Add(processingBar);
         problemLine.Margin = new Thickness(20, 4, 0, 0);
         stack.Children.Add(problemLine);
 
@@ -294,6 +297,7 @@ internal sealed class StatusWindow : Window
             _ => status.Message,
         };
         processingLine.SetResourceReference(TextBlock.ForegroundProperty, status.Stage == "failed" ? Ui.Critical : Ui.Secondary);
+        Ui.ShowProgress(processingBar, status);
         if (status.Stage is "complete" or "deferred") processingFade.Start();
     }
 

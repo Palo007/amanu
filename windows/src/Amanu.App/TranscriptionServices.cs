@@ -175,8 +175,18 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
     /// <summary>Told each track's time: ("asr.me", wall time, detail).</summary>
     public Action<string, TimeSpan, string>? Timing { get; set; }
 
+    /// <summary>
+    /// Told how much of recognition is done, 0 to 1, across all tracks. Only
+    /// Parakeet reports it, one step per 60-second piece; other models run as
+    /// one call and say nothing until they finish. A track that live speech
+    /// preempts starts again, so the share can go back.
+    /// </summary>
+    public Action<double>? Progress { get; set; }
+
     private sealed class TrackTiming
     {
+        /// <summary>Told this track's share done, 0 to 1, after each piece.</summary>
+        public Action<double>? Progress;
         public TimeSpan Convert;
         public int Runs;
         public string Backend = "cpu";
@@ -224,6 +234,20 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             results[1] = PrecomputedSystem;
         var wall = Stopwatch.StartNew();
         var preempted = 0;
+        // Each track's share done; the average is the whole of recognition.
+        var done = new double[tracks.Length];
+        for (var index = 0; index < tracks.Length; index++)
+            if (results[index] is not null) done[index] = 1;
+        void Report(int index, double share)
+        {
+            double average;
+            lock (done)
+            {
+                done[index] = share;
+                average = done.Average();
+            }
+            Progress?.Invoke(average);
+        }
         while (true)
         {
             using var cpu = await models.CpuTranscription.EnterBatchAsync(cancellationToken).ConfigureAwait(false);
@@ -235,10 +259,11 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             var runs = pending.Select(async index =>
             {
                 var (source, side, offsetMs) = tracks[index];
-                var timing = new TrackTiming();
+                var timing = new TrackTiming { Progress = share => Report(index, share) };
                 try
                 {
                     results[index] = await TranscribeFileCoreAsync(source, side, offsetMs, threads, timing, stop.Token).ConfigureAwait(false);
+                    Report(index, 1);
                 }
                 catch
                 {
@@ -316,8 +341,11 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
                 timing.AudioSeconds = chunks.Sum(chunk => new FileInfo(chunk.Path).Length / 32000.0);
                 var words = new List<TimedWord>();
                 var fallback = new List<TranscriptSegment>();
+                var finished = 0;
                 foreach (var chunk in chunks)
                 {
+                    if (finished > 0) timing.Progress?.Invoke((double)finished / chunks.Count);
+                    finished++;
                     cancellationToken.ThrowIfCancellationRequested();
                     var args = new List<string> { "-m", modelPath, "--threads", threadArgument, "-q", "--timestamps", "word" };
                     if (!string.IsNullOrWhiteSpace(languagePin)) args.AddRange(["--language", languagePin]);
