@@ -23,7 +23,8 @@ breaks each time Google changes the page.
 | 3 | "Summary ready" card | M | B: Slack card | Done, checked by hand |
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
-| 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measured; waiting for decision (WER as `parakeet-sk`, much slower) |
+| 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measured; decision: yes, as an option (step 6b) |
+| 6b | Gemini as an optional engine | L | C: Engines | Not started |
 | 7 | Slovak Whisper (`whisper-sk`): measure | M | C: Engines | Measured; not better (higher WER, 4 times slower) |
 | 8 | Slovak Canary (`canary-sk`): research, measure | L | C: Engines | Measured; not better (higher WER, a little slower) |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
@@ -471,10 +472,28 @@ How it was measured:
   10 minutes of both tracks of `2026.11.06-1021` and `2026.11.06-1000`, and the
   transcript of `2026.11.09-1001`.
 
-Only if I say yes later, the wiring is a new step: engine `gemini`, key in the
-Windows Credential Manager (`Amanu/…`), echo-line removal, model
-`gemini-3.8-flash` with 3 tries and a fallback, custom words and the people
-list in the prompt.
+Decision (2026-11-09): **yes, Gemini becomes an engine, as an option that is
+off by default.** `parakeet-sk` stays the default. The wiring is step 6b.
+
+## Step 6b: Gemini as an optional engine (size: L, session C)
+
+Facts from step 6 that the wiring needs:
+
+- [ ] Engine `gemini`, off by default, with the key in the Windows Credential
+  Manager (`Amanu/…`). The key file that amanu-gemini uses can be imported.
+- [ ] Send each track alone, after the app's own echo removal (LocalVQE). In
+  step 6, pieces of about 5 minutes worked; times come back as `mm:ss` from the
+  start of each piece and are mapped back to the track.
+- [ ] Model `gemini-3.8-flash`, 3 tries with backoff on 429 and 503, then the
+  fallback `gemini-3.7-flash`. HTTP 503 came often on the free key. Write the
+  model that really ran into `transcribe.log` and `transcript.md`.
+- [ ] Prompt: Slovak verbatim, no translation, nothing for silence, custom words
+  and the people list as spelling hints, temperature 0, JSON out.
+- [ ] Remove echo lines (lines on `me` that repeat `them` at the same time) as
+  a safety net; with LocalVQE first, step 6 found 0-1 per recording.
+- [ ] A request can take up to about 6 minutes. Do not time out sooner, and
+  show progress.
+- [ ] Measure once in the app against the step 6 numbers (28.9 % / 39.1 %).
 
 ## Step 7: Slovak Whisper — measure only (size: M, session C)
 
