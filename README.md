@@ -568,8 +568,13 @@ before using this example offline.
   trigger.
 - `live_transcription.enabled` controls the separate local streaming model.
   `system_audio` is `app` or `all`; `transcript_echo_filter` removes duplicate
-  far-end speech. Apple's `mic_voice_processing` and LocalVQE's
-  `offline_echo_cancellation` are macOS-only settings.
+  far-end speech. Apple's `mic_voice_processing` is macOS-only.
+- `keep_echo_cleaned_audio` (Windows, on by default) keeps the echo-cleaned mic
+  and its aligned call track in the session's hidden `.echo-kept` folder, as
+  16-bit audio (about 230 MB per hour). "Transcribe again" then reuses it and
+  skips echo removal; only the provider answers are thrown away. A different
+  LocalVQE revision or model cleans the mic again. Turned off, the next
+  re-transcription deletes the kept copy.
 - `transcription.level_normalization` (Windows, `off` by default): `auto`
   brings quiet or loud speech in a copy of each track toward −20 dBFS before
   transcription. The recording itself is not changed. Turn it on and

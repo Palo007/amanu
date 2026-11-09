@@ -303,7 +303,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                     "This session's audio was not kept, so there is nothing to transcribe again.",
                     "Звук этой записи не сохранён, расшифровывать заново нечего."));
             ProviderCache.Clear(directory);
-            OfflineEchoAudio.Clear(directory);
+            OfflineEchoAudio.Clear(directory, keepCleaned: settings().KeepEchoCleanedAudio);
             LevelAudio.Clear(directory);
             foreach (var file in new[] { "transcribe.failed", "transcribe.deferred", "transcribe.off",
                          "speakers.failed", "speakers.deferred", "summary.failed", "summary.deferred" })
@@ -459,7 +459,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         var echoing = current.OfflineEchoCancellation && audio.BothSides;
         var leveling = string.Equals(current.Transcription.LevelNormalization, "auto", StringComparison.OrdinalIgnoreCase);
         if (echoing) Publish(directory, "transcribing", T("Removing echo…", "Убираю эхо…"), true, PassProgress.Echo);
-        var (echoed, cleaned) = await HearAsync(directory, audio, current, overlap, cancellationToken).ConfigureAwait(false);
+        var (echoed, cleaned) = await HearAsync(directory, audio, current, overlap, current.KeepEchoCleanedAudio, cancellationToken).ConfigureAwait(false);
         LevelAudio.Result? leveled = null;
 
         try
@@ -611,7 +611,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// one, the tracks as recorded otherwise. `audio` itself is never changed.
     /// </summary>
     private async Task<(SessionAudio Heard, OfflineEchoAudio.Result? Cleaned)> HearAsync(
-        string directory, SessionAudio audio, AppSettings current, SystemOverlap? overlap, CancellationToken cancellationToken)
+        string directory, SessionAudio audio, AppSettings current, SystemOverlap? overlap, bool keep, CancellationToken cancellationToken)
     {
         if (!current.OfflineEchoCancellation || !audio.BothSides)
         {
@@ -619,7 +619,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             return (audio, null);
         }
         var echo = Stopwatch.StartNew();
-        var cleaned = await CancelEchoAsync(directory, audio, overlap, cancellationToken).ConfigureAwait(false);
+        var cleaned = await CancelEchoAsync(directory, audio, overlap, keep, cancellationToken).ConfigureAwait(false);
         LogTiming(directory, "echo", echo.Elapsed, cleaned is null ? "skipped" : null);
         if (cleaned is null) return (audio, null);
         return (audio with
@@ -659,7 +659,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         if (plan.Local is null) throw new InvalidOperationException($"No local model for '{engine}': {plan.Missing}");
         var measurePlan = plan with { Cloud = null };
         var overlap = OverlapFor(measurePlan, audio, current, output);
-        var (echoed, cleaned) = await HearAsync(output, audio, current, overlap, cancellationToken).ConfigureAwait(false);
+        // A measurement times echo removal, so it never reuses or keeps a cleaned copy.
+        var (echoed, cleaned) = await HearAsync(output, audio, current, overlap, keep: false, cancellationToken).ConfigureAwait(false);
         LevelAudio.Result? leveled = null;
         try
         {
@@ -706,9 +707,18 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// processing.json say what was skipped and why. Shares the CPU with local
     /// recognition, so live transcription preempts it like a batch pass.
     /// </summary>
-    private async Task<OfflineEchoAudio.Result?> CancelEchoAsync(string directory, SessionAudio audio, SystemOverlap? overlap, CancellationToken cancellationToken)
+    private async Task<OfflineEchoAudio.Result?> CancelEchoAsync(string directory, SessionAudio audio, SystemOverlap? overlap, bool keep, CancellationToken cancellationToken)
     {
         var log = Path.Combine(directory, "transcribe.log");
+        // Echo removal hears only the two tracks, so a copy kept from an earlier
+        // pass is what a fresh run would make; the call track then waits for
+        // recognition as usual, since there is no echo removal to overlap.
+        if (keep && OfflineEchoAudio.TryReuse(directory) is { } reused)
+        {
+            await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} reusing the echo-cleaned audio kept from an earlier pass; echo removal skipped{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+            WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = reused.Echo });
+            return reused.Audio;
+        }
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} removing acoustic echo from a microphone copy before transcription{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var timer = Stopwatch.StartNew();
         OfflineEchoAudio.Result prepared;
@@ -754,13 +764,20 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             return null;
         }
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo stages: {prepared.Timings}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
-        WriteLedger(directory, ReadLedger(directory) with
+        var echoRecord = new EchoCancellationRecord(LocalVqeAssets.ProcessorVersion,
+            prepared.ModelRan ? LocalVqeAssets.ModelSha256 : null, EchoCanceller.SampleRate, prepared.Frames,
+            Mode: prepared.ModelRan ? "localvqe" : "silent_reference_passthrough",
+            DelayPrime: prepared.DelayPrime?.Describe());
+        WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = echoRecord });
+        if (keep)
         {
-            AudioEchoCancellation = new EchoCancellationRecord(LocalVqeAssets.ProcessorVersion,
-                prepared.ModelRan ? LocalVqeAssets.ModelSha256 : null, EchoCanceller.SampleRate, prepared.Frames,
-                Mode: prepared.ModelRan ? "localvqe" : "silent_reference_passthrough",
-                DelayPrime: prepared.DelayPrime?.Describe()),
-        });
+            // A copy that could not be kept still serves this pass; the next one cleans the mic again.
+            try { prepared = OfflineEchoAudio.Keep(prepared, directory, echoRecord, cancellationToken); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo-cleaned audio not kept — {exception.Message}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+            }
+        }
         if (prepared.DelayPrime is { Applied: false } prime)
             await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo delay prime unavailable ({prime.Status}); LocalVQE estimated the delay online{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var how = !prepared.ModelRan ? "no playback, mic kept exact"

@@ -46,6 +46,16 @@ public sealed class AppSettings
     [JsonPropertyName("offline_echo_cancellation")]
     public bool OfflineEchoCancellation { get; set; } = true;
 
+    /// <summary>
+    /// Keeps the echo-cleaned mic and its aligned call track in the session, so
+    /// "Transcribe again" hears the same cleaned audio instead of running
+    /// LocalVQE once more. Echo removal does not depend on the engine, the
+    /// language or the custom words, so nothing a re-transcription changes
+    /// would make a fresh copy differ.
+    /// </summary>
+    [JsonPropertyName("keep_echo_cleaned_audio")]
+    public bool KeepEchoCleanedAudio { get; set; } = true;
+
     [JsonPropertyName("auto_record")]
     public AutoRecordSettings AutoRecord { get; set; } = new();
 

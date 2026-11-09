@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Amanu.Core.Processing;
 using NAudio.Wave;
 using IODirectory = System.IO.Directory;
@@ -26,11 +27,22 @@ public static class OfflineEchoAudio
 
         public string Timings { get; init; } = "";
 
+        /// <summary>
+        /// Audio kept in <see cref="KeptFolder"/> for later passes. Nothing that
+        /// cleans up after one pass removes it; only a re-transcription with
+        /// keep_echo_cleaned_audio off does, through <see cref="Clear"/>.
+        /// </summary>
+        public bool Kept { get; init; }
+
         /// <summary>The derived audio goes; the provider caches beside it stay for a retry.</summary>
-        public void RemoveAudio() => OfflineEchoAudio.RemoveAudio(Directory);
+        public void RemoveAudio()
+        {
+            if (!Kept) OfflineEchoAudio.RemoveAudio(Directory);
+        }
 
         public void Delete()
         {
+            if (Kept) return;
             try { if (IODirectory.Exists(Directory)) IODirectory.Delete(Directory, recursive: true); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
@@ -177,14 +189,118 @@ public static class OfflineEchoAudio
         return Path.Combine(audio.Directory, $"{FolderPrefix}{digest[..20]}");
     }
 
-    /// <summary>Every echo folder of a session, for a re-transcription to throw away with the other caches.</summary>
-    public static void Clear(string sessionDirectory)
+    /// <summary>
+    /// Every echo folder of a session, for a re-transcription to throw away with
+    /// the other caches. With <paramref name="keepCleaned"/>, the kept audio stays
+    /// and only the provider answers beside it go: a corrected language must not
+    /// return the old text, but the cleaned mic does not depend on it.
+    /// </summary>
+    public static void Clear(string sessionDirectory, bool keepCleaned = false)
     {
         if (!IODirectory.Exists(sessionDirectory)) return;
         foreach (var folder in IODirectory.EnumerateDirectories(sessionDirectory, FolderPrefix + "*"))
         {
+            if (keepCleaned && Path.GetFileName(folder) == KeptFolder)
+            {
+                ProviderCache.Clear(folder);
+                continue;
+            }
             try { IODirectory.Delete(folder, recursive: true); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>
+    /// The session's one folder of echo-cleaned audio kept between passes. It is
+    /// named for the session, not for its sources: after the first pass the raw
+    /// tracks become audio.m4a, and the halves split back out of it are new files
+    /// each time, so a name made from the sources would never be found again.
+    /// </summary>
+    public const string KeptFolder = FolderPrefix + "kept";
+
+    private const string KeptManifest = "kept.json";
+
+    private sealed record KeptManifestData(int OffsetMs, long Frames, bool ModelRan, EchoCancellationRecord Echo);
+
+    /// <summary>
+    /// Moves a pass's cleaned tracks into <see cref="KeptFolder"/> as 16-bit PCM,
+    /// half the size of the float copy and well past what recognition can tell
+    /// apart, and returns them as the audio to hear. The pass's own folder goes.
+    /// </summary>
+    public static Result Keep(Result prepared, string sessionDirectory, EchoCancellationRecord echo, CancellationToken cancellationToken)
+    {
+        var kept = Path.Combine(sessionDirectory, KeptFolder);
+        var partial = kept + ".partial";
+        if (IODirectory.Exists(partial)) IODirectory.Delete(partial, recursive: true);
+        var info = IODirectory.CreateDirectory(partial);
+        info.Attributes |= FileAttributes.Hidden;
+        try
+        {
+            ToPcm16(prepared.Microphone, Path.Combine(partial, "mic.wav"), cancellationToken);
+            ToPcm16(prepared.System, Path.Combine(partial, "system.wav"), cancellationToken);
+            File.WriteAllText(Path.Combine(partial, KeptManifest),
+                JsonSerializer.Serialize(new KeptManifestData(prepared.OffsetMs, prepared.Frames, prepared.ModelRan, echo)));
+            if (IODirectory.Exists(kept)) IODirectory.Delete(kept, recursive: true);
+            IODirectory.Move(partial, kept);
+        }
+        catch
+        {
+            try { IODirectory.Delete(partial, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+            throw;
+        }
+        prepared.Delete();
+        return prepared with { Directory = kept, Microphone = Path.Combine(kept, "mic.wav"), System = Path.Combine(kept, "system.wav"), Kept = true };
+    }
+
+    /// <summary>
+    /// The audio an earlier pass kept, with what processing.json said about it
+    /// then, or null when there is none or it was made by another LocalVQE
+    /// revision or model — those would clean the mic differently.
+    /// </summary>
+    public static (Result Audio, EchoCancellationRecord Echo)? TryReuse(string sessionDirectory)
+    {
+        var kept = Path.Combine(sessionDirectory, KeptFolder);
+        try
+        {
+            var manifest = Path.Combine(kept, KeptManifest);
+            if (!File.Exists(manifest)) return null;
+            var data = JsonSerializer.Deserialize<KeptManifestData>(File.ReadAllText(manifest));
+            if (data is null || data.Echo.Processor != LocalVqeAssets.ProcessorVersion) return null;
+            if (data.ModelRan && data.Echo.ModelSha256 != LocalVqeAssets.ModelSha256) return null;
+            var result = new Result(kept, Path.Combine(kept, "mic.wav"), Path.Combine(kept, "system.wav"), data.OffsetMs, data.Frames, data.ModelRan) { Kept = true };
+            foreach (var path in new[] { result.Microphone, result.System })
+            {
+                if (!File.Exists(path)) return null;
+                using var check = new WaveFileReader(path);
+                if (check.SampleCount != data.Frames) return null;
+            }
+            return (result, data.Echo);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or FormatException or InvalidDataException)
+        {
+            return null;
+        }
+    }
+
+    private static void ToPcm16(string source, string destination, CancellationToken cancellationToken)
+    {
+        using var reader = new WaveFileReader(source);
+        var samples = reader.ToSampleProvider();
+        using var writer = new WaveFileWriter(destination, new WaveFormat(EchoCanceller.SampleRate, 16, 1));
+        var buffer = new float[OfflineEcho.WindowSamples];
+        var pcm = new byte[buffer.Length * 2];
+        int read;
+        while ((read = samples.Read(buffer.AsSpan())) > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            for (var index = 0; index < read; index++)
+            {
+                var value = (short)Math.Round(Math.Clamp(buffer[index], -1f, 1f) * short.MaxValue);
+                pcm[index * 2] = (byte)value;
+                pcm[index * 2 + 1] = (byte)(value >> 8);
+            }
+            writer.Write(pcm, 0, read * 2);
         }
     }
 
