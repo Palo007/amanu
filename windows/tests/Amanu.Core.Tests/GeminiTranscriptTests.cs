@@ -118,6 +118,13 @@ public sealed class GeminiTranscriptTests
         Assert.Equal("fenced", Assert.Single(GeminiTranscript.Segments(text, SpeakerLabels.Me, 0, 0, 5000)).Text);
     }
 
+    [Fact]
+    public void An_answer_cut_off_mid_array_keeps_its_complete_lines()
+    {
+        var text = """[{"start":"00:01","speaker":"A","text":"one {two}"},{"start":"00:02","speaker":"A","text":"three"},{"start":"00:03","speaker":"A","text":"cut of""";
+        Assert.Equal(["one {two}", "three"], GeminiTranscript.Segments(text, SpeakerLabels.Me, 0, 0, 5000).Select(s => s.Text));
+    }
+
     [Theory]
     [InlineData("not json")]
     [InlineData("[{\"start\": ")]

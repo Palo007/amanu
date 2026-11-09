@@ -105,7 +105,7 @@ public static class GeminiTranscript
         var items = new List<(long Start, string Voice, string Text)>();
         try
         {
-            using var document = JsonDocument.Parse(json);
+            using var document = ParseOrSalvage(json);
             var array = document.RootElement;
             if (array.ValueKind == JsonValueKind.Object)
                 array = array.EnumerateObject().FirstOrDefault(property => property.Value.ValueKind == JsonValueKind.Array).Value;
@@ -132,6 +132,34 @@ public static class GeminiTranscript
             result.Add(new TranscriptSegment(kept[i].Start, Math.Max(kept[i].Start, end), kept[i].Text, SpeakerLabels.Raw(side, kept[i].Voice)));
         }
         return result;
+    }
+
+    /// <summary>
+    /// The answer as JSON, or, when it is an array cut off in the middle, the array up to its last
+    /// complete item. A long piece can end the answer before the array is closed; failing the whole
+    /// transcript for that would throw away every line that did arrive, so only the cut line is lost.
+    /// </summary>
+    private static JsonDocument ParseOrSalvage(string json)
+    {
+        try
+        {
+            return JsonDocument.Parse(json);
+        }
+        catch (JsonException) when (json.StartsWith('['))
+        {
+            for (var end = json.LastIndexOf('}'); end > 0; end = json.LastIndexOf('}', end - 1))
+            {
+                try
+                {
+                    return JsonDocument.Parse(json[..(end + 1)] + "]");
+                }
+                catch (JsonException)
+                {
+                    // A '}' inside a line's text: try the one before it.
+                }
+            }
+            throw;
+        }
     }
 
     /// <summary>"mm:ss", "h:mm:ss" (the seconds may carry a fraction) or a number of seconds.</summary>
