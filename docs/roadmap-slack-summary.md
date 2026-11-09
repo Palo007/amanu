@@ -20,14 +20,14 @@ breaks each time Google changes the page.
 |---|---|---|---|---|
 | 1 | Summary prompt for Slack | S | — | Installed; my review is open |
 | 2 | People list | S | A: Speakers | Done, checked by hand |
-| 3 | "Summary ready" card | M | B: Slack card | Built; check by hand with real huddles open |
+| 3 | "Summary ready" card | M | B: Slack card | Done, checked by hand |
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
 | 6 | Gemini as a transcription engine | L | C: Engines | Not started |
 | 7 | Slovak Whisper (`whisper-sk`) | M | C: Engines | Not started |
 | 8 | Slovak Canary (`canary-sk`) | L | C: Engines (research first) | Blocked |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
-| 10 | Summaries on demand, several per recording | M | B: Slack card | Built; check by hand on `2026.11.06-1438` open |
+| 10 | Summaries on demand, several per recording | M | B: Slack card | Done, checked by hand |
 
 ## How to work on this (sessions)
 
@@ -180,7 +180,7 @@ balloon cannot hold buttons, so the card is a small window of its own.
 - [x] Settings: `slack_summary.enabled` (default on), `slack_summary.apps`
   (default `["slack.exe"]`), `slack_summary.min_minutes` (default 3).
 - [x] Tests for the conditions, with fake recording folders (no UI).
-- [ ] Check by hand: paste into a Slack channel and a DM. Bold text, lists and
+- [x] Check by hand: paste into a Slack channel and a DM. Bold text, lists and
   names must look correct. Do not send.
 
 Facts (session B, 2026-11-09):
