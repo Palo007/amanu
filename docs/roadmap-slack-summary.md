@@ -19,7 +19,7 @@ breaks each time Google changes the page.
 | Step | What | Size | Session | State |
 |---|---|---|---|---|
 | 1 | Summary prompt for Slack | S | — | Installed; my review is open |
-| 2 | People list | S | A: Speakers | Not started |
+| 2 | People list | S | A: Speakers | Done; check by hand open |
 | 3 | "Summary ready" card | M | B: Slack card | Designed |
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Not started |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Not started |
@@ -127,19 +127,41 @@ uses), on `2026.10.29-1000`, `2026.11.06-1438` and `2026.11.09-1001`:
 
 ## Step 2: a people list (size: S, session A)
 
-- [ ] New setting `speaker_names.people_file`. The default is
+- [x] New setting `speaker_names.people_file`. The default is
   `%LOCALAPPDATA%\Amanu Data\people.txt`. The format is the same as in
   amanu-gemini: one person per line, full name first, then other names with
   commas (`Radoslav Benes, Rado, Radko`). `(me)` marks my own line.
-- [ ] Give the list to the speaker-name prompt (`SpeakerNamingService`). Tell
+- [x] Give the list to the speaker-name prompt (`SpeakerNamingService`). Tell
   the model to pick from the list when the transcript says a name or nickname
   that is on it.
-- [ ] Give the list to the summary too, so that it writes full names.
-- [ ] Add the full names to the custom words, so that the transcription spells them correctly.
-- [ ] A Settings field that opens the file (a plain field now; step 9 places it).
+- [x] Give the list to the summary too, so that it writes full names.
+- [x] Add the full names to the custom words, so that the transcription spells them correctly.
+- [x] A Settings field that opens the file (a plain field now; step 9 places it).
 
 Done when: the names on `2026.10.29-1000` are the full names from the list,
 not the nicknames that the transcript holds.
+
+What was built (branch `session-a-speakers`):
+
+- `PeopleList.cs` (Core, Processing) reads the file: `#` lines are comments,
+  `(me)` at the line end is case-blind, a second line with the same full name
+  is dropped, at most 500 people. Tests: `PeopleListTests.cs`.
+- The path: `ProcessingCoordinator.PeoplePath(settings)`; empty setting means
+  `people.txt` in the data folder (`AMANU_TEST_DATA` in Debug, as for custom
+  words). `%VARS%` in the setting are expanded. Read at each use: no restart.
+- Naming: the list goes in the user message before "Unknown labels". It is not
+  evidence: the "high" + exact-quote rule is unchanged. A name the model gives
+  is mapped to the full name in code too (`PeopleList.FullNameFor`), but only
+  when exactly one person has that nickname.
+- The `(me)` line is the user's name when `user_name` is empty, before the
+  Windows account name.
+- Summary: the list is added to the system prompt after the language line.
+- Custom words: `LoadCustomWords(settings)` adds the full names after the
+  user's own words (so with 1000 words the user's own are kept).
+- Settings, Advanced tab, Naming: "People list", new `SettingKind.File` = text
+  field + "Open" button; the button makes the file with a comment header when
+  it is missing.
+- Not checked yet: the "Done when" above needs a real run (my hand check).
 
 ## Step 3: the "summary ready" card (size: M, session B)
 

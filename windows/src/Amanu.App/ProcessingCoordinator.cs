@@ -469,7 +469,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                 share => PublishProgress(directory, "transcribing",
                     T($"Transcribing… {share:P0}", $"Расшифровываю… {share:P0}"), PassProgress.Recognition(start, share))).ConfigureAwait(false);
             LogTiming(directory, "asr", recognition.Elapsed);
-            transcript = ApplyCustomWords(directory, transcript);
+            transcript = ApplyCustomWords(directory, transcript, current);
             cleaned?.Delete();
             cleaned = null;
             leveled?.Delete();
@@ -660,7 +660,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             var recognition = Stopwatch.StartNew();
             var transcript = await RunPlanAsync(measurePlan, heard, output, current, cancellationToken, cleaned is null ? null : overlap?.Result).ConfigureAwait(false);
             LogTiming(output, "asr", recognition.Elapsed);
-            transcript = ApplyCustomWords(output, transcript);
+            transcript = ApplyCustomWords(output, transcript, current);
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
             await TranscriptWriter.WriteAsync(output, audio.Title, transcript, null, cancellationToken).ConfigureAwait(false);
@@ -820,13 +820,12 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         return provider switch
         {
             "openai" => new OpenAiTranscriptionEngine(httpClient, key, current.Transcription.OpenAi.Model, MeetingLanguages.Pin(expected), cache),
-            "elevenlabs" => new ElevenLabsTranscriptionEngine(httpClient, key, cache, LoadCustomWords()),
-            _ => new AssemblyAiTranscriptionEngine(httpClient, key, expected, current.Transcription.AssemblyAi.SpeechModel, cache, LoadCustomWords()),
+            "elevenlabs" => new ElevenLabsTranscriptionEngine(httpClient, key, cache, LoadCustomWords(current)),
+            _ => new AssemblyAiTranscriptionEngine(httpClient, key, expected, current.Transcription.AssemblyAi.SpeechModel, cache, LoadCustomWords(current)),
         };
     }
 
-    /// <summary>The user's word list (empty when there is none): read at each use, so an edit needs no restart.</summary>
-    internal static IReadOnlyList<string> LoadCustomWords()
+    private static string DataDirectory()
     {
         var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var dataDirectory = Path.Combine(localData, "Amanu Data");
@@ -834,7 +833,24 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         if (Environment.GetEnvironmentVariable("AMANU_TEST_DATA") is { Length: > 0 } testDirectory)
             dataDirectory = Path.GetFullPath(testDirectory);
 #endif
-        return CustomWords.Load(CustomWords.DefaultPath(dataDirectory));
+        return dataDirectory;
+    }
+
+    internal static string PeoplePath(AppSettings current) => PeopleList.PathFor(current.SpeakerNames.PeopleFile, DataDirectory());
+
+    /// <summary>The user's people list (empty when there is none): read at each use, so an edit needs no restart.</summary>
+    internal static IReadOnlyList<Person> LoadPeople(AppSettings current) => PeopleList.Load(PeoplePath(current));
+
+    /// <summary>
+    /// The user's word list and the full names from the people list (empty when
+    /// there is neither): read at each use, so an edit needs no restart. The
+    /// names come after the words, so a full list keeps the user's own entries.
+    /// </summary>
+    internal static IReadOnlyList<string> LoadCustomWords(AppSettings current)
+    {
+        var words = CustomWords.Load(CustomWords.DefaultPath(DataDirectory()));
+        var names = PeopleList.FullNames(LoadPeople(current));
+        return names.Count == 0 ? words : CustomWords.Parse(words.Concat(names));
     }
 
     /// <summary>
@@ -843,10 +859,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// replaced by list entries. The raw text is kept and every change is
     /// logged in processing.json. An empty list changes nothing and writes nothing.
     /// </summary>
-    private static TranscriptDocument ApplyCustomWords(string directory, TranscriptDocument transcript)
+    private static TranscriptDocument ApplyCustomWords(string directory, TranscriptDocument transcript, AppSettings current)
     {
         if (transcript.Engine is "assemblyai" or "elevenlabs") return transcript;
-        var words = LoadCustomWords();
+        var words = LoadCustomWords(current);
         if (words.Count == 0) return transcript;
         var (segments, corrections) = CustomWords.Correct(transcript.Segments, words);
         if (corrections.Count == 0) return transcript;

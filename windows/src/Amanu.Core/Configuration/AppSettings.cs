@@ -298,6 +298,10 @@ public sealed class SpeakerNameSettings
 
     [JsonPropertyName("model")]
     public string? Model { get; set; }
+
+    /// <summary>people.txt: who may be on calls. Empty means people.txt in the app data folder.</summary>
+    [JsonPropertyName("people_file")]
+    public string? PeopleFile { get; set; }
 }
 
 public sealed class CommandHook

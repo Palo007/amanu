@@ -92,8 +92,40 @@ internal sealed class AdvancedSettings
         SettingKind.Toggle => Toggle(entry),
         SettingKind.Choice => Choice(entry),
         SettingKind.Command => Command(entry),
+        SettingKind.File => File(entry),
         _ => Text(entry),
     };
+
+    /// <summary>
+    /// A path field and a button that opens the file, made first when it is
+    /// missing, so the list can be started from here rather than from Explorer.
+    /// </summary>
+    private FrameworkElement File(SettingEntry entry)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        panel.Children.Add(Text(entry));
+        var open = Ui.Button(T("Open", "Открыть"), () =>
+        {
+            var path = ProcessingCoordinator.PeoplePath(runtime.Settings);
+            try
+            {
+                if (!System.IO.File.Exists(path))
+                {
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+                    System.IO.File.WriteAllText(path,
+                        "# One person per line: full name first, then other names with commas.\n" +
+                        "# Put (me) at the end of your own line.\n" +
+                        "# Radoslav Benes, Rado, Radko\n");
+                }
+            }
+            catch (Exception exception) when (exception is System.IO.IOException or UnauthorizedAccessException) { }
+            AmanuRuntime.Open(path);
+        });
+        open.Margin = new Thickness(8, 0, 0, 0);
+        open.VerticalAlignment = VerticalAlignment.Top;
+        panel.Children.Add(open);
+        return panel;
+    }
 
     private FrameworkElement Toggle(SettingEntry entry)
     {

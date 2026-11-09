@@ -15,6 +15,8 @@ public enum SettingKind
     List,
     /// <summary>An executable and its arguments — the Windows shape of <c>on_stop</c>.</summary>
     Command,
+    /// <summary>The path of a text file the user edits, with a button that opens it.</summary>
+    File,
 }
 
 /// <summary>One setting: where it lives in the file, what it does, and how it is edited.</summary>
@@ -262,6 +264,11 @@ public static class SettingsSchema
                 T("Naming is an easier job than summarizing; empty uses the summary's model.",
                   "Имена — работа проще саммари; пусто — та же модель, что у саммари."),
                 SettingKind.Text, DescribedAs: T("the summary's model", "модель саммари")),
+            new("speaker_names.people_file",
+                T("People list", "Список людей"),
+                T("Who may be on your calls: one person per line, full name first, then other names with commas (Radoslav Benes, Rado, Radko). Put (me) at the end of your own line. Names are given as full names, and the transcription spells them as written.",
+                  "Кто бывает на ваших звонках: по человеку в строке, сначала полное имя, затем другие имена через запятую (Radoslav Benes, Rado, Radko). В конце своей строки поставьте (me). Имена пишутся полностью, и расшифровка пишет их так, как в списке."),
+                SettingKind.File, DescribedAs: T(@"people.txt in %LOCALAPPDATA%\Amanu Data", @"people.txt в %LOCALAPPDATA%\Amanu Data")),
         ]),
 
         new(T("Interface", "Интерфейс"),
