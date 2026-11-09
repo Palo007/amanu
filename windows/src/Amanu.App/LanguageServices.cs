@@ -318,6 +318,18 @@ public static class SecretNames
     public const string AssemblyAi = "assemblyai";
     public const string OpenAi = "openai";
     public const string ElevenLabs = "elevenlabs";
+    public const string Gemini = "gemini";
+
+    /// <summary>
+    /// More Gemini keys, each asked in turn when the one before it has used up its free quota.
+    /// <see cref="Gemini"/> stays the first and the one that says Gemini has a key at all.
+    /// </summary>
+    public static readonly IReadOnlyList<string> GeminiExtras = ["gemini-2", "gemini-3", "gemini-4", "gemini-5", "gemini-6", "gemini-7", "gemini-8", "gemini-9"];
+
+    /// <summary>Every saved Gemini key, the first one first, without blanks or repeats.</summary>
+    public static IReadOnlyList<string> GeminiKeys(Func<string, string?> get) =>
+        new[] { Gemini }.Concat(GeminiExtras).Select(get)
+            .Where(key => !string.IsNullOrWhiteSpace(key)).Select(key => key!.Trim()).Distinct().ToArray();
     public const string Anthropic = "anthropic";
     /// <summary>The key for an OpenAI-compatible Base URL that is not OpenAI's own.</summary>
     public const string OpenAiCompatible = "openai-compatible";

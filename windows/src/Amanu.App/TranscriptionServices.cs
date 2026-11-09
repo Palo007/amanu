@@ -25,6 +25,14 @@ public sealed record SessionAudio(
     int MicrophoneOffsetMs,
     int SystemOffsetMs)
 {
+    /// <summary>
+    /// Where a paid service's answer is kept (<see cref="ProviderCache"/>). It is the session's own
+    /// folder even after echo removal has pointed <see cref="Directory"/> at a temporary copy: that
+    /// copy is deleted when the pass ends, and a cache kept in it would make a failed pass send all
+    /// the audio again. A `with` that changes Directory leaves this as it was.
+    /// </summary>
+    public string CacheDirectory { get; init; } = Directory;
+
     public bool HasAudio => Microphone is not null || System is not null || Single is not null;
     public bool BothSides => Microphone is not null && System is not null;
 
@@ -488,7 +496,7 @@ public sealed class AssemblyAiTranscriptionEngine(
             var multichannel = side == "*";
             var shift = audio.BothSides ? Math.Min(audio.MicrophoneOffsetMs, audio.SystemOffsetMs) : audio.Only.OffsetMs;
             var cachePath = cache
-                ? ProviderCache.PathFor(audio.Directory, "assemblyai", "code-switching-v1", Model, string.Join('+', expectedLanguages),
+                ? ProviderCache.PathFor(audio.CacheDirectory, "assemblyai", "code-switching-v1", Model, string.Join('+', expectedLanguages),
                     multichannel ? "multichannel" : "mono", side, new FileInfo(source).Length.ToString(), CustomWords.Digest(keyTerms))
                 : null;
 
@@ -497,8 +505,8 @@ public sealed class AssemblyAiTranscriptionEngine(
                 result = JsonDocument.Parse(await File.ReadAllTextAsync(cachePath, cancellationToken).ConfigureAwait(false)).RootElement.Clone();
             else
             {
-                var id = await ResumableJobAsync(audio.Directory, cachePath)
-                         ?? await SubmitAsync(source, multichannel, audio.Directory, cachePath, cancellationToken).ConfigureAwait(false);
+                var id = await ResumableJobAsync(audio.CacheDirectory, cachePath)
+                         ?? await SubmitAsync(source, multichannel, audio.CacheDirectory, cachePath, cancellationToken).ConfigureAwait(false);
                 try
                 {
                     result = await PollAsync(id, cancellationToken).ConfigureAwait(false);
@@ -506,12 +514,12 @@ public sealed class AssemblyAiTranscriptionEngine(
                 catch (ProcessingFailure failure) when (failure.Kind == FailureKind.Recording)
                 {
                     // A job that errored or is gone is not resumed: the next attempt submits afresh.
-                    File.Delete(Path.Combine(audio.Directory, ".assemblyai-job.json"));
+                    File.Delete(Path.Combine(audio.CacheDirectory, ".assemblyai-job.json"));
                     throw;
                 }
                 if (cachePath is not null)
                     await AtomicFiles.WriteTextAsync(cachePath, result.GetRawText(), cancellationToken).ConfigureAwait(false);
-                File.Delete(Path.Combine(audio.Directory, ".assemblyai-job.json"));
+                File.Delete(Path.Combine(audio.CacheDirectory, ".assemblyai-job.json"));
             }
             var segments = Segments(result, side);
             if (shift != 0)
@@ -714,7 +722,7 @@ public sealed class OpenAiTranscriptionEngine(
             {
                 var part = parts[index];
                 var cachePath = cache
-                    ? ProviderCache.PathFor(audio.Directory, "openai", model, languagePin ?? "detect", $"{index}/{parts.Count}",
+                    ? ProviderCache.PathFor(audio.CacheDirectory, "openai", model, languagePin ?? "detect", $"{index}/{parts.Count}",
                         new FileInfo(part.Path).Length.ToString())
                     : null;
                 string json;
@@ -803,7 +811,7 @@ public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string 
             try
             {
                 AudioPreprocessor.ConvertToMono16k(path, temp);
-                var cachePath = cache ? ProviderCache.PathFor(audio.Directory, "elevenlabs", Model, side, new FileInfo(temp).Length.ToString(), CustomWords.Digest(keyTerms)) : null;
+                var cachePath = cache ? ProviderCache.PathFor(audio.CacheDirectory, "elevenlabs", Model, side, new FileInfo(temp).Length.ToString(), CustomWords.Digest(keyTerms)) : null;
                 string json;
                 if (cachePath is not null && File.Exists(cachePath)) json = await File.ReadAllTextAsync(cachePath, cancellationToken).ConfigureAwait(false);
                 else
@@ -878,6 +886,154 @@ public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string 
             if (text.Length > 0)
                 yield return new TranscriptSegment((long)(turn.Start * 1000) + offsetMs, (long)(turn.End * 1000) + offsetMs, text,
                     SpeakerLabels.Raw(side, turn.Voice));
+        }
+    }
+}
+
+/// <summary>
+/// Gemini, each track on its own, five minutes at a time: the track says the side, the model's
+/// speaker letters say the voice. It is a language model, not a recognizer, so a piece it is
+/// handed is short enough for it to keep timestamps straight, and it is off unless asked for.
+/// </summary>
+public sealed class GeminiTranscriptionEngine(
+    HttpClient httpClient, IReadOnlyList<string> apiKeys, IReadOnlyList<string> expectedLanguages, bool cache = true,
+    IReadOnlyList<string>? keyTerms = null, IReadOnlyList<TimeSpan>? backoff = null, IReadOnlyList<string>? models = null) : ITranscriptionEngine
+{
+    private const string Service = "Gemini";
+
+    private readonly GeminiKeyRing keys = new(apiKeys);
+
+    /// <summary>The models in the order they are asked (the Gemini models setting).</summary>
+    private readonly IReadOnlyList<string> order = GeminiTranscript.ModelOrder(models);
+    private const int PieceSeconds = 300;
+
+    /// <summary>What a busy service is given before the next try: three tries, then the fallback model once.</summary>
+    private static readonly TimeSpan[] DefaultBackoff = [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(45)];
+
+    public string Name => "gemini";
+
+    public async Task<TranscriptDocument> TranscribeAsync(SessionAudio audio, CancellationToken cancellationToken)
+    {
+        var tracks = audio.BothSides
+            ? new[] { (audio.Microphone!, SpeakerLabels.Me, audio.MicrophoneOffsetMs), (audio.System!, SpeakerLabels.Them, audio.SystemOffsetMs) }
+            : [audio.Only];
+        var prompt = GeminiTranscript.Prompt(expectedLanguages, keyTerms);
+        var all = new List<TranscriptSegment>();
+        // Once a model has used up its tries, the rest of the session starts with the next one:
+        // asking a model that has just given up, for every remaining piece, would add minutes for nothing.
+        var firstUsable = 0;
+        // The latest model in the order that answered any piece, and the name it gave.
+        var weakest = -1;
+        string? weakestAnswer = null;
+        foreach (var (path, side, offset) in tracks)
+        {
+            var work = Path.Combine(audio.Directory, $".gemini-{side}");
+            try
+            {
+                Directory.CreateDirectory(work);
+                var wave = Path.Combine(work, "track.wav");
+                AudioPreprocessor.ConvertToMono16k(path, wave);
+                var pieces = AudioPreprocessor.SplitWithContext(wave, work, PieceSeconds, 1, null, null);
+                for (var index = 0; index < pieces.Count; index++)
+                {
+                    var piece = pieces[index];
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var length = new FileInfo(piece.Path).Length.ToString();
+                    var number = index.ToString();
+                    string? CachePath(string model) => cache
+                        ? ProviderCache.PathFor(audio.CacheDirectory, "gemini", model, side, number, length, CustomWords.Digest(keyTerms))
+                        : null;
+                    string? body = null;
+                    var asked = 0;
+                    for (var m = 0; m < order.Count; m++)
+                    {
+                        if (CachePath(order[m]) is { } cached && File.Exists(cached))
+                        {
+                            body = await File.ReadAllTextAsync(cached, cancellationToken).ConfigureAwait(false);
+                            asked = m;
+                            break;
+                        }
+                    }
+                    if (body is null)
+                    {
+                        var wavBytes = await File.ReadAllBytesAsync(piece.Path, cancellationToken).ConfigureAwait(false);
+                        (body, asked) = await AskAsync(GeminiTranscript.RequestBody(prompt, wavBytes), firstUsable, cancellationToken).ConfigureAwait(false);
+                        firstUsable = asked;
+                        if (CachePath(order[asked]) is { } cachePath) await AtomicFiles.WriteTextAsync(cachePath, body, cancellationToken).ConfigureAwait(false);
+                    }
+                    var (text, version) = GeminiTranscript.ReadResponse(body);
+                    if (asked > weakest)
+                    {
+                        weakest = asked;
+                        weakestAnswer = string.IsNullOrWhiteSpace(version) ? order[asked] : version;
+                    }
+                    all.AddRange(GeminiTranscript.Segments(text, side, piece.OffsetMs, piece.StartMs, piece.EndMs)
+                        .Select(segment => segment with { StartMs = segment.StartMs + offset, EndMs = segment.EndMs + offset }));
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+            }
+        }
+        // One model name has to describe the whole transcript. The latest model in the order that answered
+        // any piece is the one named: it is the one asked last, and the reader should know it was used.
+        return new TranscriptDocument("gemini", weakestAnswer ?? order[0], DateTimeOffset.UtcNow,
+            SpeakerLabels.Assign(all.OrderBy(segment => segment.StartMs).ToArray()));
+    }
+
+    /// <summary>
+    /// The body of a successful answer and the place in the order of the model that gave it. The first
+    /// model is tried again after each back-off delay; every later one is asked once, since it is only
+    /// reached when the one before it has given up.
+    /// </summary>
+    private async Task<(string Body, int Model)> AskAsync(string requestBody, int start, CancellationToken cancellationToken)
+    {
+        var delays = backoff ?? DefaultBackoff;
+        ProcessingFailure? busy = null;
+        for (var m = start; m < order.Count; m++)
+        {
+            var model = order[m];
+            for (var attempt = 0; ; attempt++)
+            {
+                var (body, failure) = await keys.SendAsync(key => SendAsync(model, key, requestBody, cancellationToken)).ConfigureAwait(false);
+                if (body is not null) return (body, m);
+                busy = failure;
+                if (m > 0 || attempt >= delays.Count) break;
+                await Task.Delay(delays[attempt], cancellationToken).ConfigureAwait(false);
+            }
+        }
+        throw busy!;
+    }
+
+    /// <summary>One request: the body, or the failure and status when 429, 500 or 503 says the service is busy; any other failure is thrown.</summary>
+    private async Task<(string? Body, ProcessingFailure? Busy, int Status)> SendAsync(string model, string apiKey, string requestBody, CancellationToken cancellationToken)
+    {
+        HttpResponseMessage response;
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
+            // The key goes in a header: a URL ends up in logs and in exception messages.
+            message.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
+            message.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+            response = await httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw ProcessingFailure.FromHttp(Service, null, exception.Message);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new ProcessingFailure(FailureKind.Transient, T($"{Service} timed out", $"{Service} не ответил вовремя"), exception);
+        }
+        using (response)
+        {
+            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode) return (text, null, 200);
+            var status = (int)response.StatusCode;
+            var failure = ProcessingFailure.FromHttp(Service, status, text);
+            if (status is 429 or 500 or 503) return (null, failure, status);
+            throw failure;
         }
     }
 }

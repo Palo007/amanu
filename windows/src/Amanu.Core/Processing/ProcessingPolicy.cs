@@ -47,6 +47,7 @@ public static class EngineResolver
         "assemblyai" => "AssemblyAI",
         "openai" => "OpenAI",
         "elevenlabs" => "ElevenLabs",
+        "gemini" => "Gemini",
         "parakeet" => "Parakeet v3",
         "parakeet-ultra" => "Parakeet Ultra",
         "parakeet-sk" => "Parakeet v3 Slovak (KInIT)",

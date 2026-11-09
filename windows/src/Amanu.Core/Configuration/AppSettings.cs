@@ -178,7 +178,7 @@ public sealed class AutoRecordSettings
 
 public sealed class TranscriptionSettings
 {
-    public static readonly IReadOnlyList<string> CloudEngines = ["assemblyai", "openai", "elevenlabs"];
+    public static readonly IReadOnlyList<string> CloudEngines = ["assemblyai", "openai", "elevenlabs", "gemini"];
     public static readonly IReadOnlyList<string> LocalEngines = ["parakeet", "parakeet-ultra", "parakeet-sk", "whisper", "gigaam"];
 
     [JsonPropertyName("enabled")]
@@ -242,6 +242,19 @@ public sealed class TranscriptionSettings
 
     [JsonPropertyName("assemblyai")]
     public AssemblyAiTranscriptionSettings AssemblyAi { get; set; } = new();
+
+    [JsonPropertyName("gemini")]
+    public GeminiTranscriptionSettings Gemini { get; set; } = new();
+}
+
+public sealed class GeminiTranscriptionSettings
+{
+    /// <summary>
+    /// The models asked in this order, at most three: the first is retried while it is busy, each
+    /// later one is asked once when the one before it has given up. Empty means the tested pair.
+    /// </summary>
+    [JsonPropertyName("models")]
+    public List<string> Models { get; set; } = [Amanu.Core.Processing.GeminiTranscript.Model, Amanu.Core.Processing.GeminiTranscript.FallbackModel];
 }
 
 public sealed class OpenAiTranscriptionSettings

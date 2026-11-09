@@ -636,7 +636,9 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// Measurement only (roadmap-speed step 0): transcribes a copy of one
     /// recording in `output` on this computer's model, with the same stages
     /// and timing lines as a real pass. The recording itself is only read:
-    /// no archive, no names, no summary, no analytics, no cloud.
+    /// no archive, no names, no summary, no analytics. The cloud is used only
+    /// when `engine` names a cloud engine outright, so a cloud engine can be
+    /// measured on the same audio path; nothing else ever reaches it.
     /// </summary>
     public async Task<TranscriptDocument> MeasureAsync(string recording, string output, string? engine, CancellationToken cancellationToken)
     {
@@ -654,10 +656,12 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         LogTiming(output, "decode", decode.Elapsed);
         if (!audio.HasAudio) throw new InvalidOperationException("No track in this recording has any audio.");
         engine ??= ReadText(output, "transcribe.engine") ?? current.Transcription.Engine;
+        var namedCloud = TranscriptionSettings.CloudEngines.Contains(engine);
         var plan = EngineResolver.Plan(engine, current.Transcription.Cloud, current.Transcription.LocalEngine,
-            _ => false, models.IsReady);
-        if (plan.Local is null) throw new InvalidOperationException($"No local model for '{engine}': {plan.Missing}");
-        var measurePlan = plan with { Cloud = null };
+            name => namedCloud && secrets.Get(name) is not null, models.IsReady);
+        if (namedCloud && plan.Cloud is null) throw new InvalidOperationException($"No key for '{engine}': {plan.Missing}");
+        if (!namedCloud && plan.Local is null) throw new InvalidOperationException($"No local model for '{engine}': {plan.Missing}");
+        var measurePlan = namedCloud ? plan : plan with { Cloud = null };
         var overlap = OverlapFor(measurePlan, audio, current, output);
         // A measurement times echo removal, so it never reuses or keeps a cleaned copy.
         var (echoed, cleaned) = await HearAsync(output, audio, current, overlap, keep: false, cancellationToken).ConfigureAwait(false);
@@ -814,7 +818,12 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         {
             try
             {
-                return await CreateCloud(cloud, current, cache: true).TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+                var done = await CreateCloud(cloud, current, cache: true).TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+                // Gemini may have been answered by its fallback model, and the transcript's quality depends on which; the log says so.
+                if (cloud == "gemini")
+                    await File.AppendAllTextAsync(Path.Combine(directory, "transcribe.log"),
+                        $"{DateTimeOffset.UtcNow:O} gemini model: {done.Model}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+                return done;
             }
             catch (ProcessingFailure failure) when (plan.Local is not null && failure.Kind != FailureKind.Recording)
             {
@@ -845,6 +854,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         {
             "openai" => new OpenAiTranscriptionEngine(httpClient, key, current.Transcription.OpenAi.Model, MeetingLanguages.Pin(expected), cache),
             "elevenlabs" => new ElevenLabsTranscriptionEngine(httpClient, key, cache, LoadCustomWords(current)),
+            "gemini" => new GeminiTranscriptionEngine(httpClient, SecretNames.GeminiKeys(secrets.Get), expected, cache, LoadCustomWords(current),
+                models: current.Transcription.Gemini.Models),
             _ => new AssemblyAiTranscriptionEngine(httpClient, key, expected, current.Transcription.AssemblyAi.SpeechModel, cache, LoadCustomWords(current)),
         };
     }
@@ -909,14 +920,14 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     }
 
     /// <summary>
-    /// Engines that take the list (AssemblyAI, ElevenLabs) were given it. For the
+    /// Engines that take the list (AssemblyAI, ElevenLabs, Gemini) were given it. For the
     /// rest (local models, OpenAI's diarizing model) close-sounding words are
     /// replaced by list entries. The raw text is kept and every change is
     /// logged in processing.json. An empty list changes nothing and writes nothing.
     /// </summary>
     private static TranscriptDocument ApplyCustomWords(string directory, TranscriptDocument transcript, AppSettings current)
     {
-        if (transcript.Engine is "assemblyai" or "elevenlabs") return transcript;
+        if (transcript.Engine is "assemblyai" or "elevenlabs" or "gemini") return transcript;
         var words = LoadCustomWords(current);
         if (words.Count == 0) return transcript;
         var (segments, corrections) = CustomWords.Correct(transcript.Segments, words);
@@ -1294,6 +1305,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         ("assemblyai", _) => "universal-3-pro",
         ("openai", "gpt-4o-transcribe-diarize") => "gpt-4o-transcribe-diarize",
         ("elevenlabs", _) => "scribe_v2",
+        ("gemini", var used) when used.StartsWith("gemini-3.7-flash", StringComparison.Ordinal) => "gemini-3.7-flash",
+        ("gemini", var used) when used.StartsWith("gemini-3.8-flash", StringComparison.Ordinal) => "gemini-3.8-flash",
         ("parakeet", _) => "parakeet-v3",
         ("parakeet-ultra", _) => "parakeet-ultra",
         ("parakeet-sk", _) => "parakeet-v3-sk",

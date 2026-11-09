@@ -204,6 +204,11 @@ public static class SettingsSchema
                 T("The default is the only OpenAI model that returns both timings and speakers.",
                   "По умолчанию стоит единственная модель OpenAI, которая возвращает и время, и говорящих."),
                 SettingKind.Text),
+            new("transcription.gemini.models",
+                T("Gemini models", "Модели Gemini"),
+                T("Asked in this order, at most three: when one is busy or out of quota, the next is asked.",
+                  "Опрашиваются по порядку, не больше трёх: когда одна занята или без квоты, спрашивается следующая."),
+                SettingKind.List, AskedInSetup: true),
         ]),
 
         new(T("Summaries", "Саммари"),

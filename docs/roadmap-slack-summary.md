@@ -23,9 +23,10 @@ breaks each time Google changes the page.
 | 3 | "Summary ready" card | M | B: Slack card | Done, checked by hand |
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
-| 6 | Gemini as a transcription engine | L | C: Engines | Not started |
-| 7 | Slovak Whisper (`whisper-sk`) | M | C: Engines | Not started |
-| 8 | Slovak Canary (`canary-sk`) | L | C: Engines (research first) | Blocked |
+| 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measured; decision: yes, as an option (step 6b) |
+| 6b | Gemini as an optional engine | L | C: Engines | Built and tested; the measurement inside the app waits for Gemini quota |
+| 7 | Slovak Whisper (`whisper-sk`): measure | M | C: Engines | Measured; not better (higher WER, 4 times slower) |
+| 8 | Slovak Canary (`canary-sk`): research, measure | L | C: Engines | Measured; not better (higher WER, a little slower) |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
 | 10 | Summaries on demand, several per recording | M | B: Slack card | Done, checked by hand |
 
@@ -399,69 +400,260 @@ Done when: on `2026.10.29-1000` at least 12 of 25 labels get a name, all names
 are correct (the same as the amanu-gemini result), and on a diarized Parakeet
 recording no label gets a wrong name.
 
-## Step 6: Gemini as a transcription engine (size: L, session C)
+## What KInIT reports (research, 2026-11-09)
 
-- [ ] Engine `gemini` with the key in the secret store (Windows Credential
-  Manager, `Amanu/…`). The key file that amanu-gemini uses can be imported.
-- [ ] Each track (`me`, `them`) is sent alone, in chunks with a small overlap,
-  then joined by time.
-- [ ] Remove echo lines: lines on `me` that repeat `them` text at the same time.
-- [ ] Model `gemini-3.8-flash`, 3 tries, then the fallback model. Write the model
-  that really ran into `transcribe.log` and `transcript.md`.
-- [ ] Give the custom words and the people list to the prompt, for spelling.
-- [ ] Measure on the speed set against `parakeet-sk`: WER on the quiet speaker,
-  and how many labels get correct names.
-- [ ] Compare Gemini against `parakeet-sk`, `whisper-sk` and (if it runs)
-  `canary-sk` on the same speed set, in one table.
+WER in %, from the KInIT model cards. CV24 = Common Voice 24 test (public).
+Internal = KInIT's own set (not public, 2/3 with added noise). The base model
+is in brackets. The cards do not say how the text is normalized.
 
-Done when: the numbers show whether Gemini is better than local Parakeet. If it
-is not better, it stays an option that is off.
+| Model | CV24 | Internal |
+|---|---|---|
+| `kinit/parakeet-tdt-0.6b-v3-sk` (our `parakeet-sk`) | 7.92 [9.07] | 6.62 [24.32] |
+| `kinit/whisper-large-v3-turbo-sk` | 9.29 [29.23] | 5.60 [18.35] |
+| `kinit/whisper-large-v3-sk` (not turbo, 1.5B) | 7.68 [19.70] | 5.67 [16.22] |
+| `kinit/canary-1b-v2-sk` | 8.27 [14.00] | 6.37 [14.39] |
 
-## Step 7: Slovak Whisper as a local engine (size: M, session C)
+Quantization: KInIT publishes only full-size weights and no quantized WER.
+Nobody reports Slovak WER for quantized versions of these models. For the base
+models: Whisper large-v3-turbo on English LibriSpeech is F16 2.01, Q8_0 2.01,
+Q5_K_M 2.03, Q4_K_M 2.04 (handy-computer GGUF card); base Parakeet v3 on 24
+languages is Q8_0 13.31 against F32 13.38 (audio.cpp). Nothing for Canary.
+So Q8_0 is expected to lose almost nothing; our own runs must confirm it.
+
+## Step 6: Gemini — measure only (size: M, session C)
+
+Decision (2026-11-09): measure first, wire later. Do not add an engine, a
+setting or a download to the app in this step. After the numbers are here, I
+decide if Gemini becomes a transcription engine and a summary engine. That
+decision is open.
+
+- [x] Ask me before any call that uses a cloud key, and say what is sent.
+- [x] Run Gemini outside the app (a script). Send each track (`me`, `them`)
+  alone, as the app would, in chunks with a small overlap.
+- [x] Measure on the speed set against `parakeet-sk`, with the same audio path
+  as the app (Media Foundation decode of `audio.m4a`, then
+  `AudioPreprocessor.SplitStereo`: mic left, call right):
+  - WER on the quiet speaker (`2026.11.06-1021`) and on `2026.11.06-1000`.
+  - Time for each recording.
+  - How many labels get a correct name, where a reference has names.
+- [x] If cheap: one summary from Gemini against one from the current summary
+  engine, on the same transcript. I judge them; write only which one I chose.
+- [x] Write the result table here. Status: "Measured; waiting for decision".
+
+Result (2026-11-09): **about as accurate as `parakeet-sk`, and much slower.
+Decision open: I decide if Gemini becomes a transcription engine and a summary
+engine.**
+
+| Engine | WER 1021 (me, them) | WER 1000 (me, them) | Audio per wall second | Echo lines |
+|---|---|---|---|---|
+| `parakeet-sk` Q8_0, Vulkan, local | 29.6 % (47.9, 16.5) | 42.9 % (77.5, 26.1) | 13 (1021), 13 (1000) | — |
+| `gemini-3.8-flash`, free API key | **28.9 %** (49.0, 14.7) | **39.1 %** (73.8, 22.2) | 1.9 (1021), 0.8 (1000) | 0 / 1 |
+
+How it was measured:
+
+- Audio: the same echo-cleaned chunks as in steps 7 and 8, the first 600 s of
+  each track. Each track went alone, in two pieces of about 5 minutes (no
+  overlap), with the custom words as spelling hints, temperature 0, JSON out.
+  Same per-side scorer.
+- **The references favour Gemini:** they are silver transcripts made by
+  `gemini-3.5-flash-lite`. A lead of 1-4 points is not proof that Gemini is
+  better.
+- Speed: one request took 26-372 s. The wall time counts only the successful
+  requests, not the 15 s pauses (free-tier rate limit) or the retries.
+  `gemini-3.8-flash` gave HTTP 503 on 4 of 8 pieces; all but one recovered on
+  a retry, and one went to the fallback `gemini-3.7-flash` (the answer still
+  said `gemini-3.8-flash`). No 429, no failed piece. A paid key with requests
+  in parallel would be faster; this was not measured.
+- Echo lines: almost none, because the audio was echo-cleaned first.
+- Summary: one summary of `2026.11.09-1001` with `gemini-3.8-flash` and the
+  app's own `summary.template` (without the people list), next to the app's
+  current summary. Which one I chose: _open_.
+- The free API tier lets Google use what is sent. Recordings sent: the first
+  10 minutes of both tracks of `2026.11.06-1021` and `2026.11.06-1000`, and the
+  transcript of `2026.11.09-1001`.
+
+Decision (2026-11-09): **yes, Gemini becomes an engine, as an option that is
+off by default.** `parakeet-sk` stays the default. The wiring is step 6b.
+
+## Step 6b: Gemini as an optional engine (size: L, session C)
+
+Facts from step 6 that the wiring needs:
+
+- [x] Engine `gemini`, off by default, with the key in the Windows Credential
+  Manager (`Amanu/…`). The key file that amanu-gemini uses can be imported.
+- [x] Send each track alone, after the app's own echo removal (LocalVQE). In
+  step 6, pieces of about 5 minutes worked; times come back as `mm:ss` from the
+  start of each piece and are mapped back to the track.
+- [x] Model `gemini-3.8-flash`, 3 tries with backoff on 429 and 503, then the
+  fallback `gemini-3.7-flash`. HTTP 503 came often on the free key. Write the
+  model that really ran into `transcribe.log` and `transcript.md`.
+- [x] Prompt: Slovak verbatim, no translation, nothing for silence, custom words
+  and the people list as spelling hints, temperature 0, JSON out.
+- [x] Remove echo lines (lines on `me` that repeat `them` at the same time) as
+  a safety net; with LocalVQE first, step 6 found 0-1 per recording.
+- [x] A request can take up to about 6 minutes. Do not time out sooner, and
+  show progress.
+- [ ] Measure once in the app against the step 6 numbers (28.9 % / 39.1 %).
+
+Built (2026-11-09), commits `1e337c4` to the one with the cut-off fix:
+
+- `GeminiTranscriptionEngine` in `TranscriptionServices.cs`; the prompt and the
+  reading of the answer are in `Amanu.Core\Processing\GeminiTranscript.cs`,
+  with tests in `GeminiTranscriptTests.cs`. Setup lists Gemini as a fourth
+  cloud provider; the key is `Amanu/gemini` in the Credential Manager.
+  Importing the amanu-gemini key file was left out: there is none on this PC.
+- `Amanu.exe --measure-transcription <rec> <out> gemini` now runs a cloud engine
+  when it is named outright, with the app's 30-minute HTTP limit (the default
+  100 s failed the first run).
+- An answer cut off in the middle of the JSON array keeps its complete lines.
+  In the first run inside the app, one piece of `1021` came back unreadable and
+  failed the whole transcript.
+- Not measured inside the app yet: the free key ran out of quota (HTTP 429,
+  "You exceeded your current quota") during the run of `1000`.
+- Found on the way and fixed: with echo removal on, every cloud engine was
+  given the echo-cleaned copy in a temp folder, so its answer cache
+  (`.cache-<provider>-*.json`, and AssemblyAI's job file) was written there and
+  deleted with it; after a failure all audio was sent again. `SessionAudio`
+  now has `CacheDirectory`, which stays the recording folder.
+
+
+## Step 7: Slovak Whisper — measure only (size: M, session C)
+
+Decision (2026-11-09): measure first, wire later. Do not add an engine, a
+setting or a download to the app until the numbers show that `whisper-sk` is
+as good as `parakeet-sk` or better. Then stop and ask me.
 
 Baseline: `parakeet-sk` (kinit/parakeet-tdt-0.6b-v3-sk, converted to GGUF by
 hand). It has 0.0 % WER on the quiet speaker in `2026.11.06-1021`, and 42.1 %
 against the silver reference on `2026.11.06-1000`. The local runtime is
 transcribe.cpp v0.1.3 (`transcribe-cli.exe`, ggml, Vulkan).
 
-- [ ] Model: kinit/whisper-large-v3-turbo-sk (the KInIT fine-tune of
-  whisper-large-v3-turbo, about 809M parameters). The license is MIT, so Amanu
-  can ship it.
-- [ ] Convert it to a ggml/GGUF file that `transcribe-cli` can load (Q8_0, the
-  same as `parakeet-sk`). Write the convert steps into `windows/BUILDING-HERE.md`.
-- [ ] New engine `whisper-sk`, set to Slovak. Keep the old `whisper` engine as it is.
-  Engine names are in `AppSettings.cs` (`LocalEngines`), `AnalyticsPolicy.cs`,
-  `ProcessingPolicy.cs`, `SetupForm.cs` and `ProcessingCoordinator.cs`.
-- [ ] Give the custom words to the Whisper initial prompt. Keep the correction
-  step that runs after the speech recognition.
-- [ ] Measure on the speed set against `parakeet-sk` and Gemini:
-  - WER on the quiet speaker (`2026.11.06-1021`).
-  - WER on `2026.11.06-1000`.
-  - ASR time on the CPU and on the GPU.
+Model: kinit/whisper-large-v3-turbo-sk (the KInIT fine-tune of
+whisper-large-v3-turbo, about 809M parameters, MIT).
+
+- [x] Ask me before the download, and say its size.
+- [x] Run it outside the app: a ggml/GGUF conversion that the existing
+  `transcribe-cli` loads (Q8_0, as `parakeet-sk`), or a Python runtime if the
+  conversion cannot run on this PC. Language: Slovak.
+- [x] Measure against `parakeet-sk`, with the app's audio path:
+  - WER on the quiet speaker (`2026.11.06-1021`) and on `2026.11.06-1000`.
+  - ASR time on the CPU and on the GPU (if the runtime has a GPU path).
   - Hallucinations: repeated or invented lines in silence.
+- [x] Write the result table here. If it is as good or better: Status "Measured;
+  waiting for decision", and ask me whether to wire it. If not: Status
+  "Measured; not better", and stop.
 
-Done when: the numbers show whether `whisper-sk` is better than `parakeet-sk`.
-It becomes the default only if it is better on `1000` and still has 0.0 % on
-the quiet speaker. If not, it stays an option.
+Result (2026-11-09): **not better.** `whisper-sk` has a higher WER than
+`parakeet-sk` on both recordings, and it is about 4 times slower. It stays out
+of the app. The CPU run was skipped (my decision): the GPU is the fast path.
 
-## Step 8: Slovak Canary as a local engine (size: L, blocked, session C)
+| Model | Backend | WER 1021 | WER 1000 | ASR s 1021 | ASR s 1000 | Lines in near-silent chunks (1021 / 1000) |
+|---|---|---|---|---|---|---|
+| `parakeet-sk` Q8_0 | Vulkan | **29.6 %** | **42.9 %** | 137 | 115 | 19 / 104 |
+| `whisper-sk` Q8_0 | Vulkan | 35.3 % | 44.8 % | 580 | 467 | 5 / 21 |
+| `whisper-sk` Q5_K_M | Vulkan | 35.3 % | 45.0 % | 624 | 522 | 3 / 20 |
+| `whisper-sk` Q8_0 + custom words (`--initial-prompt`) | Vulkan | 33.8 % | 45.2 % | 611 | 475 | 2 / 21 |
+
+How it was measured:
+
+- Audio: the app's own path. A small .NET program referenced the published
+  `Amanu.dll` and ran Media Foundation decode, `SplitStereo`, LocalVQE echo
+  removal (`OfflineEchoAudio.Prepare`) and the 60 s chunks with 1 s context.
+  Both models got the same chunk WAVs. Without the echo removal, Parakeet gave
+  68 %: call audio on the mic track counts as errors.
+- WER: the reference is the silver reference (Gemini, window 120-300 s, not
+  hand-checked). Each side (`me`, `them`) is aligned alone, against the best
+  matching run of words in the first 600 s. This removes two errors of the
+  app's scorer: it cuts by segment start, and Whisper's segments are about 60 s
+  long, so the cut at the window edge cost Whisper about 20 points (71 % with
+  the app's scorer); and Whisper's long segments mix the order of `me` and
+  `them`. With the app's scorer, Parakeet gives 30.8 % and 42.1 %, the same as
+  the recordings' own transcripts.
+- The 0.0 % for the quiet speaker above comes from an older state. Today's
+  `parakeet-sk` transcript of `1021` scores 30.8 % with the app's scorer.
+- The `me` side has a high WER for every model (48-79 %). The silver
+  reference is probably weak there; it does not change the order of the models.
+- Q5_K_M loses nothing against Q8_0 here, and it is not faster on this GPU.
+- Whisper writes much less text in near-silent chunks. A repeated line (3 or
+  more times in a row) did not come up in any run.
+- Conversion: `convert-whisper.py` needs `--repo-id openai/whisper-large-v3-turbo`
+  for the KInIT repo, and `safetensors`, `huggingface_hub` and `transformers`
+  in the venv. The model files and scripts were in the session scratchpad only.
+
+Research (2026-11-09):
+
+- Size: `model.safetensors` is 3.24 GB (F32). KInIT reports 9.29 % WER on
+  Common Voice 24 (base model 29.23 %) and 5.60 % on its own set.
+- Route on this PC: `C:\Backup\CoDiNG\transcribe.cpp\scripts\convert-whisper.py`
+  (the transcribe.cpp v0.1.3 checkout), then `build-qin	ranscribe-quantize.exe`
+  to Q8_0 (about 0.9 GB). The existing `transcribe-cli.exe` runs Whisper with
+  `--initial-prompt`, on the CPU and on Vulkan. Python: the venv in
+  `C:\Backup\CoDiNG\Amanu\sk-convert\.venv` has torch, gguf and numpy; it
+  needs `safetensors`.
+- Disk: C: has 8.6 GB free. Download plus F32 GGUF needs about 6.5 GB at the
+  peak, if each file is deleted after its use.
+
+Only if I say yes later: engine `whisper-sk` (names in `AppSettings.cs`
+`LocalEngines`, `AnalyticsPolicy.cs`, `ProcessingPolicy.cs`, `SetupForm.cs`,
+`ProcessingCoordinator.cs`), custom words in the initial prompt, and the
+convert steps in `windows/BUILDING-HERE.md`.
+
+## Step 8: Slovak Canary — research, then measure (size: L, session C)
+
+Decision (2026-11-09): research first, then measure, wire later. Do not add an
+engine, a setting or a download to the app.
 
 Model: kinit/canary-1b-v2-sk (the KInIT fine-tune of nvidia/canary-1b-v2, about
-978M parameters, CC-BY-4.0, NeMo).
+978M parameters, CC-BY-4.0, NeMo). transcribe.cpp v0.1.3 in Amanu cannot run
+Canary. `amanu_local.py` in amanu-gemini ran a Canary model through a
+`transcribe-cli`, so check that first.
 
-Blocker: transcribe.cpp v0.1.3 in Amanu cannot run Canary, and Amanu does not
-use Canary anywhere. But `amanu_local.py` in amanu-gemini ran a Canary model
-through a `transcribe-cli`, so check that first.
+- [x] Research (subagent, cheap model, report of 15 lines or less): does a
+  Slovak Canary exist, and does it run on this PC? Check `transcribe-cli` (the
+  version that `amanu_local.py` used, or a newer one), sherpa-onnx (the library
+  of step 4), an ONNX export, and a Python runtime. Write down CPU or Vulkan,
+  and the size.
+Research (2026-11-09):
 
-- [ ] Research first (subagent, cheap model, report of 15 lines or less): Canary
-  support in `transcribe-cli` (the version that `amanu_local.py` used, or a
-  newer one), sherpa-onnx (the library of step 4), or an ONNX export of the
-  model. Write down which one works on the CPU and on Vulkan, and how big it is.
-- [ ] Only if one of them works: add engine `canary-sk`, then measure it the
-  same way as in step 7.
+- It exists: one `canary-1b-v2-sk.nemo`, 6.36 GB. KInIT reports 8.27 % WER on
+  Common Voice 24 (base 14.00 %) and 6.37 % on its own set, where it lists
+  `parakeet-sk` at 6.62 %. Long audio was not tested by KInIT.
+- It can run on this PC without NeMo: transcribe-cli v0.1.3 already runs
+  Canary (`--pnc`), and `amanu_local.py` ran the base model
+  `handy-computer/canary-1b-v2-gguf` (Q8_0) with it. The Slovak fine-tune
+  needs `C:\Backup\CoDiNG\transcribe.cpp\scripts\convert-canary.py`
+  (variant `canary-1b-v2`, reads the `.nemo` directly), then Q8_0 (about 1.1 GB).
+  Canary takes at most 400 s per call and gives no time stamps, so the audio
+  goes in parts, as `amanu_local.py` does.
+- Disk: the `.nemo` plus the F32 GGUF need about 10.5 GB. C: has 8.6 GB
+  free, so this does not fit now.
 
-Done when: we know if Canary can run in Amanu. If it can, the numbers show
-whether it is better than `parakeet-sk` and `whisper-sk`.
+- [x] If one runs: ask me before the download, then measure it as in step 7.
+- [x] Write the result table here. If it is as good as `parakeet-sk` or better,
+  ask me whether to wire it.
+
+Result (2026-11-09): **not better.** `canary-sk` has a clearly higher WER than
+`parakeet-sk` on both recordings, it is a little slower, and it writes a line
+in nearly every near-silent chunk. It stays out of the app.
+
+| Model (Vulkan) | WER 1021 (me, them) | WER 1000 (me, them) | ASR s 1021 | ASR s 1000 | Near-silent chunks with text | Loops |
+|---|---|---|---|---|---|---|
+| `parakeet-sk` Q8_0 | **29.6 %** (47.9, 16.5) | **42.9 %** (77.5, 26.1) | 137 | 115 | 19 lines (1021), 104 lines (1000) | 4 / 1 |
+| `canary-sk` Q8_0 (1.14 GB) | 39.6 % (55.2, 28.6) | 48.1 % (75.6, 34.7) | 161 | 148 | 8 of 8 (1021), 13 of 15 (1000) | 5 / 3 |
+
+How it was measured: the same echo-cleaned 60 s chunk WAVs as in step 7, one
+`transcribe-cli` batch per recording, one segment per chunk (Canary gives no
+time stamps), and the same per-side scorer.
+
+- Conversion: `convert-canary.py` needs NeMo. A shim that reads the `.nemo`
+  tar directly and feeds the converter worked at once: F32 GGUF 3.74 GB
+  (1476 tensors), then Q8_0.
+- In `1000`, 2 of 30 chunks failed every time with "output truncated: decode
+  hit the context/generation cap", and `transcribe-cli` exited with code 1. Both
+  are outside the scored window, so they do not change the WER above. In the
+  app this would need shorter chunks.
+- The base model (`canary-1b-v2`) was not run: its GGUF is not on this PC
+  (only an empty lock file in the Hugging Face cache).
 
 ## Step 9: a Settings screen for more engines (size: M, session D)
 
