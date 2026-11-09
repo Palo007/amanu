@@ -23,7 +23,7 @@ breaks each time Google changes the page.
 | 3 | "Summary ready" card | M | B: Slack card | Done, checked by hand |
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
-| 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measure first; wiring waits for my decision |
+| 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measured; waiting for decision (WER as `parakeet-sk`, much slower) |
 | 7 | Slovak Whisper (`whisper-sk`): measure | M | C: Engines | Measured; not better (higher WER, 4 times slower) |
 | 8 | Slovak Canary (`canary-sk`): research, measure | L | C: Engines | Measured; not better (higher WER, a little slower) |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
@@ -426,18 +426,50 @@ setting or a download to the app in this step. After the numbers are here, I
 decide if Gemini becomes a transcription engine and a summary engine. That
 decision is open.
 
-- [ ] Ask me before any call that uses a cloud key, and say what is sent.
-- [ ] Run Gemini outside the app (a script). Send each track (`me`, `them`)
+- [x] Ask me before any call that uses a cloud key, and say what is sent.
+- [x] Run Gemini outside the app (a script). Send each track (`me`, `them`)
   alone, as the app would, in chunks with a small overlap.
-- [ ] Measure on the speed set against `parakeet-sk`, with the same audio path
+- [x] Measure on the speed set against `parakeet-sk`, with the same audio path
   as the app (Media Foundation decode of `audio.m4a`, then
   `AudioPreprocessor.SplitStereo`: mic left, call right):
   - WER on the quiet speaker (`2026.11.06-1021`) and on `2026.11.06-1000`.
   - Time for each recording.
   - How many labels get a correct name, where a reference has names.
-- [ ] If cheap: one summary from Gemini against one from the current summary
+- [x] If cheap: one summary from Gemini against one from the current summary
   engine, on the same transcript. I judge them; write only which one I chose.
-- [ ] Write the result table here. Status: "Measured; waiting for decision".
+- [x] Write the result table here. Status: "Measured; waiting for decision".
+
+Result (2026-11-09): **about as accurate as `parakeet-sk`, and much slower.
+Decision open: I decide if Gemini becomes a transcription engine and a summary
+engine.**
+
+| Engine | WER 1021 (me, them) | WER 1000 (me, them) | Audio per wall second | Echo lines |
+|---|---|---|---|---|
+| `parakeet-sk` Q8_0, Vulkan, local | 29.6 % (47.9, 16.5) | 42.9 % (77.5, 26.1) | 13 (1021), 13 (1000) | — |
+| `gemini-3.8-flash`, free API key | **28.9 %** (49.0, 14.7) | **39.1 %** (73.8, 22.2) | 1.9 (1021), 0.8 (1000) | 0 / 1 |
+
+How it was measured:
+
+- Audio: the same echo-cleaned chunks as in steps 7 and 8, the first 600 s of
+  each track. Each track went alone, in two pieces of about 5 minutes (no
+  overlap), with the custom words as spelling hints, temperature 0, JSON out.
+  Same per-side scorer.
+- **The references favour Gemini:** they are silver transcripts made by
+  `gemini-3.5-flash-lite`. A lead of 1-4 points is not proof that Gemini is
+  better.
+- Speed: one request took 26-372 s. The wall time counts only the successful
+  requests, not the 15 s pauses (free-tier rate limit) or the retries.
+  `gemini-3.8-flash` gave HTTP 503 on 4 of 8 pieces; all but one recovered on
+  a retry, and one went to the fallback `gemini-3.7-flash` (the answer still
+  said `gemini-3.8-flash`). No 429, no failed piece. A paid key with requests
+  in parallel would be faster; this was not measured.
+- Echo lines: almost none, because the audio was echo-cleaned first.
+- Summary: one summary of `2026.11.09-1001` with `gemini-3.8-flash` and the
+  app's own `summary.template` (without the people list), next to the app's
+  current summary. Which one I chose: _open_.
+- The free API tier lets Google use what is sent. Recordings sent: the first
+  10 minutes of both tracks of `2026.11.06-1021` and `2026.11.06-1000`, and the
+  transcript of `2026.11.09-1001`.
 
 Only if I say yes later, the wiring is a new step: engine `gemini`, key in the
 Windows Credential Manager (`Amanu/…`), echo-line removal, model
