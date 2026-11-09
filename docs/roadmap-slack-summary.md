@@ -450,6 +450,19 @@ whisper-large-v3-turbo, about 809M parameters, MIT).
   waiting for decision", and ask me whether to wire it. If not: Status
   "Measured; not better", and stop.
 
+Research (2026-11-09):
+
+- Size: `model.safetensors` is 3.24 GB (F32). KInIT reports 9.29 % WER on
+  Common Voice 24 (base model 29.23 %) and 5.60 % on its own set.
+- Route on this PC: `C:\Backup\CoDiNG\transcribe.cpp\scripts\convert-whisper.py`
+  (the transcribe.cpp v0.1.3 checkout), then `build-qin	ranscribe-quantize.exe`
+  to Q8_0 (about 0.9 GB). The existing `transcribe-cli.exe` runs Whisper with
+  `--initial-prompt`, on the CPU and on Vulkan. Python: the venv in
+  `C:\Backup\CoDiNG\Amanu\sk-convert\.venv` has torch, gguf and numpy; it
+  needs `safetensors`.
+- Disk: C: has 8.6 GB free. Download plus F32 GGUF needs about 6.5 GB at the
+  peak, if each file is deleted after its use.
+
 Only if I say yes later: engine `whisper-sk` (names in `AppSettings.cs`
 `LocalEngines`, `AnalyticsPolicy.cs`, `ProcessingPolicy.cs`, `SetupForm.cs`,
 `ProcessingCoordinator.cs`), custom words in the initial prompt, and the
@@ -470,6 +483,21 @@ Canary. `amanu_local.py` in amanu-gemini ran a Canary model through a
   version that `amanu_local.py` used, or a newer one), sherpa-onnx (the library
   of step 4), an ONNX export, and a Python runtime. Write down CPU or Vulkan,
   and the size.
+Research (2026-11-09):
+
+- It exists: one `canary-1b-v2-sk.nemo`, 6.36 GB. KInIT reports 8.27 % WER on
+  Common Voice 24 (base 14.00 %) and 6.37 % on its own set, where it lists
+  `parakeet-sk` at 6.62 %. Long audio was not tested by KInIT.
+- It can run on this PC without NeMo: transcribe-cli v0.1.3 already runs
+  Canary (`--pnc`), and `amanu_local.py` ran the base model
+  `handy-computer/canary-1b-v2-gguf` (Q8_0) with it. The Slovak fine-tune
+  needs `C:\Backup\CoDiNG\transcribe.cpp\scripts\convert-canary.py`
+  (variant `canary-1b-v2`, reads the `.nemo` directly), then Q8_0 (about 1.1 GB).
+  Canary takes at most 400 s per call and gives no time stamps, so the audio
+  goes in parts, as `amanu_local.py` does.
+- Disk: the `.nemo` plus the F32 GGUF need about 10.5 GB. C: has 8.6 GB
+  free, so this does not fit now.
+
 - [ ] If one runs: ask me before the download, then measure it as in step 7.
 - [ ] Write the result table here. If it is as good as `parakeet-sk` or better,
   ask me whether to wire it.
