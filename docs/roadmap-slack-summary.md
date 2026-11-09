@@ -399,6 +399,26 @@ Done when: on `2026.10.29-1000` at least 12 of 25 labels get a name, all names
 are correct (the same as the amanu-gemini result), and on a diarized Parakeet
 recording no label gets a wrong name.
 
+## What KInIT reports (research, 2026-11-09)
+
+WER in %, from the KInIT model cards. CV24 = Common Voice 24 test (public).
+Internal = KInIT's own set (not public, 2/3 with added noise). The base model
+is in brackets. The cards do not say how the text is normalized.
+
+| Model | CV24 | Internal |
+|---|---|---|
+| `kinit/parakeet-tdt-0.6b-v3-sk` (our `parakeet-sk`) | 7.92 [9.07] | 6.62 [24.32] |
+| `kinit/whisper-large-v3-turbo-sk` | 9.29 [29.23] | 5.60 [18.35] |
+| `kinit/whisper-large-v3-sk` (not turbo, 1.5B) | 7.68 [19.70] | 5.67 [16.22] |
+| `kinit/canary-1b-v2-sk` | 8.27 [14.00] | 6.37 [14.39] |
+
+Quantization: KInIT publishes only full-size weights and no quantized WER.
+Nobody reports Slovak WER for quantized versions of these models. For the base
+models: Whisper large-v3-turbo on English LibriSpeech is F16 2.01, Q8_0 2.01,
+Q5_K_M 2.03, Q4_K_M 2.04 (handy-computer GGUF card); base Parakeet v3 on 24
+languages is Q8_0 13.31 against F32 13.38 (audio.cpp). Nothing for Canary.
+So Q8_0 is expected to lose almost nothing; our own runs must confirm it.
+
 ## Step 6: Gemini — measure only (size: M, session C)
 
 Decision (2026-11-09): measure first, wire later. Do not add an engine, a
