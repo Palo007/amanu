@@ -27,6 +27,7 @@ breaks each time Google changes the page.
 | 7 | Slovak Whisper (`whisper-sk`) | M | C: Engines | Not started |
 | 8 | Slovak Canary (`canary-sk`) | L | C: Engines (research first) | Blocked |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
+| 10 | Summaries on demand, several per recording | M | B: Slack card | Not started |
 
 ## How to work on this (sessions)
 
@@ -38,9 +39,13 @@ long session that holds all of it.
 | Session | Steps | Main code | Can run with |
 |---|---|---|---|
 | A: Speakers | 2 → 4 → 5 | `SpeakerNamingService`, `SpeakerLabels.cs`, `speakers.json`, `ProcessingCoordinator.cs` | B |
-| B: Slack card | 3 (and my review of step 1) | a new card window, `TrayIconService.cs`, `RecordingsWindow.cs` | A, C |
+| B: Slack card | 3 → 10 (and my review of step 1) | a new card window, `TrayIconService.cs`, `RecordingsWindow.cs`, `TranscriptVersions.cs` | A, C |
 | C: Engines | 7 → 6 → 8 | `LocalModels.cs`, `ModelManager.cs`, `TranscriptionServices.cs`, `AppSettings.cs` | B |
 | D: Settings | 9 | `SettingsWindow.cs`, `SettingsSchema.cs` | none: start it after A, B and C are merged |
+
+B (step 10) and A (step 2) both change `SummaryService` in `LanguageServices.cs`: A
+changes the prompt, B changes where the summary is written. Keep the two
+changes apart, and merge A first.
 
 A and C both change `ProcessingCoordinator.cs` and `AppSettings.cs`. Do not run
 them at the same time in one folder. Each session works in its own git
@@ -327,6 +332,41 @@ ready to use.
 
 Done when: I can pick any engine in one look, and I can see why an engine
 cannot be used.
+
+## Step 10: summaries on demand, several per recording (size: M, session B)
+
+Why: a summary is made once, after the transcript. I want to make a new one
+when I change the template, the engine or the people list, and keep the old
+ones to compare, as the Recordings window already does for transcripts.
+
+Known facts (from the code on 2026-11-09):
+
+- Transcripts already have versions: `TranscriptVersions.cs` (Core) keeps the
+  earlier ones, `transcribe.requested` asks for a new one, and
+  `RecordingsWindow.cs` has a "Transcribe again ▾" menu (`OpenRetranscribeMenu`,
+  about line 429) and one tab per version.
+- `SummaryService.GenerateAsync` (`LanguageServices.cs`) writes one
+  `summary.md` and deletes `summary.stale`. `ProcessingCoordinator.cs` calls it
+  at about line 916. `summary.off` turns a summary off for one recording.
+
+Items:
+
+- [ ] A "Summarize again ▾" button beside "Transcribe again ▾". The menu lists
+  the summary engines that can run now. It works on the transcript version that
+  is open in the window.
+- [ ] Keep each summary. Copy the `TranscriptVersions` pattern: archive the
+  current `summary.md` before a new one replaces it, and write the engine, the
+  model, the time and the transcript version it came from.
+- [ ] Show one tab per summary, newest first, as the transcript tabs do.
+- [ ] A request file (like `transcribe.requested`), so a summary asked for
+  while the app is busy runs in the next processing pass, and an app restart
+  does not lose it.
+- [ ] Step 3's card shows the newest summary only.
+- [ ] Tests for the archive and the request file, with no model (a fake
+  `LanguageModels`).
+
+Done when: on `2026.11.06-1438` I make two more summaries with two engines, see
+three tabs, and the first summary is unchanged on disk.
 
 ## The card
 
