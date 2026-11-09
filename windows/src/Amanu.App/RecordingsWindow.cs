@@ -38,6 +38,7 @@ internal sealed class RecordingsWindow : Window
     private readonly MarkdownPreview transcript = new();
     private readonly TabControl engineTabs = new() { Margin = new Thickness(0, 8, 0, 0), Visibility = Visibility.Collapsed };
     private readonly TextBlock processingStatus = Ui.Status("");
+    private readonly ProgressBar processingBar = Ui.ProcessingBar();
     private readonly StackPanel speakers = new() { Margin = new Thickness(12) };
     private readonly TextBlock empty = Ui.Detail("");
     private readonly System.Windows.Controls.Button finish;
@@ -133,6 +134,10 @@ internal sealed class RecordingsWindow : Window
         problem.Margin = new Thickness(0, 4, 0, 0);
         var statusPanel = new StackPanel();
         statusPanel.Children.Add(processingStatus);
+        processingBar.Margin = new Thickness(0, 6, 0, 2);
+        processingBar.HorizontalAlignment = HorizontalAlignment.Left;
+        processingBar.Width = 360;
+        statusPanel.Children.Add(processingBar);
         statusPanel.Children.Add(problem);
         Grid.SetRow(statusPanel, 1);
         detail.Children.Add(statusPanel);
@@ -164,7 +169,20 @@ internal sealed class RecordingsWindow : Window
 
         EventHandler changed = (_, _) => Dispatcher.InvokeAsync(ReloadAsync);
         runtime.SessionsChanged += changed;
-        Closed += (_, _) => runtime.SessionsChanged -= changed;
+        // Steps inside a stage change only the status, not the list: the
+        // selected recording's line and bar follow them without a reload.
+        EventHandler<ProcessingStatus> progressed = (_, status) => Dispatcher.InvokeAsync(() =>
+        {
+            if (Selected is not { } row || !string.Equals(row.Item.Directory, status.SessionDirectory, StringComparison.OrdinalIgnoreCase)) return;
+            if (status.IsBusy) processingStatus.Text = status.Message;
+            Ui.ShowProgress(processingBar, status);
+        });
+        runtime.ProcessingStatusChanged += progressed;
+        Closed += (_, _) =>
+        {
+            runtime.SessionsChanged -= changed;
+            runtime.ProcessingStatusChanged -= progressed;
+        };
         Loaded += async (_, _) => await ReloadAsync();
         runtime.TrackArtifact("recordings_window");
     }
@@ -279,6 +297,7 @@ internal sealed class RecordingsWindow : Window
         problem.Text = item.Problem ?? "";
         problem.Visibility = item.Problem is null ? Visibility.Collapsed : Visibility.Visible;
         processingStatus.Text = row.Status is { IsBusy: true } status ? status.Message : row.TranscriptText;
+        Ui.ShowProgress(processingBar, row.Status);
         if (!item.HasAudio && !recording) processingStatus.Text += "\n" + noAudio;
         if (selectedTranscriptSession != item.Directory)
         {

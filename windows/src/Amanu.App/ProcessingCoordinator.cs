@@ -12,7 +12,33 @@ using static Amanu.Core.Localization.Localized;
 
 namespace Amanu.App;
 
-public sealed record ProcessingStatus(string? SessionDirectory, string Stage, string Message, bool IsBusy);
+/// <param name="Progress">
+/// How much of the whole pass is done, 0 to 1, for the progress bar; null
+/// while the current step cannot say how far it is (a cloud engine, a model
+/// that runs as one call), and the bar then only shows that work goes on.
+/// </param>
+public sealed record ProcessingStatus(string? SessionDirectory, string Stage, string Message, bool IsBusy, double? Progress = null);
+
+/// <summary>
+/// Where each step of a pass sits on the progress bar. Echo removal took about
+/// as long as recognition on a measured call, so it gets a large share when it
+/// runs; recognition fills most of the rest. Names and summary are one model
+/// call each and get a sliver.
+/// </summary>
+internal static class PassProgress
+{
+    public const double Start = 0;
+    public const double Echo = 0.03;
+    public const double Levels = 0.28;
+    public const double SpeakerNames = 0.90;
+    public const double Summary = 0.95;
+
+    /// <summary>Recognition runs from here to <see cref="SpeakerNames"/>.</summary>
+    public static double RecognitionStart(bool echo, bool levels) => echo ? 0.30 : levels ? 0.08 : 0.05;
+
+    public static double Recognition(double start, double share) =>
+        start + (SpeakerNames - start) * Math.Clamp(share, 0, 1);
+}
 
 /// <summary>What one session's processing has cost so far, kept in its processing.json.</summary>
 public sealed record ProcessingLedger(
@@ -401,7 +427,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     private async Task<bool> TranscribeAsync(string directory, string title, ProcessingLedger ledger, CancellationToken cancellationToken)
     {
         var current = settings();
-        Publish(directory, "transcribing", T("Transcribing…", "Расшифровываю…"), true);
+        Publish(directory, "transcribing", T("Reading the audio…", "Читаю звук…"), true, PassProgress.Start);
         var total = Stopwatch.StartNew();
         var decode = Stopwatch.StartNew();
         var audio = await LoadAudioAsync(directory, cancellationToken).ConfigureAwait(false);
@@ -424,14 +450,24 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         // Recognition hears an echo-cleaned copy of the mic; the archive and
         // keep_audio below still settle the original tracks in `audio`.
         var overlap = OverlapFor(plan, audio, current, directory);
+        var echoing = current.OfflineEchoCancellation && audio.BothSides;
+        var leveling = string.Equals(current.Transcription.LevelNormalization, "auto", StringComparison.OrdinalIgnoreCase);
+        if (echoing) Publish(directory, "transcribing", T("Removing echo…", "Убираю эхо…"), true, PassProgress.Echo);
         var (echoed, cleaned) = await HearAsync(directory, audio, current, overlap, cancellationToken).ConfigureAwait(false);
         LevelAudio.Result? leveled = null;
 
         try
         {
+            if (leveling) Publish(directory, "transcribing", T("Evening out speech levels…", "Выравниваю громкость…"), true, PassProgress.Levels);
             (var heard, leveled) = await LevelAsync(directory, echoed, current, cancellationToken).ConfigureAwait(false);
             var recognition = Stopwatch.StartNew();
-            var transcript = await RunPlanAsync(plan, heard, directory, current, cancellationToken, cleaned is null ? null : overlap?.Result).ConfigureAwait(false);
+            var start = PassProgress.RecognitionStart(echoing, leveling);
+            // No number until the engine reports one: a cloud engine or a one-call
+            // model never does, and its bar only shows that work goes on.
+            Publish(directory, "transcribing", T("Transcribing…", "Расшифровываю…"), true);
+            var transcript = await RunPlanAsync(plan, heard, directory, current, cancellationToken, cleaned is null ? null : overlap?.Result,
+                share => PublishProgress(directory, "transcribing",
+                    T($"Transcribing… {share:P0}", $"Расшифровываю… {share:P0}"), PassProgress.Recognition(start, share))).ConfigureAwait(false);
             LogTiming(directory, "asr", recognition.Elapsed);
             transcript = ApplyCustomWords(directory, transcript);
             cleaned?.Delete();
@@ -748,7 +784,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// the cloud could not be reached or was busy — for this session alone.
     /// </summary>
     private async Task<TranscriptDocument> RunPlanAsync(EnginePlan plan, SessionAudio audio, string directory, AppSettings current, CancellationToken cancellationToken,
-        IReadOnlyList<TranscriptSegment>? system = null)
+        IReadOnlyList<TranscriptSegment>? system = null, Action<double>? progress = null)
     {
         if (plan.Cloud is { } cloud)
         {
@@ -771,6 +807,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         {
             timed.Timing = (stage, elapsed, detail) => LogTiming(directory, stage, elapsed, detail);
             timed.PrecomputedSystem = system;
+            timed.Progress = progress;
         }
         return await local.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
     }
@@ -841,7 +878,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             var known = (await SpeakerFile.ReadAsync(directory, cancellationToken).ConfigureAwait(false)).Names;
             if (labels.All(known.ContainsKey) || MeetingEgress.Route(EgressPurpose.SpeakerNames, current) is null) return true;
         }
-        Publish(directory, "speakers", T("Working out who spoke…", "Определяю участников…"), true);
+        Publish(directory, "speakers", T("Working out who spoke…", "Определяю участников…"), true, PassProgress.SpeakerNames);
         try
         {
             var result = await new SpeakerNamingService(languageModels, settings).ResolveAsync(directory, transcript, cancellationToken).ConfigureAwait(false);
@@ -872,7 +909,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         }
         if (Has(directory, "summary.failed") || Has(directory, "summary.off")) return true;
         if (Has(directory, "summary.md") && !Has(directory, "summary.stale")) return true;
-        Publish(directory, "summary", T("Writing the summary…", "Пишу саммари…"), true);
+        Publish(directory, "summary", T("Writing the summary…", "Пишу саммари…"), true, PassProgress.Summary);
         try
         {
             var markdown = await File.ReadAllTextAsync(Path.Combine(directory, "transcript.md"), cancellationToken).ConfigureAwait(false);
@@ -1105,12 +1142,23 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             : Path.GetFileName(directory);
     }
 
-    private void Publish(string directory, string stage, string message, bool busy)
+    private void Publish(string directory, string stage, string message, bool busy, double? progress = null)
     {
-        var status = new ProcessingStatus(directory, stage, message, busy);
+        var status = new ProcessingStatus(directory, stage, message, busy, progress);
         statuses[directory] = status;
         StatusChanged?.Invoke(this, status);
         SessionsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// A step forward inside one stage. Only the status changes, so the
+    /// Recordings list is not read again from disk for every piece of audio.
+    /// </summary>
+    private void PublishProgress(string directory, string stage, string message, double progress)
+    {
+        var status = new ProcessingStatus(directory, stage, message, true, progress);
+        statuses[directory] = status;
+        StatusChanged?.Invoke(this, status);
     }
 
     private static string KnownModel(string engine, string model) => (engine, model) switch

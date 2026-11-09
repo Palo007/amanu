@@ -5,6 +5,14 @@ application and its command line; `make app` wraps the binary in `Amanu.app`.
 
 ## Start here
 
+- **On the Windows PC this fork is built on, read `windows/BUILDING-HERE.md`
+  before building anything.** The Windows app is .NET 10 / WPF under
+  `windows/`; the Swift and `make` instructions below are for macOS only. That
+  PC has the .NET SDK only in `%USERPROFILE%\.dotnet` (the `dotnet` on `PATH`
+  has none), no CMake and no C++ tools, so the release scripts cannot run
+  there, and the native runtimes exist only in the git-ignored
+  `windows/artifacts/publish` — never delete it.
+
 - `docs/pitfalls.md` — the constraints that are not visible from the code that
   depends on them, and the places believed correct on reasoning alone. Read it
   before changing anything about signing, the bundle, or where keys live.

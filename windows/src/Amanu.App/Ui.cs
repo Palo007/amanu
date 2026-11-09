@@ -66,6 +66,35 @@ internal static class Ui
         VerticalAlignment = VerticalAlignment.Center,
     }.Brush(TextBlock.ForegroundProperty, color);
 
+    /// <summary>A thin bar for how far a recording's processing has gone, hidden until there is some.</summary>
+    public static ProgressBar ProcessingBar() => new()
+    {
+        Height = 4,
+        Minimum = 0,
+        Maximum = 100,
+        Visibility = Visibility.Collapsed,
+    };
+
+    /// <summary>
+    /// Shows the whole pass on <paramref name="bar"/> while it runs: filled to
+    /// how far it is, or moving without a number while the step cannot say.
+    /// </summary>
+    public static void ShowProgress(ProgressBar bar, ProcessingStatus? status)
+    {
+        if (status is not { IsBusy: true } busy || busy.Stage == "queued")
+        {
+            bar.Visibility = Visibility.Collapsed;
+            bar.IsIndeterminate = false;
+            return;
+        }
+        bar.Visibility = Visibility.Visible;
+        bar.IsIndeterminate = busy.Progress is null;
+        if (busy.Progress is { } progress) bar.Value = Math.Clamp(progress, 0, 1) * 100;
+        bar.ToolTip = busy.Progress is { } shown
+            ? Amanu.Core.Localization.Localized.T($"{shown:P0} of the whole pass done", $"Готово {shown:P0} всей обработки")
+            : null;
+    }
+
     public static TextBlock Heading(string text) => new TextBlock
     {
         Text = text,
