@@ -22,7 +22,7 @@ breaks each time Google changes the page.
 | 2 | People list | S | A: Speakers | Done, checked by hand |
 | 3 | "Summary ready" card | M | B: Slack card | Designed |
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
-| 5 | Stricter speaker-name checks | M | A: Speakers | Not started |
+| 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
 | 6 | Gemini as a transcription engine | L | C: Engines | Not started |
 | 7 | Slovak Whisper (`whisper-sk`) | M | C: Engines | Not started |
 | 8 | Slovak Canary (`canary-sk`) | L | C: Engines (research first) | Blocked |
