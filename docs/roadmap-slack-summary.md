@@ -24,7 +24,7 @@ breaks each time Google changes the page.
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
 | 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measured; decision: yes, as an option (step 6b) |
-| 6b | Gemini as an optional engine | L | C: Engines | Not started |
+| 6b | Gemini as an optional engine | L | C: Engines | Built and tested; the measurement inside the app waits for Gemini quota |
 | 7 | Slovak Whisper (`whisper-sk`): measure | M | C: Engines | Measured; not better (higher WER, 4 times slower) |
 | 8 | Slovak Canary (`canary-sk`): research, measure | L | C: Engines | Measured; not better (higher WER, a little slower) |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
@@ -479,21 +479,42 @@ off by default.** `parakeet-sk` stays the default. The wiring is step 6b.
 
 Facts from step 6 that the wiring needs:
 
-- [ ] Engine `gemini`, off by default, with the key in the Windows Credential
+- [x] Engine `gemini`, off by default, with the key in the Windows Credential
   Manager (`Amanu/…`). The key file that amanu-gemini uses can be imported.
-- [ ] Send each track alone, after the app's own echo removal (LocalVQE). In
+- [x] Send each track alone, after the app's own echo removal (LocalVQE). In
   step 6, pieces of about 5 minutes worked; times come back as `mm:ss` from the
   start of each piece and are mapped back to the track.
-- [ ] Model `gemini-3.8-flash`, 3 tries with backoff on 429 and 503, then the
+- [x] Model `gemini-3.8-flash`, 3 tries with backoff on 429 and 503, then the
   fallback `gemini-3.7-flash`. HTTP 503 came often on the free key. Write the
   model that really ran into `transcribe.log` and `transcript.md`.
-- [ ] Prompt: Slovak verbatim, no translation, nothing for silence, custom words
+- [x] Prompt: Slovak verbatim, no translation, nothing for silence, custom words
   and the people list as spelling hints, temperature 0, JSON out.
-- [ ] Remove echo lines (lines on `me` that repeat `them` at the same time) as
+- [x] Remove echo lines (lines on `me` that repeat `them` at the same time) as
   a safety net; with LocalVQE first, step 6 found 0-1 per recording.
-- [ ] A request can take up to about 6 minutes. Do not time out sooner, and
+- [x] A request can take up to about 6 minutes. Do not time out sooner, and
   show progress.
 - [ ] Measure once in the app against the step 6 numbers (28.9 % / 39.1 %).
+
+Built (2026-11-09), commits `1e337c4` to the one with the cut-off fix:
+
+- `GeminiTranscriptionEngine` in `TranscriptionServices.cs`; the prompt and the
+  reading of the answer are in `Amanu.Core\Processing\GeminiTranscript.cs`,
+  with tests in `GeminiTranscriptTests.cs`. Setup lists Gemini as a fourth
+  cloud provider; the key is `Amanu/gemini` in the Credential Manager.
+  Importing the amanu-gemini key file was left out: there is none on this PC.
+- `Amanu.exe --measure-transcription <rec> <out> gemini` now runs a cloud engine
+  when it is named outright, with the app's 30-minute HTTP limit (the default
+  100 s failed the first run).
+- An answer cut off in the middle of the JSON array keeps its complete lines.
+  In the first run inside the app, one piece of `1021` came back unreadable and
+  failed the whole transcript.
+- Not measured inside the app yet: the free key ran out of quota (HTTP 429,
+  "You exceeded your current quota") during the run of `1000`.
+- Found on the way, not fixed: with echo removal on, every cloud engine is
+  given the echo-cleaned copy in a temp folder, so its answer cache
+  (`.cache-<provider>-*.json`) is written there and deleted with it. After a
+  failure, all audio is sent again. That costs Gemini's free quota most.
+
 
 ## Step 7: Slovak Whisper — measure only (size: M, session C)
 
