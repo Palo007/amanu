@@ -202,7 +202,7 @@ public sealed class AmanuRuntime : IAsyncDisposable
     /// Shows the card now, or keeps it for when the recording that is running
     /// stops, so it does not come up in the middle of the next huddle. A card
     /// kept that way is lost if Amanu quits first; the recording still has its
-    /// "Copy for Slack" button.
+    /// "Copy summary" button.
     /// </summary>
     private void ConsiderSlackOffer(string directory)
     {

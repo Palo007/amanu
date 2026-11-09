@@ -174,7 +174,7 @@ balloon cannot hold buttons, so the card is a small window of its own.
   and as plain text with Slack marks (`*bold*`, `•` lists), then start
   `slack://open` to bring Slack to the front.
 - [x] "Open summary": open the recording in the Recordings window.
-- [x] "Not now" and `×`: close it. The recording keeps a "Copy for Slack" button.
+- [x] "Not now" and `×`: close it. The recording keeps a "Copy summary" button.
 - [x] Write `slack-offer.json` in the recording folder (`shown`, `copied`, time),
   so that the card never comes up twice for one recording.
 - [x] Settings: `slack_summary.enabled` (default on), `slack_summary.apps`
@@ -196,11 +196,12 @@ Facts (session B, 2026-11-09):
 - `AmanuRuntime.ConsiderSlackOffer` writes `slack-offer.json` before it raises
   `SlackOfferReady`. If a recording runs, the folder waits in memory and is
   checked again when the recording stops. A card that waits is lost if Amanu
-  quits first; the "Copy for Slack" button is still there.
+  quits first; the "Copy summary" button is still there.
 - The card is `SlackCard.cs` (App): no focus, top-most, bottom right of the work
   area, one card at a time. The HTML comes from Markdig (emphasis extras, task
   lists, pipe tables).
-- "Copy for Slack" is in the Recordings window's button row. It is enabled when
+- "Copy summary" is in the Recordings window's button row (renamed from
+  "Copy for Slack" by the user: it copies only and does not open Slack). It is enabled when
   the summary is done, and hidden when `slack_summary.enabled` is off.
 - The app matches `process_family` with or without `.exe`, in any case.
 
@@ -567,7 +568,7 @@ focus, so it does not interrupt typing. It stays until I click on it.
 ```
 
 "Not now" and `×` do the same thing: the card closes, and the recording keeps
-a "Copy for Slack" button.
+a "Copy summary" button.
 
 After "Copy and open Slack", the card says: "Copied. In Slack, open the channel
 and press Ctrl+V." Then it closes after 10 seconds.

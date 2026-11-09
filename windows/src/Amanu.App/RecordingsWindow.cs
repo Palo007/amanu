@@ -84,7 +84,7 @@ internal sealed class RecordingsWindow : Window
         listen = Ui.Button(T("Listen", "Слушать"), () => { if (Selected is { } row) Listen(row); });
         folder = Ui.Button(T("Open folder", "Открыть папку"), () => { if (Selected is { } row) OpenFolder(row); });
         delete = Ui.Button(T("Delete", "Удалить"), () => { if (Selected is { } row) Delete(row); });
-        copySlack = Ui.Button(T("Copy for Slack", "Копировать для Slack"), () => { if (Selected is { } row) _ = CopyForSlackAsync(row); });
+        copySlack = Ui.Button(T("Copy summary", "Копировать саммари"), () => { if (Selected is { } row) _ = CopyForSlackAsync(row); });
         copySlack.ToolTip = T("Copies the summary with bold text and lists. In Slack, open the channel and press Ctrl+V.",
             "Копирует саммари с жирным текстом и списками. В Slack откройте канал и нажмите Ctrl+V.");
 
@@ -210,7 +210,7 @@ internal sealed class RecordingsWindow : Window
         timer.Tick += (_, _) =>
         {
             timer.Stop();
-            copySlack.Content = T("Copy for Slack", "Копировать для Slack");
+            copySlack.Content = T("Copy summary", "Копировать саммари");
         };
         timer.Start();
     }
