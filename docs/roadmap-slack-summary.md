@@ -23,9 +23,9 @@ breaks each time Google changes the page.
 | 3 | "Summary ready" card | M | B: Slack card | Done, checked by hand |
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
-| 6 | Gemini as a transcription engine | L | C: Engines | Not started |
-| 7 | Slovak Whisper (`whisper-sk`) | M | C: Engines | Not started |
-| 8 | Slovak Canary (`canary-sk`) | L | C: Engines (research first) | Blocked |
+| 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measure first; wiring waits for my decision |
+| 7 | Slovak Whisper (`whisper-sk`): measure | M | C: Engines | Measure first; wire only if as good as `parakeet-sk` |
+| 8 | Slovak Canary (`canary-sk`): research, measure | L | C: Engines | Research first, then measure |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
 | 10 | Summaries on demand, several per recording | M | B: Slack card | Done, checked by hand |
 
@@ -399,69 +399,80 @@ Done when: on `2026.10.29-1000` at least 12 of 25 labels get a name, all names
 are correct (the same as the amanu-gemini result), and on a diarized Parakeet
 recording no label gets a wrong name.
 
-## Step 6: Gemini as a transcription engine (size: L, session C)
+## Step 6: Gemini — measure only (size: M, session C)
 
-- [ ] Engine `gemini` with the key in the secret store (Windows Credential
-  Manager, `Amanu/…`). The key file that amanu-gemini uses can be imported.
-- [ ] Each track (`me`, `them`) is sent alone, in chunks with a small overlap,
-  then joined by time.
-- [ ] Remove echo lines: lines on `me` that repeat `them` text at the same time.
-- [ ] Model `gemini-3.8-flash`, 3 tries, then the fallback model. Write the model
-  that really ran into `transcribe.log` and `transcript.md`.
-- [ ] Give the custom words and the people list to the prompt, for spelling.
-- [ ] Measure on the speed set against `parakeet-sk`: WER on the quiet speaker,
-  and how many labels get correct names.
-- [ ] Compare Gemini against `parakeet-sk`, `whisper-sk` and (if it runs)
-  `canary-sk` on the same speed set, in one table.
+Decision (2026-11-09): measure first, wire later. Do not add an engine, a
+setting or a download to the app in this step. After the numbers are here, I
+decide if Gemini becomes a transcription engine and a summary engine. That
+decision is open.
 
-Done when: the numbers show whether Gemini is better than local Parakeet. If it
-is not better, it stays an option that is off.
+- [ ] Ask me before any call that uses a cloud key, and say what is sent.
+- [ ] Run Gemini outside the app (a script). Send each track (`me`, `them`)
+  alone, as the app would, in chunks with a small overlap.
+- [ ] Measure on the speed set against `parakeet-sk`, with the same audio path
+  as the app (Media Foundation decode of `audio.m4a`, then
+  `AudioPreprocessor.SplitStereo`: mic left, call right):
+  - WER on the quiet speaker (`2026.11.06-1021`) and on `2026.11.06-1000`.
+  - Time for each recording.
+  - How many labels get a correct name, where a reference has names.
+- [ ] If cheap: one summary from Gemini against one from the current summary
+  engine, on the same transcript. I judge them; write only which one I chose.
+- [ ] Write the result table here. Status: "Measured; waiting for decision".
 
-## Step 7: Slovak Whisper as a local engine (size: M, session C)
+Only if I say yes later, the wiring is a new step: engine `gemini`, key in the
+Windows Credential Manager (`Amanu/…`), echo-line removal, model
+`gemini-3.8-flash` with 3 tries and a fallback, custom words and the people
+list in the prompt.
+
+## Step 7: Slovak Whisper — measure only (size: M, session C)
+
+Decision (2026-11-09): measure first, wire later. Do not add an engine, a
+setting or a download to the app until the numbers show that `whisper-sk` is
+as good as `parakeet-sk` or better. Then stop and ask me.
 
 Baseline: `parakeet-sk` (kinit/parakeet-tdt-0.6b-v3-sk, converted to GGUF by
 hand). It has 0.0 % WER on the quiet speaker in `2026.11.06-1021`, and 42.1 %
 against the silver reference on `2026.11.06-1000`. The local runtime is
 transcribe.cpp v0.1.3 (`transcribe-cli.exe`, ggml, Vulkan).
 
-- [ ] Model: kinit/whisper-large-v3-turbo-sk (the KInIT fine-tune of
-  whisper-large-v3-turbo, about 809M parameters). The license is MIT, so Amanu
-  can ship it.
-- [ ] Convert it to a ggml/GGUF file that `transcribe-cli` can load (Q8_0, the
-  same as `parakeet-sk`). Write the convert steps into `windows/BUILDING-HERE.md`.
-- [ ] New engine `whisper-sk`, set to Slovak. Keep the old `whisper` engine as it is.
-  Engine names are in `AppSettings.cs` (`LocalEngines`), `AnalyticsPolicy.cs`,
-  `ProcessingPolicy.cs`, `SetupForm.cs` and `ProcessingCoordinator.cs`.
-- [ ] Give the custom words to the Whisper initial prompt. Keep the correction
-  step that runs after the speech recognition.
-- [ ] Measure on the speed set against `parakeet-sk` and Gemini:
-  - WER on the quiet speaker (`2026.11.06-1021`).
-  - WER on `2026.11.06-1000`.
-  - ASR time on the CPU and on the GPU.
+Model: kinit/whisper-large-v3-turbo-sk (the KInIT fine-tune of
+whisper-large-v3-turbo, about 809M parameters, MIT).
+
+- [ ] Ask me before the download, and say its size.
+- [ ] Run it outside the app: a ggml/GGUF conversion that the existing
+  `transcribe-cli` loads (Q8_0, as `parakeet-sk`), or a Python runtime if the
+  conversion cannot run on this PC. Language: Slovak.
+- [ ] Measure against `parakeet-sk`, with the app's audio path:
+  - WER on the quiet speaker (`2026.11.06-1021`) and on `2026.11.06-1000`.
+  - ASR time on the CPU and on the GPU (if the runtime has a GPU path).
   - Hallucinations: repeated or invented lines in silence.
+- [ ] Write the result table here. If it is as good or better: Status "Measured;
+  waiting for decision", and ask me whether to wire it. If not: Status
+  "Measured; not better", and stop.
 
-Done when: the numbers show whether `whisper-sk` is better than `parakeet-sk`.
-It becomes the default only if it is better on `1000` and still has 0.0 % on
-the quiet speaker. If not, it stays an option.
+Only if I say yes later: engine `whisper-sk` (names in `AppSettings.cs`
+`LocalEngines`, `AnalyticsPolicy.cs`, `ProcessingPolicy.cs`, `SetupForm.cs`,
+`ProcessingCoordinator.cs`), custom words in the initial prompt, and the
+convert steps in `windows/BUILDING-HERE.md`.
 
-## Step 8: Slovak Canary as a local engine (size: L, blocked, session C)
+## Step 8: Slovak Canary — research, then measure (size: L, session C)
+
+Decision (2026-11-09): research first, then measure, wire later. Do not add an
+engine, a setting or a download to the app.
 
 Model: kinit/canary-1b-v2-sk (the KInIT fine-tune of nvidia/canary-1b-v2, about
-978M parameters, CC-BY-4.0, NeMo).
+978M parameters, CC-BY-4.0, NeMo). transcribe.cpp v0.1.3 in Amanu cannot run
+Canary. `amanu_local.py` in amanu-gemini ran a Canary model through a
+`transcribe-cli`, so check that first.
 
-Blocker: transcribe.cpp v0.1.3 in Amanu cannot run Canary, and Amanu does not
-use Canary anywhere. But `amanu_local.py` in amanu-gemini ran a Canary model
-through a `transcribe-cli`, so check that first.
-
-- [ ] Research first (subagent, cheap model, report of 15 lines or less): Canary
-  support in `transcribe-cli` (the version that `amanu_local.py` used, or a
-  newer one), sherpa-onnx (the library of step 4), or an ONNX export of the
-  model. Write down which one works on the CPU and on Vulkan, and how big it is.
-- [ ] Only if one of them works: add engine `canary-sk`, then measure it the
-  same way as in step 7.
-
-Done when: we know if Canary can run in Amanu. If it can, the numbers show
-whether it is better than `parakeet-sk` and `whisper-sk`.
+- [ ] Research (subagent, cheap model, report of 15 lines or less): does a
+  Slovak Canary exist, and does it run on this PC? Check `transcribe-cli` (the
+  version that `amanu_local.py` used, or a newer one), sherpa-onnx (the library
+  of step 4), an ONNX export, and a Python runtime. Write down CPU or Vulkan,
+  and the size.
+- [ ] If one runs: ask me before the download, then measure it as in step 7.
+- [ ] Write the result table here. If it is as good as `parakeet-sk` or better,
+  ask me whether to wire it.
 
 ## Step 9: a Settings screen for more engines (size: M, session D)
 
