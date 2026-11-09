@@ -9,20 +9,20 @@ public sealed class PeopleListTests
     [
         "\uFEFF# who is on my calls",
         "",
-        "Radoslav Benes, Rado, Radko",
+        "Joseph Smith, Joe, Jojo",
         "Pavol Harvanka, Palo (me)",
         "Michal Novak, Mišo",
         "Michal Kral, Mišo",
-        "Radoslav Benes, Radúz",
+        "Joseph Smith, Joey",
         "Andrea Sulikova",
     ]);
 
     [Fact]
     public void ParsesTheAmanuGeminiFormat()
     {
-        Assert.Equal(["Radoslav Benes", "Pavol Harvanka", "Michal Novak", "Michal Kral", "Andrea Sulikova"],
+        Assert.Equal(["Joseph Smith", "Pavol Harvanka", "Michal Novak", "Michal Kral", "Andrea Sulikova"],
             People.Select(person => person.FullName));
-        Assert.Equal(["Rado", "Radko"], People[0].OtherNames);
+        Assert.Equal(["Joe", "Jojo"], People[0].OtherNames);
         Assert.Empty(People[4].OtherNames);
     }
 
@@ -35,9 +35,9 @@ public sealed class PeopleListTests
     }
 
     [Theory]
-    [InlineData("Rado", "Radoslav Benes")]
-    [InlineData("radko", "Radoslav Benes")]
-    [InlineData("radoslav benes", "Radoslav Benes")]
+    [InlineData("Joe", "Joseph Smith")]
+    [InlineData("jojo", "Joseph Smith")]
+    [InlineData("joseph smith", "Joseph Smith")]
     [InlineData(" Palo ", "Pavol Harvanka")]
     [InlineData("Mišo", "Mišo")]          // two people are called that: no guess
     [InlineData("Juraj", "Juraj")]        // not on the list
@@ -48,7 +48,7 @@ public sealed class PeopleListTests
     public void DescribesTheListForAPrompt()
     {
         var text = PeopleList.Describe(People);
-        Assert.Contains("- Radoslav Benes (also called: Rado, Radko)", text);
+        Assert.Contains("- Joseph Smith (also called: Joe, Jojo)", text);
         Assert.Contains("- Pavol Harvanka (also called: Palo) — the person recording", text);
         Assert.Contains("- Andrea Sulikova", text);
         Assert.Equal("", PeopleList.Describe([]));

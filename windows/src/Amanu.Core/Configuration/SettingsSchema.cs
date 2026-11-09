@@ -266,8 +266,8 @@ public static class SettingsSchema
                 SettingKind.Text, DescribedAs: T("the summary's model", "модель саммари")),
             new("speaker_names.people_file",
                 T("People list", "Список людей"),
-                T("Who may be on your calls: one person per line, full name first, then other names with commas (Radoslav Benes, Rado, Radko). Put (me) at the end of your own line. Names are given as full names, and the transcription spells them as written.",
-                  "Кто бывает на ваших звонках: по человеку в строке, сначала полное имя, затем другие имена через запятую (Radoslav Benes, Rado, Radko). В конце своей строки поставьте (me). Имена пишутся полностью, и расшифровка пишет их так, как в списке."),
+                T("Who may be on your calls: one person per line, full name first, then other names with commas (Joseph Smith, Joe, Jojo). Put (me) at the end of your own line. Names are given as full names, and the transcription spells them as written.",
+                  "Кто бывает на ваших звонках: по человеку в строке, сначала полное имя, затем другие имена через запятую (Joseph Smith, Joe, Jojo). В конце своей строки поставьте (me). Имена пишутся полностью, и расшифровка пишет их так, как в списке."),
                 SettingKind.File, DescribedAs: T(@"people.txt in %LOCALAPPDATA%\Amanu Data", @"people.txt в %LOCALAPPDATA%\Amanu Data")),
         ]),
 

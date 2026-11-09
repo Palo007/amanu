@@ -8,7 +8,7 @@ public sealed record Person(string FullName, IReadOnlyList<string> OtherNames, b
 
 /// <summary>
 /// people.txt: who may be on the user's calls. One person per line, full name
-/// first, then other names with commas ("Radoslav Benes, Rado, Radko"); "(me)"
+/// first, then other names with commas ("Joseph Smith, Joe, Jojo"); "(me)"
 /// at the end of a line marks the user. It is the format amanu-gemini reads, so
 /// one file serves both. The list is kept in the app data folder, never in git,
 /// and a missing or empty list changes nothing.

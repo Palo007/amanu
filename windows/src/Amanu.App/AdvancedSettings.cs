@@ -115,7 +115,7 @@ internal sealed class AdvancedSettings
                     System.IO.File.WriteAllText(path,
                         "# One person per line: full name first, then other names with commas.\n" +
                         "# Put (me) at the end of your own line.\n" +
-                        "# Radoslav Benes, Rado, Radko\n");
+                        "# Joseph Smith, Joe, Jojo\n");
                 }
             }
             catch (Exception exception) when (exception is System.IO.IOException or UnauthorizedAccessException) { }

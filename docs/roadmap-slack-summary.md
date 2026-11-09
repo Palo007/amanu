@@ -19,7 +19,7 @@ breaks each time Google changes the page.
 | Step | What | Size | Session | State |
 |---|---|---|---|---|
 | 1 | Summary prompt for Slack | S | — | Installed; my review is open |
-| 2 | People list | S | A: Speakers | Done; check by hand open |
+| 2 | People list | S | A: Speakers | Done, checked by hand |
 | 3 | "Summary ready" card | M | B: Slack card | Designed |
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Not started |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Not started |
@@ -130,7 +130,7 @@ uses), on `2026.10.29-1000`, `2026.11.06-1438` and `2026.11.09-1001`:
 - [x] New setting `speaker_names.people_file`. The default is
   `%LOCALAPPDATA%\Amanu Data\people.txt`. The format is the same as in
   amanu-gemini: one person per line, full name first, then other names with
-  commas (`Radoslav Benes, Rado, Radko`). `(me)` marks my own line.
+  commas (`Joseph Smith, Joe, Jojo`). `(me)` marks my own line.
 - [x] Give the list to the speaker-name prompt (`SpeakerNamingService`). Tell
   the model to pick from the list when the transcript says a name or nickname
   that is on it.
@@ -161,7 +161,7 @@ What was built (branch `session-a-speakers`):
 - Settings, Advanced tab, Naming: "People list", new `SettingKind.File` = text
   field + "Open" button; the button makes the file with a comment header when
   it is missing.
-- Not checked yet: the "Done when" above needs a real run (my hand check).
+- Checked by hand on 2026-11-09 on `2026.10.29-1000`: full names in names and summary.
 
 ## Step 3: the "summary ready" card (size: M, session B)
 
@@ -424,7 +424,7 @@ focus, so it does not interrupt typing. It stays until I click on it.
 ┌──────────────────────────────────────────────┐
 │ Amanu · Slack huddle summary ready        ×  │
 │ Today 10:01–10:26 · 25 min                   │
-│ Rado Benes, Michal Polko, me                 │
+│ Joe Benes, Michal Polko, me                 │
 │ ──────────────────────────────────────────── │
 │ Decisions: release moves to Thursday …       │
 │ 3 action items                               │
