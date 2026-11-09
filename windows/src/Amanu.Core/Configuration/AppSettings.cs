@@ -203,9 +203,11 @@ public sealed class TranscriptionSettings
     /// <summary>
     /// <c>auto</c>: after a local engine, the call track is split by voice, so
     /// "them" becomes "them A", "them B". Cloud engines label voices themselves.
+    /// Off by default: on a 5-person call it found 14 voices, and it adds about
+    /// as much time as speech recognition before the summary (roadmap step 4).
     /// </summary>
     [JsonPropertyName("diarization")]
-    public string Diarization { get; set; } = "auto";
+    public string Diarization { get; set; } = "off";
 
     /// <summary>
     /// The tuned default for <see cref="DiarizationThreshold"/> (roadmap step 4).

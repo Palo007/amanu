@@ -21,7 +21,7 @@ breaks each time Google changes the page.
 | 1 | Summary prompt for Slack | S | — | Installed; my review is open |
 | 2 | People list | S | A: Speakers | Done, checked by hand |
 | 3 | "Summary ready" card | M | B: Slack card | Designed |
-| 4 | Diarization (split the call side by voice) | M | A: Speakers | Done; check by hand is open |
+| 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Not started |
 | 6 | Gemini as a transcription engine | L | C: Engines | Not started |
 | 7 | Slovak Whisper (`whisper-sk`) | M | C: Engines | Not started |
@@ -341,6 +341,15 @@ decoder; the check by hand is open). The count on `1000` is not met (6 of
 about 13): the user chose a stable one-person result over the count, and step
 5 makes up part of it. The time is not met: on `1021` the app took 117 s for
 speech recognition (on the GPU) and 126 s for diarization (on the CPU).
+
+Check by hand at 0.6 (2026-11-09): `1021` gave only Andrea, correct; `1001`
+gave 8, which looks right; but a new call, `2026.11.09-1502`, gave 14 speakers
+for 5 people. The user's decision: diarization brings no benefit for now and
+only delays the summary, so `transcription.diarization` is now `off` by
+default. The code, the models and the setting stay; a user can set `auto` in
+Advanced settings. Pick this up again only with a faster and more reliable
+method (for example a better voice model, or the summary model joining labels
+as in step 5), and tune it with the app's own decoder.
 
 ## Step 5: stricter speaker-name checks (size: M, session A)
 
