@@ -636,7 +636,9 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// Measurement only (roadmap-speed step 0): transcribes a copy of one
     /// recording in `output` on this computer's model, with the same stages
     /// and timing lines as a real pass. The recording itself is only read:
-    /// no archive, no names, no summary, no analytics, no cloud.
+    /// no archive, no names, no summary, no analytics. The cloud is used only
+    /// when `engine` names a cloud engine outright, so a cloud engine can be
+    /// measured on the same audio path; nothing else ever reaches it.
     /// </summary>
     public async Task<TranscriptDocument> MeasureAsync(string recording, string output, string? engine, CancellationToken cancellationToken)
     {
@@ -654,10 +656,12 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         LogTiming(output, "decode", decode.Elapsed);
         if (!audio.HasAudio) throw new InvalidOperationException("No track in this recording has any audio.");
         engine ??= ReadText(output, "transcribe.engine") ?? current.Transcription.Engine;
+        var namedCloud = TranscriptionSettings.CloudEngines.Contains(engine);
         var plan = EngineResolver.Plan(engine, current.Transcription.Cloud, current.Transcription.LocalEngine,
-            _ => false, models.IsReady);
-        if (plan.Local is null) throw new InvalidOperationException($"No local model for '{engine}': {plan.Missing}");
-        var measurePlan = plan with { Cloud = null };
+            name => namedCloud && secrets.Get(name) is not null, models.IsReady);
+        if (namedCloud && plan.Cloud is null) throw new InvalidOperationException($"No key for '{engine}': {plan.Missing}");
+        if (!namedCloud && plan.Local is null) throw new InvalidOperationException($"No local model for '{engine}': {plan.Missing}");
+        var measurePlan = namedCloud ? plan : plan with { Cloud = null };
         var overlap = OverlapFor(measurePlan, audio, current, output);
         var (echoed, cleaned) = await HearAsync(output, audio, current, overlap, cancellationToken).ConfigureAwait(false);
         LevelAudio.Result? leveled = null;
