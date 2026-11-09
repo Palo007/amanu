@@ -125,6 +125,32 @@ public sealed class GeminiTranscriptTests
         Assert.Equal(["one {two}", "three"], GeminiTranscript.Segments(text, SpeakerLabels.Me, 0, 0, 5000).Select(s => s.Text));
     }
 
+    [Fact]
+    public void Model_order_drops_blanks_and_repeats_keeps_three_and_falls_back_to_the_tested_pair()
+    {
+        Assert.Equal(["b", "a", "c"], GeminiTranscript.ModelOrder([" b ", "", "a", "b", "c", "d"]));
+        Assert.Equal(GeminiTranscript.DefaultModels, GeminiTranscript.ModelOrder([" "]));
+        Assert.Equal(GeminiTranscript.DefaultModels, GeminiTranscript.ModelOrder(null));
+    }
+
+    [Fact]
+    public void Model_list_keeps_gemini_models_that_generate_content_and_leaves_out_the_others()
+    {
+        var body = """
+            {"models":[
+              {"name":"models/gemini-3.7-flash","supportedGenerationMethods":["generateContent","countTokens"]},
+              {"name":"models/gemini-3.8-flash","supportedGenerationMethods":["generateContent"]},
+              {"name":"models/gemini-3.8-flash-tts","supportedGenerationMethods":["generateContent"]},
+              {"name":"models/gemini-embedding-2","supportedGenerationMethods":["embedContent"]},
+              {"name":"models/gemini-3.8-flash-live","supportedGenerationMethods":["bidiGenerateContent"]},
+              {"name":"models/gemma-4-27b","supportedGenerationMethods":["generateContent"]},
+              {"name":"models/gemini-3.8-pro","supportedGenerationMethods":["countTokens"]}
+            ]}
+            """;
+        Assert.Equal(["gemini-3.8-flash", "gemini-3.7-flash"], GeminiTranscript.TranscriptionModels(body));
+        Assert.Empty(GeminiTranscript.TranscriptionModels("<html>"));
+    }
+
     [Theory]
     [InlineData("not json")]
     [InlineData("[{\"start\": ")]

@@ -17,6 +17,50 @@ public static class GeminiTranscript
     /// <summary>Asked once, after the first model has been busy four times in a row.</summary>
     public const string FallbackModel = "gemini-3.7-flash";
 
+    /// <summary>The tested pair, asked when the settings name no model.</summary>
+    public static readonly IReadOnlyList<string> DefaultModels = [Model, FallbackModel];
+
+    public const int MaxModels = 3;
+
+    /// <summary>The chosen models without blanks or repeats, at most <see cref="MaxModels"/>, or the default pair when none is left.</summary>
+    public static IReadOnlyList<string> ModelOrder(IEnumerable<string>? chosen)
+    {
+        var models = (chosen ?? []).Where(model => !string.IsNullOrWhiteSpace(model)).Select(model => model.Trim())
+            .Distinct().Take(MaxModels).ToArray();
+        return models.Length == 0 ? DefaultModels : models;
+    }
+
+    /// <summary>
+    /// The models a GET /v1beta/models answer offers that can be asked for a transcript, newest name
+    /// first and without the "models/" prefix. Models made for something else (speech output, images,
+    /// embeddings, live sessions) also list generateContent, or fail on audio, so they are left out.
+    /// </summary>
+    public static IReadOnlyList<string> TranscriptionModels(string body)
+    {
+        string[] notForTranscripts = ["embedding", "tts", "image", "live", "native-audio", "computer-use", "robotics", "aqa"];
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (!document.RootElement.TryGetProperty("models", out var models) || models.ValueKind != JsonValueKind.Array) return [];
+            var names = new List<string>();
+            foreach (var model in models.EnumerateArray())
+            {
+                var name = model.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() ?? "" : "";
+                if (name.StartsWith("models/", StringComparison.Ordinal)) name = name["models/".Length..];
+                if (!name.StartsWith("gemini", StringComparison.Ordinal)) continue;
+                if (notForTranscripts.Any(word => name.Contains(word, StringComparison.Ordinal))) continue;
+                var generates = model.TryGetProperty("supportedGenerationMethods", out var methods) && methods.ValueKind == JsonValueKind.Array
+                    && methods.EnumerateArray().Any(method => method.ValueKind == JsonValueKind.String && method.GetString() == "generateContent");
+                if (generates) names.Add(name);
+            }
+            return names.Distinct().OrderByDescending(name => name, StringComparer.Ordinal).ToArray();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
     /// <summary>
     /// Verbatim text only: a model that is allowed to tidy up will translate, summarize,
     /// or write a line for the silence between two sentences, and none of those is a transcript.

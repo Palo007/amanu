@@ -837,7 +837,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         {
             "openai" => new OpenAiTranscriptionEngine(httpClient, key, current.Transcription.OpenAi.Model, MeetingLanguages.Pin(expected), cache),
             "elevenlabs" => new ElevenLabsTranscriptionEngine(httpClient, key, cache, LoadCustomWords(current)),
-            "gemini" => new GeminiTranscriptionEngine(httpClient, SecretNames.GeminiKeys(secrets.Get), expected, cache, LoadCustomWords(current)),
+            "gemini" => new GeminiTranscriptionEngine(httpClient, SecretNames.GeminiKeys(secrets.Get), expected, cache, LoadCustomWords(current),
+                models: current.Transcription.Gemini.Models),
             _ => new AssemblyAiTranscriptionEngine(httpClient, key, expected, current.Transcription.AssemblyAi.SpeechModel, cache, LoadCustomWords(current)),
         };
     }
@@ -1287,8 +1288,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         ("assemblyai", _) => "universal-3-pro",
         ("openai", "gpt-4o-transcribe-diarize") => "gpt-4o-transcribe-diarize",
         ("elevenlabs", _) => "scribe_v2",
-        ("gemini", var used) when used.StartsWith("gemini-3.7", StringComparison.Ordinal) => "gemini-3.7-flash",
-        ("gemini", _) => "gemini-3.8-flash",
+        ("gemini", var used) when used.StartsWith("gemini-3.7-flash", StringComparison.Ordinal) => "gemini-3.7-flash",
+        ("gemini", var used) when used.StartsWith("gemini-3.8-flash", StringComparison.Ordinal) => "gemini-3.8-flash",
         ("parakeet", _) => "parakeet-v3",
         ("parakeet-ultra", _) => "parakeet-ultra",
         ("parakeet-sk", _) => "parakeet-v3-sk",

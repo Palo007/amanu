@@ -22,6 +22,27 @@ public enum KeyVerdict
 /// </summary>
 public static class KeyCheck
 {
+    /// <summary>The Gemini models this key can ask for a transcript, or null when Google could not be asked.</summary>
+    public static async Task<IReadOnlyList<string>?> GeminiModelsAsync(HttpClient client, string key, CancellationToken cancellationToken)
+    {
+        // One page of up to 1000 holds every model; the default page of 50 would cut the list.
+        using var request = Get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+            message => message.Headers.TryAddWithoutValidation("x-goog-api-key", key));
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            using var response = await client.SendAsync(request, timeout.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+            var models = GeminiTranscript.TranscriptionModels(await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false));
+            return models.Count == 0 ? null : models;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            return null;
+        }
+    }
+
     public static async Task<(KeyVerdict Verdict, string Message)> CheckAsync(HttpClient client, string service, string key, CancellationToken cancellationToken)
     {
         HttpRequestMessage request = service switch

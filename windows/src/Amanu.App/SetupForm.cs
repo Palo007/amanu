@@ -54,6 +54,13 @@ internal sealed class SetupForm
     private Button addKey = null!;
     private Button removeExtraKeys = null!;
 
+    /// <summary>The Gemini models, first to third, shown while Gemini is the provider and has a key.</summary>
+    private readonly StackPanel geminiModels = new() { Margin = new Thickness(0, 10, 0, 0) };
+    private readonly ComboBox[] geminiModelPicks = [new() { MinWidth = 180 }, new() { MinWidth = 180 }, new() { MinWidth = 180 }];
+    private readonly TextBlock geminiModelsStatus = Ui.Status();
+    /// <summary>What Google offered when last asked; null until the answer arrives or when it could not be asked.</summary>
+    private IReadOnlyList<string>? geminiOffered;
+
     private readonly CheckBox local = Ui.Switch(T("On this computer", "На этом компьютере"));
     private TextBlock localDetail = Ui.Detail("");
     private readonly Dictionary<string, RadioButton> localCards = [];
@@ -178,6 +185,52 @@ internal sealed class SetupForm
         runtime.DownloadProgressChanged += OnDownloadProgress;
         Refresh();
         _ = DetectToolsAsync();
+        _ = LoadGeminiModelsAsync();
+    }
+
+    /// <summary>
+    /// Asks Google which models the first Gemini key can use, so the pickers offer today's models
+    /// rather than a list frozen into this build. Without an answer the pickers keep what is saved.
+    /// </summary>
+    private async Task LoadGeminiModelsAsync()
+    {
+        if (runtime.GetSecret(SecretNames.Gemini) is not { Length: > 0 } key) return;
+        geminiModelsStatus.Text = T("asking Google which models there are…", "спрашиваю у Google список моделей…");
+        geminiOffered = await KeyCheck.GeminiModelsAsync(runtime.Http, key, CancellationToken.None);
+        geminiModelsStatus.Text = geminiOffered is null
+            ? T("couldn’t get the list from Google; the saved models are shown", "не удалось получить список от Google; показаны сохранённые модели")
+            : T($"{geminiOffered.Count} models from Google", $"{geminiOffered.Count} моделей от Google");
+        Refresh();
+    }
+
+    /// <summary>The three pickers' choices as the order to save: blanks and repeats dropped.</summary>
+    private void GeminiModelsPicked()
+    {
+        if (refreshing) return;
+        var picked = geminiModelPicks.Select(pick => pick.SelectedItem is ComboBoxItem { Tag: string model } ? model : "")
+            .Where(model => model.Length > 0).Distinct().ToList();
+        if (picked.Count == 0) return;
+        Change(settings => settings.Transcription.Gemini.Models = picked);
+    }
+
+    /// <summary>Fills the pickers from Google's list and the saved order; a saved model Google no longer lists still shows, marked.</summary>
+    private void FillGeminiModels()
+    {
+        var saved = GeminiTranscript.ModelOrder(runtime.Settings.Transcription.Gemini.Models);
+        var options = (geminiOffered ?? []).Concat(saved).Distinct().ToArray();
+        for (var i = 0; i < geminiModelPicks.Length; i++)
+        {
+            var pick = geminiModelPicks[i];
+            pick.Items.Clear();
+            if (i > 0) pick.Items.Add(new ComboBoxItem { Content = T("— none —", "— нет —"), Tag = "" });
+            foreach (var model in options)
+            {
+                var gone = geminiOffered is not null && !geminiOffered.Contains(model);
+                pick.Items.Add(new ComboBoxItem { Content = gone ? model + T(" (not listed now)", " (сейчас нет в списке)") : model, Tag = model });
+            }
+            var chosen = i < saved.Count ? saved[i] : "";
+            pick.SelectedItem = pick.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == chosen);
+        }
     }
 
     public void Detach()
@@ -231,6 +284,18 @@ internal sealed class SetupForm
         providerOptions.Children.Add(Ui.Cards([.. providerCards.Values]));
         providerOptions.Children.Add(keyLine);
         providerOptions.Children.Add(keySaved);
+        geminiModels.Children.Add(Ui.Detail(T("Models, asked in this order: when one is busy or out of quota, the next one is asked.",
+            "Модели, по порядку: когда одна занята или без квоты, спрашивается следующая.")));
+        var picksLine = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+        for (var i = 0; i < geminiModelPicks.Length; i++)
+        {
+            picksLine.Children.Add(new TextBlock { Text = $"{i + 1}.", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(i == 0 ? 0 : 12, 0, 6, 0) });
+            picksLine.Children.Add(geminiModelPicks[i]);
+        }
+        geminiModels.Children.Add(picksLine);
+        geminiModelsStatus.Margin = new Thickness(0, 4, 0, 0);
+        geminiModels.Children.Add(geminiModelsStatus);
+        providerOptions.Children.Add(geminiModels);
 
         localDetail = Ui.Detail(T("Nothing leaves the computer; local transcripts label speakers as me / them.",
             "С компьютера ничего не уходит; локальные расшифровки помечают спикеров как «я»/«они»."));
@@ -361,6 +426,7 @@ internal sealed class SetupForm
             card.Click += (_, _) => ChangeTranscription(choice => choice with { LocalEngine = id });
         cloudKey.KeyDown += (_, args) => { if (args.Key == Key.Enter) _ = SaveCloudKeyAsync(); };
         cloudKey.LostKeyboardFocus += (_, _) => _ = SaveCloudKeyAsync();
+        foreach (var pick in geminiModelPicks) pick.SelectionChanged += (_, _) => GeminiModelsPicked();
         language.SelectionChanged += (_, _) =>
         {
             if (refreshing || language.SelectedItem is not ComboBoxItem { Tag: string code }) return;
@@ -480,6 +546,7 @@ internal sealed class SetupForm
         cloudKey.Clear();
         replacingKey = false;
         addingKey = false;
+        if (provider == SecretNames.Gemini && geminiOffered is null) _ = LoadGeminiModelsAsync();
         if (pendingProvider == provider)
         {
             pendingProvider = null;
@@ -735,6 +802,8 @@ internal sealed class SetupForm
                     $"Ключ {EngineResolver.DisplayName(shown)} хранится в диспетчере учётных данных Windows.");
             addKey.Visibility = shown == SecretNames.Gemini && FreeGeminiSlot is not null ? Visibility.Visible : Visibility.Collapsed;
             removeExtraKeys.Visibility = geminiKeys > 1 ? Visibility.Visible : Visibility.Collapsed;
+            geminiModels.Visibility = shown == SecretNames.Gemini && geminiKeys > 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (geminiModels.Visibility == Visibility.Visible) FillGeminiModels();
             if (pendingProvider is not null && cloudKeyStatus.Text.Length == 0)
                 cloudKeyStatus.Text = T($"paste a key to switch to {EngineResolver.DisplayName(pendingProvider)}",
                     $"вставьте ключ, чтобы перейти на {EngineResolver.DisplayName(pendingProvider)}");

@@ -232,6 +232,19 @@ public sealed class TranscriptionSettings
 
     [JsonPropertyName("assemblyai")]
     public AssemblyAiTranscriptionSettings AssemblyAi { get; set; } = new();
+
+    [JsonPropertyName("gemini")]
+    public GeminiTranscriptionSettings Gemini { get; set; } = new();
+}
+
+public sealed class GeminiTranscriptionSettings
+{
+    /// <summary>
+    /// The models asked in this order, at most three: the first is retried while it is busy, each
+    /// later one is asked once when the one before it has given up. Empty means the tested pair.
+    /// </summary>
+    [JsonPropertyName("models")]
+    public List<string> Models { get; set; } = [Amanu.Core.Processing.GeminiTranscript.Model, Amanu.Core.Processing.GeminiTranscript.FallbackModel];
 }
 
 public sealed class OpenAiTranscriptionSettings

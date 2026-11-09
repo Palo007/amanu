@@ -897,11 +897,14 @@ public sealed class ElevenLabsTranscriptionEngine(HttpClient httpClient, string 
 /// </summary>
 public sealed class GeminiTranscriptionEngine(
     HttpClient httpClient, IReadOnlyList<string> apiKeys, IReadOnlyList<string> expectedLanguages, bool cache = true,
-    IReadOnlyList<string>? keyTerms = null, IReadOnlyList<TimeSpan>? backoff = null) : ITranscriptionEngine
+    IReadOnlyList<string>? keyTerms = null, IReadOnlyList<TimeSpan>? backoff = null, IReadOnlyList<string>? models = null) : ITranscriptionEngine
 {
     private const string Service = "Gemini";
 
     private readonly GeminiKeyRing keys = new(apiKeys);
+
+    /// <summary>The models in the order they are asked (the Gemini models setting).</summary>
+    private readonly IReadOnlyList<string> order = GeminiTranscript.ModelOrder(models);
     private const int PieceSeconds = 300;
 
     /// <summary>What a busy service is given before the next try: three tries, then the fallback model once.</summary>
@@ -916,10 +919,12 @@ public sealed class GeminiTranscriptionEngine(
             : [audio.Only];
         var prompt = GeminiTranscript.Prompt(expectedLanguages, keyTerms);
         var all = new List<TranscriptSegment>();
-        // Once the first model has used up its tries, the rest of the session goes straight to the fallback:
-        // asking a model that has just been busy four times, for every remaining piece, would add minutes for nothing.
-        var primaryBusy = false;
-        string? firstAnswer = null, fallbackAnswer = null;
+        // Once a model has used up its tries, the rest of the session starts with the next one:
+        // asking a model that has just given up, for every remaining piece, would add minutes for nothing.
+        var firstUsable = 0;
+        // The latest model in the order that answered any piece, and the name it gave.
+        var weakest = -1;
+        string? weakestAnswer = null;
         foreach (var (path, side, offset) in tracks)
         {
             var work = Path.Combine(audio.Directory, $".gemini-{side}");
@@ -939,27 +944,29 @@ public sealed class GeminiTranscriptionEngine(
                         ? ProviderCache.PathFor(audio.CacheDirectory, "gemini", model, side, number, length, CustomWords.Digest(keyTerms))
                         : null;
                     string? body = null;
-                    var asked = GeminiTranscript.Model;
-                    foreach (var model in new[] { GeminiTranscript.Model, GeminiTranscript.FallbackModel })
+                    var asked = 0;
+                    for (var m = 0; m < order.Count; m++)
                     {
-                        if (CachePath(model) is { } cached && File.Exists(cached))
+                        if (CachePath(order[m]) is { } cached && File.Exists(cached))
                         {
                             body = await File.ReadAllTextAsync(cached, cancellationToken).ConfigureAwait(false);
-                            asked = model;
+                            asked = m;
                             break;
                         }
                     }
                     if (body is null)
                     {
                         var wavBytes = await File.ReadAllBytesAsync(piece.Path, cancellationToken).ConfigureAwait(false);
-                        (body, asked) = await AskAsync(GeminiTranscript.RequestBody(prompt, wavBytes), primaryBusy, cancellationToken).ConfigureAwait(false);
-                        if (asked != GeminiTranscript.Model) primaryBusy = true;
-                        if (CachePath(asked) is { } cachePath) await AtomicFiles.WriteTextAsync(cachePath, body, cancellationToken).ConfigureAwait(false);
+                        (body, asked) = await AskAsync(GeminiTranscript.RequestBody(prompt, wavBytes), firstUsable, cancellationToken).ConfigureAwait(false);
+                        firstUsable = asked;
+                        if (CachePath(order[asked]) is { } cachePath) await AtomicFiles.WriteTextAsync(cachePath, body, cancellationToken).ConfigureAwait(false);
                     }
                     var (text, version) = GeminiTranscript.ReadResponse(body);
-                    var answered = string.IsNullOrWhiteSpace(version) ? asked : version;
-                    if (asked == GeminiTranscript.FallbackModel) fallbackAnswer ??= answered;
-                    else firstAnswer ??= answered;
+                    if (asked > weakest)
+                    {
+                        weakest = asked;
+                        weakestAnswer = string.IsNullOrWhiteSpace(version) ? order[asked] : version;
+                    }
                     all.AddRange(GeminiTranscript.Segments(text, side, piece.OffsetMs, piece.StartMs, piece.EndMs)
                         .Select(segment => segment with { StartMs = segment.StartMs + offset, EndMs = segment.EndMs + offset }));
                 }
@@ -969,28 +976,34 @@ public sealed class GeminiTranscriptionEngine(
                 if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
             }
         }
-        // One model name has to describe the whole transcript. When the fallback answered any piece the
-        // fallback is the one named, because it is the weaker of the two and the reader should know it was used.
-        return new TranscriptDocument("gemini", fallbackAnswer ?? firstAnswer ?? GeminiTranscript.Model, DateTimeOffset.UtcNow,
+        // One model name has to describe the whole transcript. The latest model in the order that answered
+        // any piece is the one named: it is the one asked last, and the reader should know it was used.
+        return new TranscriptDocument("gemini", weakestAnswer ?? order[0], DateTimeOffset.UtcNow,
             SpeakerLabels.Assign(all.OrderBy(segment => segment.StartMs).ToArray()));
     }
 
-    /// <summary>The body of a successful answer and the model that was asked for it.</summary>
-    private async Task<(string Body, string Model)> AskAsync(string requestBody, bool skipPrimary, CancellationToken cancellationToken)
+    /// <summary>
+    /// The body of a successful answer and the place in the order of the model that gave it. The first
+    /// model is tried again after each back-off delay; every later one is asked once, since it is only
+    /// reached when the one before it has given up.
+    /// </summary>
+    private async Task<(string Body, int Model)> AskAsync(string requestBody, int start, CancellationToken cancellationToken)
     {
         var delays = backoff ?? DefaultBackoff;
-        if (!skipPrimary)
+        ProcessingFailure? busy = null;
+        for (var m = start; m < order.Count; m++)
         {
+            var model = order[m];
             for (var attempt = 0; ; attempt++)
             {
-                var (body, _) = await keys.SendAsync(key => SendAsync(GeminiTranscript.Model, key, requestBody, cancellationToken)).ConfigureAwait(false);
-                if (body is not null) return (body, GeminiTranscript.Model);
-                if (attempt >= delays.Count) break;
+                var (body, failure) = await keys.SendAsync(key => SendAsync(model, key, requestBody, cancellationToken)).ConfigureAwait(false);
+                if (body is not null) return (body, m);
+                busy = failure;
+                if (m > 0 || attempt >= delays.Count) break;
                 await Task.Delay(delays[attempt], cancellationToken).ConfigureAwait(false);
             }
         }
-        var (fallback, busy) = await keys.SendAsync(key => SendAsync(GeminiTranscript.FallbackModel, key, requestBody, cancellationToken)).ConfigureAwait(false);
-        return fallback is not null ? (fallback, GeminiTranscript.FallbackModel) : throw busy!;
+        throw busy!;
     }
 
     /// <summary>One request: the body, or the failure and status when 429, 500 or 503 says the service is busy; any other failure is thrown.</summary>
