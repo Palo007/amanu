@@ -53,6 +53,7 @@ jobs:
           install: >-
             git
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-libgomp
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-binutils
@@ -73,9 +74,10 @@ jobs:
             -DLOCALVQE_BUILD_SHARED=ON -DGGML_NATIVE=OFF -DGGML_BLAS=OFF \
             ${{ matrix.ggml }} \
             -DCMAKE_C_FLAGS="${{ matrix.cflags }}" -DCMAKE_CXX_FLAGS="${{ matrix.cflags }}" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" -DOpenMP_RUNTIME_MSVC=OFF
+            -DCMAKE_SHARED_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
           cmake --build build --config Release --target localvqe_shared -j
           mkdir -p ../out
+          grep -E "OpenMP|GGML_OPENMP" build/CMakeCache.txt | head -5 || true
           cp build/liblocalvqe.dll "../out/liblocalvqe-${{ matrix.flavour }}.dll"
 
       - name: Check imports and print the hash
