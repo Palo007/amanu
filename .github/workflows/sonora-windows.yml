@@ -37,7 +37,7 @@ jobs:
         shell: bash
         working-directory: sonora
         # The runner checks out with CRLF; the patch is for LF files.
-        run: tr -d '' < "$GITHUB_WORKSPACE/.github/sonora/amanu-aec3-tuning.patch" | git apply --whitespace=nowarn -
+        run: tr -d '\r' < "$GITHUB_WORKSPACE/.github/sonora/amanu-aec3-tuning.patch" | git apply --whitespace=nowarn -
 
       - name: Install Rust
         shell: bash
