@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches: [build-sonora]
-    paths: [.github/workflows/sonora-windows.yml]
+    paths: [.github/workflows/sonora-windows.yml, .github/sonora/**]
 
 env:
   SONORA_COMMIT: 1632d47c1e77d0857f9145bd175134b348541e11
@@ -15,6 +15,10 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+
       - name: Fetch Sonora
         shell: bash
         run: |
@@ -24,6 +28,15 @@ jobs:
           git fetch --depth 1 origin "$SONORA_COMMIT"
           git checkout FETCH_HEAD
           git submodule update --init --depth 1 || true
+
+      # Amanu's patch adds wap_create_with_aec3_tuning, which sets AEC3's
+      # suppressor and filter knobs from a text list and can hand out the
+      # linear filter's output, because the C API exposes neither and the
+      # default suppressor cuts the near voice by about 20 dB in double talk.
+      - name: Apply Amanu's AEC3 tuning patch
+        shell: bash
+        working-directory: sonora
+        run: git apply --whitespace=nowarn "$GITHUB_WORKSPACE/.github/sonora/amanu-aec3-tuning.patch"
 
       - name: Install Rust
         shell: bash
