@@ -1,0 +1,61 @@
+# Builds Sonora's C API (a Rust port of WebRTC AEC3) as a Windows DLL, because
+# the PC this fork is built on has no compiler and Sonora ships no binaries.
+name: sonora-windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [build-sonora]
+    paths: [.github/workflows/sonora-windows.yml]
+
+env:
+  SONORA_COMMIT: 1632d47c1e77d0857f9145bd175134b348541e11
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Fetch Sonora
+        shell: bash
+        run: |
+          git init sonora
+          cd sonora
+          git remote add origin https://github.com/dignifiedquire/sonora.git
+          git fetch --depth 1 origin "$SONORA_COMMIT"
+          git checkout FETCH_HEAD
+          git submodule update --init --depth 1 || true
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Build the DLL
+        shell: bash
+        working-directory: sonora
+        # The crate only declares staticlib and rlib; ask for a cdylib here
+        # instead of patching it. A static CRT keeps the DLL free of the
+        # Visual C++ redistributable.
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo rustc -p sonora-ffi --release --crate-type cdylib
+          mkdir -p ../out
+          cp target/release/sonora_ffi.dll ../out/
+          cp crates/sonora-ffi/include/wap_audio_processing.h ../out/
+          cp LICENSE ../out/sonora-LICENSE.txt
+          sha256sum ../out/*
+
+      - name: Check imports
+        shell: pwsh
+        run: |
+          $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue | Where-Object FullName -like '*Hostx64\x64*' | Select-Object -First 1
+          & $dumpbin.FullName /dependents out\sonora_ffi.dll
+          & $dumpbin.FullName /exports out\sonora_ffi.dll | Select-String 'wap_'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonora-ffi-windows-x64
+          path: out/*
