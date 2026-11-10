@@ -22,6 +22,7 @@ jobs:
   build:
     runs-on: windows-2022
     strategy:
+      fail-fast: false
       matrix:
         include:
           - flavour: legacy
@@ -83,12 +84,18 @@ jobs:
       - name: Check imports and print the hash
         run: |
           objdump -p "out/liblocalvqe-${{ matrix.flavour }}.dll" | grep "DLL Name"
-          if objdump -p "out/liblocalvqe-${{ matrix.flavour }}.dll" | grep "DLL Name" | grep -viE "kernel32|advapi32|msvcrt"; then
+          if objdump -p "out/liblocalvqe-${{ matrix.flavour }}.dll" | grep "DLL Name" | grep -viE "kernel32|advapi32|msvcrt|libgomp-1"; then
             echo "unexpected import"; exit 1
+          fi
+          # The OpenMP flavours need libgomp beside them; ship what it imports too.
+          if objdump -p "out/liblocalvqe-${{ matrix.flavour }}.dll" | grep -q "libgomp-1"; then
+            cp /mingw64/bin/libgomp-1.dll out/
+            objdump -p /mingw64/bin/libgomp-1.dll | grep "DLL Name"
+            for dep in $(objdump -p /mingw64/bin/libgomp-1.dll | grep "DLL Name" | awk '{print $3}' | grep -i "^lib"); do cp "/mingw64/bin/$dep" out/; done
           fi
           sha256sum out/*.dll
 
       - uses: actions/upload-artifact@v4
         with:
           name: liblocalvqe-${{ matrix.flavour }}
-          path: out/liblocalvqe-${{ matrix.flavour }}.dll
+          path: out/*.dll
