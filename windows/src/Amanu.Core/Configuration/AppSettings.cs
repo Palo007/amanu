@@ -47,6 +47,15 @@ public sealed class AppSettings
     public bool OfflineEchoCancellation { get; set; } = true;
 
     /// <summary>
+    /// <c>fast</c>: LocalVQE's adaptive filter alone, about twice as fast. <c>thorough</c>:
+    /// the filter and a neural mask, for rooms whose echo is heavily reverberant.
+    /// </summary>
+    [JsonPropertyName("echo_model")]
+    public string EchoModel { get; set; } = "fast";
+
+    public static readonly IReadOnlyList<string> EchoModels = ["fast", "thorough"];
+
+    /// <summary>
     /// Keeps the echo-cleaned mic and its aligned call track in the session, so
     /// "Transcribe again" hears the same cleaned audio instead of running
     /// LocalVQE once more. Echo removal does not depend on the engine, the

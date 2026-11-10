@@ -48,10 +48,11 @@ public static class OfflineEchoAudio
         }
     }
 
-    public static Result Prepare(SessionAudio audio, Func<int?, IEchoCancellationBackend> backendFactory, CancellationToken cancellationToken)
+    /// <param name="model">The model the backend runs; it names the work folder, so two models never share one. Null is the default model.</param>
+    public static Result Prepare(SessionAudio audio, Func<int?, IEchoCancellationBackend> backendFactory, CancellationToken cancellationToken, LocalVqeModel? model = null)
     {
         if (!audio.BothSides) throw new InvalidOperationException("Echo cancellation needs both the mic and the system track.");
-        var work = WorkDirectory(audio);
+        var work = WorkDirectory(audio, model);
         var info = IODirectory.CreateDirectory(work);
         info.Attributes |= FileAttributes.Hidden;
         RemoveAudio(work);
@@ -177,14 +178,15 @@ public static class OfflineEchoAudio
     /// The session's hidden folder for this processor and these exact sources.
     /// A changed track, offset or processor revision is a different folder.
     /// </summary>
-    public static string WorkDirectory(SessionAudio audio)
+    public static string WorkDirectory(SessionAudio audio, LocalVqeModel? model = null)
     {
+        model ??= LocalVqeAssets.Default;
         var sources = string.Join('\n', new[] { (audio.Microphone!, audio.MicrophoneOffsetMs), (audio.System!, audio.SystemOffsetMs) }.Select(source =>
         {
             var file = new FileInfo(source.Item1);
             return $"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}|{source.Item2}";
         }));
-        var identity = $"{LocalVqeAssets.ProcessorVersion}\n{LocalVqeAssets.ModelSha256}\n{sources}";
+        var identity = $"{model.ProcessorVersion}\n{model.Sha256}\n{sources}";
         var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
         return Path.Combine(audio.Directory, $"{FolderPrefix}{digest[..20]}");
     }
@@ -258,16 +260,17 @@ public static class OfflineEchoAudio
     /// then, or null when there is none or it was made by another LocalVQE
     /// revision or model — those would clean the mic differently.
     /// </summary>
-    public static (Result Audio, EchoCancellationRecord Echo)? TryReuse(string sessionDirectory)
+    public static (Result Audio, EchoCancellationRecord Echo)? TryReuse(string sessionDirectory, LocalVqeModel? model = null)
     {
+        model ??= LocalVqeAssets.Default;
         var kept = Path.Combine(sessionDirectory, KeptFolder);
         try
         {
             var manifest = Path.Combine(kept, KeptManifest);
             if (!File.Exists(manifest)) return null;
             var data = JsonSerializer.Deserialize<KeptManifestData>(File.ReadAllText(manifest));
-            if (data is null || data.Echo.Processor != LocalVqeAssets.ProcessorVersion) return null;
-            if (data.ModelRan && data.Echo.ModelSha256 != LocalVqeAssets.ModelSha256) return null;
+            if (data is null || data.Echo.Processor != model.ProcessorVersion) return null;
+            if (data.ModelRan && data.Echo.ModelSha256 != model.Sha256) return null;
             var result = new Result(kept, Path.Combine(kept, "mic.wav"), Path.Combine(kept, "system.wav"), data.OffsetMs, data.Frames, data.ModelRan) { Kept = true };
             foreach (var path in new[] { result.Microphone, result.System })
             {

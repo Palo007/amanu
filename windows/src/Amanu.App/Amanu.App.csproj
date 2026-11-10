@@ -24,6 +24,7 @@
     <!-- Offline echo cancellation: LocalVQE, CPU-only, loaded by full path from echo-runtime\ (see native/localvqe/README.md). -->
     <Content Include="../../native/localvqe/liblocalvqe.dll" Link="echo-runtime/liblocalvqe.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../native/localvqe/localvqe-v1.4-aec-200K-f32.gguf" Link="echo-runtime/localvqe-v1.4-aec-200K-f32.gguf" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../native/localvqe/localvqe-v1.4-aec-2.7K-f32.gguf" Link="echo-runtime/localvqe-v1.4-aec-2.7K-f32.gguf" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../Licenses/LocalVQE.txt" Link="Licenses/LocalVQE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../Licenses/ggml.txt" Link="Licenses/ggml.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- WinForms is here for the tray icon alone; its names must not shadow WPF's. -->

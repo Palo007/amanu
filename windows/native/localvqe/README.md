@@ -1,7 +1,7 @@
 # LocalVQE for Windows (offline echo cancellation)
 
-`liblocalvqe.dll` and `localvqe-v1.4-aec-200K-f32.gguf` are build assets, not
-runtime downloads. `Amanu.App.csproj` copies both to `echo-runtime\` beside
+`liblocalvqe.dll` and the two models are build assets, not
+runtime downloads. `Amanu.App.csproj` copies them to `echo-runtime\` beside
 `Amanu.exe` on build and publish; the app loads the DLL by full path
 (`NativeLibrary.Load`), so it never meets the different `ggml.dll` in
 `local-runtime\`. Behaviour contract: `docs/specs/2026-09-06-offline-echo.md`.
@@ -10,12 +10,21 @@ runtime downloads. `Amanu.App.csproj` copies both to `echo-runtime\` beside
 | --- | --- |
 | LocalVQE | `f53063c9eb2a85f96479867d1dd911dc3bf6319b` (same as macOS) |
 | ggml (vendored submodule) | `c044a8eeae2591faa0950c8b5e514cbc4bbfc4ca` |
-| Model SHA-256 | `b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731` (2,924,224 bytes) |
+| `fast` model (default), `localvqe-v1.4-aec-2.7K-f32.gguf` SHA-256 | `d79f824f6ee6f58b2a7108d1df90db51c42c15a7400a5addbd3be9972ba657a4` (16,864 bytes) |
+| `thorough` model, `localvqe-v1.4-aec-200K-f32.gguf` SHA-256 | `b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731` (2,924,224 bytes) |
 | DLL SHA-256 | `6b4aafd6003d213f7b0c14ace3a74fd32cf38e5e50345112e6ff87258c1240d8` |
 
 The DLL is x86-64, CPU-only (SSE4.2 baseline, no BLAS, no OpenMP), built with
 MinGW GCC and linked statically: it imports only KERNEL32, ADVAPI32 and
 msvcrt. The model is checked against its SHA-256 every time it is loaded.
+The `echo_model` setting picks the model. The 2.7K one is the adaptive filter
+without the neural mask: on two real calls it removed echo 2.2 times faster
+than the 200K one with the same word errors within three words. Both come from
+https://huggingface.co/LocalAI-io/LocalVQE.
+
+AVX2 and OpenMP builds of the DLL were measured on 2026-11-10 (workflow on the
+`build-localvqe` branch): AVX2 gave bit-identical output at the same 2.3 ms per
+hop, and OpenMP was eight times slower, so the SSE4.2 build stays.
 Licenses: `windows/Licenses/LocalVQE.txt` (Apache-2.0) and
 `windows/Licenses/ggml.txt` (MIT).
 

@@ -319,6 +319,16 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void The_fast_echo_model_is_the_default_and_the_setting_picks_the_other()
+    {
+        Assert.Equal("fast", new AppSettings().EchoModel);
+        Assert.Same(LocalVqeAssets.Fast, LocalVqeAssets.For(new AppSettings().EchoModel));
+        Assert.Same(LocalVqeAssets.Thorough, LocalVqeAssets.For(JsonSerializer.Deserialize<AppSettings>("""{"echo_model": "thorough"}""")!.EchoModel));
+        Assert.Same(LocalVqeAssets.Fast, LocalVqeAssets.For("nonsense"));
+        Assert.Equal(AppSettings.EchoModels, LocalVqeAssets.Models.Select(model => model.Key));
+    }
+
+    [Fact]
     public void A_wrong_model_fails_its_checksum_before_any_native_call()
     {
         var model = Path.Combine(Path.GetTempPath(), $"amanu-echo-{Guid.NewGuid():N}.gguf");
@@ -349,8 +359,16 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
         }
     }
 
-    [LocalVqeFact]
-    public void LocalVQE_removes_far_end_echo_and_keeps_near_end_speech()
+    /// <summary>Like <see cref="LocalVqeFactAttribute"/>, for a test run once per model.</summary>
+    public sealed class LocalVqeTheoryAttribute : TheoryAttribute
+    {
+        public LocalVqeTheoryAttribute() => Skip = new LocalVqeFactAttribute().Skip;
+    }
+
+    [LocalVqeTheory]
+    [InlineData("fast")]
+    [InlineData("thorough")]
+    public void LocalVQE_removes_far_end_echo_and_keeps_near_end_speech(string key)
     {
         const int rate = 16_000;
         var frames = 14 * rate;
@@ -370,7 +388,7 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
             mic[index] += (float)(0.08 * Math.Sin(2 * Math.PI * 200 * t) + 0.04 * Math.Sin(2 * Math.PI * 400 * t) + 0.02 * Math.Sin(2 * Math.PI * 600 * t));
         }
 
-        var assets = LocalVqeAssets.Resolve();
+        var assets = LocalVqeAssets.Resolve(model: LocalVqeAssets.For(key));
         var timer = Stopwatch.StartNew();
         var (cleaned, system) = Run(mic, reference, new LocalVqeBackend(assets.Library, assets.Model), out var prime);
         timer.Stop();
@@ -403,7 +421,7 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
         Directory.CreateDirectory(folder);
         try
         {
-            var model = Path.Combine(folder, LocalVqeAssets.ModelName);
+            var model = Path.Combine(folder, LocalVqeAssets.Default.FileName);
             File.Copy(assets.Model, model);
             using var backend = new LocalVqeBackend(assets.Library, model);
             Assert.Equal(256, backend.HopSize);

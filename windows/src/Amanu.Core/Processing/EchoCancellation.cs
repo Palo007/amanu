@@ -9,24 +9,45 @@ namespace Amanu.Core.Processing;
 /// <c>echo-runtime\</c> beside the app, never downloaded at run time. Kept
 /// apart from <c>local-runtime\</c>, whose ggml is a different build.
 /// </summary>
+/// <param name="ProcessorVersion">
+/// The audio path's revision with this model: changing it changes the .echo-* cache
+/// folder's name. v3 is macOS's; v4 adds the whole-signal delay prime.
+/// </param>
+public sealed record LocalVqeModel(string Key, string FileName, string Sha256, string ProcessorVersion);
+
 public static class LocalVqeAssets
 {
     public const string RuntimeFolder = "echo-runtime";
     public const string LibraryName = "liblocalvqe.dll";
-    public const string ModelName = "localvqe-v1.4-aec-200K-f32.gguf";
-    public const string ModelSha256 = "b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731";
+
     /// <summary>
-    /// The audio path's revision: changing it changes this name, and with it the
-    /// .echo-* cache folder. v3 is macOS's; v4 adds the whole-signal delay prime.
+    /// The adaptive filter alone, without the neural mask. It removed echo 2.2 times
+    /// faster than the 200K model on two real calls (65 s against 145 s, 78 s against
+    /// 169 s) with the same word errors within three words, so it is the default.
     /// </summary>
-    public const string ProcessorVersion = "localvqe-v1.4-aec-200k-f32-amanu-v4-delay-prime";
+    public static readonly LocalVqeModel Fast = new("fast", "localvqe-v1.4-aec-2.7K-f32.gguf",
+        "d79f824f6ee6f58b2a7108d1df90db51c42c15a7400a5addbd3be9972ba657a4",
+        "localvqe-v1.4-aec-2.7k-f32-amanu-v4-delay-prime");
+
+    /// <summary>The same filter followed by a small neural mask, which also removes heavily reverberant echo.</summary>
+    public static readonly LocalVqeModel Thorough = new("thorough", "localvqe-v1.4-aec-200K-f32.gguf",
+        "b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731",
+        "localvqe-v1.4-aec-200k-f32-amanu-v4-delay-prime");
+
+    public static readonly IReadOnlyList<LocalVqeModel> Models = [Fast, Thorough];
+
+    public static LocalVqeModel Default => Fast;
+
+    /// <summary>The model the echo_model setting names; an unknown name gets the default rather than no echo removal.</summary>
+    public static LocalVqeModel For(string? key) =>
+        Models.FirstOrDefault(model => string.Equals(model.Key, key, StringComparison.OrdinalIgnoreCase)) ?? Default;
 
     public sealed record Paths(string Library, string Model);
 
-    public static Paths Resolve(string? applicationDirectory = null)
+    public static Paths Resolve(string? applicationDirectory = null, LocalVqeModel? model = null)
     {
         var root = Path.Combine(applicationDirectory ?? AppContext.BaseDirectory, RuntimeFolder);
-        var paths = new Paths(Path.Combine(root, LibraryName), Path.Combine(root, ModelName));
+        var paths = new Paths(Path.Combine(root, LibraryName), Path.Combine(root, (model ?? Default).FileName));
         foreach (var path in new[] { paths.Library, paths.Model })
             if (!File.Exists(path)) throw new EchoCancellationException($"LocalVQE asset is missing: {path}");
         return paths;
@@ -110,7 +131,8 @@ public sealed unsafe class LocalVqeBackend : IEchoCancellationBackend, IEchoDela
     /// <param name="threads">Compute threads of this context; null keeps the library default.</param>
     public LocalVqeBackend(string libraryPath, string modelPath, int? threads = null)
     {
-        if (LocalVqeAssets.Sha256(modelPath) != LocalVqeAssets.ModelSha256)
+        var digest = LocalVqeAssets.Sha256(modelPath);
+        if (!LocalVqeAssets.Models.Any(model => model.Sha256 == digest))
             throw new EchoCancellationException($"LocalVQE model failed its SHA-256 check: {modelPath}");
         try { library = LoadOnce(libraryPath); }
         catch (Exception exception) when (exception is DllNotFoundException or BadImageFormatException)
@@ -263,7 +285,7 @@ public sealed unsafe class LocalVqeBackend : IEchoCancellationBackend, IEchoDela
                 Directory.CreateDirectory(folder);
                 var copy = Path.Combine(folder, $"localvqe-{Guid.NewGuid():N}.gguf");
                 File.Copy(full, copy);
-                if (LocalVqeAssets.Sha256(copy) != LocalVqeAssets.ModelSha256)
+                if (LocalVqeAssets.Sha256(copy) != LocalVqeAssets.Sha256(full))
                 {
                     TryDelete(copy);
                     continue;

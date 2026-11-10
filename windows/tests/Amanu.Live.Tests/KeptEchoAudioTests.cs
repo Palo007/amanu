@@ -31,8 +31,8 @@ public sealed class KeptEchoAudioTests
         var audio = new SessionAudio(directory, "t", Tone(Path.Combine(directory, "mic.wav"), 1.2, 300),
             Tone(Path.Combine(directory, "system.wav"), 1.0, 440), null, 20, 0);
         var prepared = OfflineEchoAudio.Prepare(audio, _ => new PassBackend(), CancellationToken.None);
-        var echo = new EchoCancellationRecord(LocalVqeAssets.ProcessorVersion,
-            prepared.ModelRan ? LocalVqeAssets.ModelSha256 : null, EchoCanceller.SampleRate, prepared.Frames, Mode: "localvqe");
+        var echo = new EchoCancellationRecord(LocalVqeAssets.Default.ProcessorVersion,
+            prepared.ModelRan ? LocalVqeAssets.Default.Sha256 : null, EchoCanceller.SampleRate, prepared.Frames, Mode: "localvqe");
         var kept = OfflineEchoAudio.Keep(prepared, directory, echo, CancellationToken.None);
         Assert.False(Directory.Exists(prepared.Directory));
         return (directory, kept, echo);
@@ -89,8 +89,20 @@ public sealed class KeptEchoAudioTests
         try
         {
             var manifest = Path.Combine(kept.Directory, "kept.json");
-            File.WriteAllText(manifest, File.ReadAllText(manifest).Replace(LocalVqeAssets.ProcessorVersion, "older-revision"));
+            File.WriteAllText(manifest, File.ReadAllText(manifest).Replace(LocalVqeAssets.Default.ProcessorVersion, "older-revision"));
             Assert.Null(OfflineEchoAudio.TryReuse(directory));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public void Audio_kept_by_the_other_echo_model_is_not_reused()
+    {
+        var (directory, _, _) = KeepOne();
+        try
+        {
+            Assert.NotNull(OfflineEchoAudio.TryReuse(directory, LocalVqeAssets.Fast));
+            Assert.Null(OfflineEchoAudio.TryReuse(directory, LocalVqeAssets.Thorough));
         }
         finally { Directory.Delete(directory, recursive: true); }
     }

@@ -625,7 +625,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             return (audio, null);
         }
         var echo = Stopwatch.StartNew();
-        var cleaned = await CancelEchoAsync(directory, audio, overlap, keep, cancellationToken).ConfigureAwait(false);
+        var cleaned = await CancelEchoAsync(directory, audio, LocalVqeAssets.For(current.EchoModel), overlap, keep, cancellationToken).ConfigureAwait(false);
         LogTiming(directory, "echo", echo.Elapsed, cleaned is null ? "skipped" : null);
         if (cleaned is null) return (audio, null);
         return (audio with
@@ -717,19 +717,19 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// processing.json say what was skipped and why. Shares the CPU with local
     /// recognition, so live transcription preempts it like a batch pass.
     /// </summary>
-    private async Task<OfflineEchoAudio.Result?> CancelEchoAsync(string directory, SessionAudio audio, SystemOverlap? overlap, bool keep, CancellationToken cancellationToken)
+    private async Task<OfflineEchoAudio.Result?> CancelEchoAsync(string directory, SessionAudio audio, LocalVqeModel model, SystemOverlap? overlap, bool keep, CancellationToken cancellationToken)
     {
         var log = Path.Combine(directory, "transcribe.log");
         // Echo removal hears only the two tracks, so a copy kept from an earlier
         // pass is what a fresh run would make; the call track then waits for
         // recognition as usual, since there is no echo removal to overlap.
-        if (keep && OfflineEchoAudio.TryReuse(directory) is { } reused)
+        if (keep && OfflineEchoAudio.TryReuse(directory, model) is { } reused)
         {
             await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} reusing the echo-cleaned audio kept from an earlier pass; echo removal skipped{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
             WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = reused.Echo });
             return reused.Audio;
         }
-        await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} removing acoustic echo from a microphone copy before transcription{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+        await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} removing acoustic echo from a microphone copy before transcription ({model.Key} model, {model.FileName}){Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var timer = Stopwatch.StartNew();
         OfflineEchoAudio.Result prepared;
         try
@@ -743,9 +743,9 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                 {
                     prepared = await Task.Run(() => OfflineEchoAudio.Prepare(audio, threads =>
                     {
-                        var assets = LocalVqeAssets.Resolve();
+                        var assets = LocalVqeAssets.Resolve(model: model);
                         return new LocalVqeBackend(assets.Library, assets.Model, threads);
-                    }, cpu.Token), cpu.Token).ConfigureAwait(false);
+                    }, cpu.Token, model), cpu.Token).ConfigureAwait(false);
                     break;
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -769,13 +769,13 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo cancellation skipped — {exception.Message}; transcribing the tracks as recorded{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
             WriteLedger(directory, ReadLedger(directory) with
             {
-                AudioEchoCancellation = new EchoCancellationRecord(LocalVqeAssets.ProcessorVersion, Skipped: exception.Message),
+                AudioEchoCancellation = new EchoCancellationRecord(model.ProcessorVersion, Skipped: exception.Message),
             });
             return null;
         }
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo stages: {prepared.Timings}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
-        var echoRecord = new EchoCancellationRecord(LocalVqeAssets.ProcessorVersion,
-            prepared.ModelRan ? LocalVqeAssets.ModelSha256 : null, EchoCanceller.SampleRate, prepared.Frames,
+        var echoRecord = new EchoCancellationRecord(model.ProcessorVersion,
+            prepared.ModelRan ? model.Sha256 : null, EchoCanceller.SampleRate, prepared.Frames,
             Mode: prepared.ModelRan ? "localvqe" : "silent_reference_passthrough",
             DelayPrime: prepared.DelayPrime?.Describe());
         WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = echoRecord });
