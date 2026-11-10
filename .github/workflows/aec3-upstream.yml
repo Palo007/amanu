@@ -1,0 +1,69 @@
+# Runs the C++ WebRTC audio processing module that Sonora was ported from (the
+# M145 tree in Sonora's cpp submodule) on public AEC Challenge clips and on the
+# quality suite's computed rooms, so its echo removal can be compared with
+# Sonora's on the same input. Uploads the inputs and the C++ outputs.
+name: aec3-upstream
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [build-sonora]
+    paths: [.github/workflows/aec3-upstream.yml, .github/sonora/upstream/**]
+
+env:
+  SONORA_COMMIT: 1632d47c1e77d0857f9145bd175134b348541e11
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+
+      - name: Fetch Sonora and its C++ reference
+        run: |
+          git init sonora
+          cd sonora
+          git remote add origin https://github.com/dignifiedquire/sonora.git
+          git fetch --depth 1 origin "$SONORA_COMMIT"
+          git checkout FETCH_HEAD
+          git submodule update --init --depth 1 cpp
+          git -C cpp log --oneline -1
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config python3-numpy python3-scipy python3-soundfile
+
+      - name: Build the C++ reference with the file runner
+        working-directory: sonora/cpp
+        run: |
+          cp "$GITHUB_WORKSPACE/.github/sonora/upstream/aec3_file.cpp" examples/
+          printf "\nexecutable('aec3-file', 'aec3_file.cpp', include_directories: top_incdir, dependencies: [audio_processing_dep, absl_dep])\n" >> examples/meson.build
+          meson setup builddir --buildtype=release -Dtests=disabled
+          ninja -C builddir examples/aec3-file
+
+      - name: Make the inputs
+        run: python3 .github/sonora/upstream/make_inputs.py inputs
+
+      - name: Run the C++ AEC3
+        run: |
+          mkdir -p outputs
+          for mic in inputs/*.mic.f32; do
+            name=$(basename "$mic" .mic.f32)
+            far="inputs/$name.far.f32"
+            sonora/cpp/builddir/examples/aec3-file "$far" "$mic" "outputs/$name.default.f32" "outputs/$name.default.txt"
+            delay=$(python3 -c "import json;print(json.load(open('inputs/meta.json'))['$name'].get('latency_ms', -1))")
+            if [ "$delay" != "-1" ]; then
+              sonora/cpp/builddir/examples/aec3-file "$far" "$mic" "outputs/$name.ext256.f32" "outputs/$name.ext256.txt" 64 "$delay"
+            fi
+          done
+          ls outputs | wc -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aec3-upstream
+          path: |
+            inputs/*
+            outputs/*
