@@ -25,10 +25,18 @@ jobs:
       matrix:
         include:
           - flavour: legacy
-            ggml: -DGGML_SSE42=ON
+            ggml: -DGGML_SSE42=ON -DGGML_OPENMP=OFF
             cflags: ""
           - flavour: avx2
-            ggml: -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON
+            ggml: -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON -DGGML_OPENMP=OFF
+            cflags: -march=haswell -mtune=generic
+          # OpenMP keeps ggml's worker threads alive between hops; without it
+          # ggml starts and joins its threads for every 16 ms hop.
+          - flavour: legacy-omp
+            ggml: -DGGML_SSE42=ON -DGGML_OPENMP=ON
+            cflags: ""
+          - flavour: avx2-omp
+            ggml: -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON -DGGML_OPENMP=ON
             cflags: -march=haswell -mtune=generic
     defaults:
       run:
@@ -62,10 +70,10 @@ jobs:
         working-directory: LocalVQE
         run: |
           cmake -S ggml -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DLOCALVQE_BUILD_SHARED=ON -DGGML_NATIVE=OFF -DGGML_BLAS=OFF -DGGML_OPENMP=OFF \
+            -DLOCALVQE_BUILD_SHARED=ON -DGGML_NATIVE=OFF -DGGML_BLAS=OFF \
             ${{ matrix.ggml }} \
             -DCMAKE_C_FLAGS="${{ matrix.cflags }}" -DCMAKE_CXX_FLAGS="${{ matrix.cflags }}" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
+            -DCMAKE_SHARED_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" -DOpenMP_RUNTIME_MSVC=OFF
           cmake --build build --config Release --target localvqe_shared -j
           mkdir -p ../out
           cp build/liblocalvqe.dll "../out/liblocalvqe-${{ matrix.flavour }}.dll"
