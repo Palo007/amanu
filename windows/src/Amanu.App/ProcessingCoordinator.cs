@@ -471,9 +471,15 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             // No number until the engine reports one: a cloud engine or a one-call
             // model never does, and its bar only shows that work goes on.
             Publish(directory, "transcribing", T("Transcribing…", "Расшифровываю…"), true);
+            double? reached = null;
             var transcript = await RunPlanAsync(plan, heard, directory, current, cancellationToken, cleaned is null ? null : overlap?.Result,
-                share => PublishProgress(directory, "transcribing",
-                    T($"Transcribing… {share:P0}", $"Расшифровываю… {share:P0}"), PassProgress.Recognition(start, share))).ConfigureAwait(false);
+                share =>
+                {
+                    reached = PassProgress.Recognition(start, share);
+                    PublishProgress(directory, "transcribing", T($"Transcribing… {share:P0}", $"Расшифровываю… {share:P0}"), reached.Value);
+                },
+                // A cloud engine's news replaces the line but keeps the bar where it was.
+                news => PublishProgress(directory, "transcribing", news, reached ?? start)).ConfigureAwait(false);
             LogTiming(directory, "asr", recognition.Elapsed);
             transcript = ApplyCustomWords(directory, transcript, current);
             cleaned?.Delete();
@@ -795,13 +801,25 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// the cloud could not be reached or was busy — for this session alone.
     /// </summary>
     private async Task<TranscriptDocument> RunPlanAsync(EnginePlan plan, SessionAudio audio, string directory, AppSettings current, CancellationToken cancellationToken,
-        IReadOnlyList<TranscriptSegment>? system = null, Action<double>? progress = null)
+        IReadOnlyList<TranscriptSegment>? system = null, Action<double>? progress = null, Action<string>? news = null)
     {
         if (plan.Cloud is { } cloud)
         {
             try
             {
-                var done = await CreateCloud(cloud, current, cache: true).TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
+                var engine = CreateCloud(cloud, current, cache: true);
+                if (engine is GeminiTranscriptionEngine gemini)
+                {
+                    var log = Path.Combine(directory, "transcribe.log");
+                    gemini.Progress = progress;
+                    gemini.Note = (line, shown) =>
+                    {
+                        try { File.AppendAllText(log, $"{DateTimeOffset.UtcNow:O} {line}{Environment.NewLine}"); }
+                        catch (IOException) { }
+                        news?.Invoke(shown);
+                    };
+                }
+                var done = await engine.TranscribeAsync(audio, cancellationToken).ConfigureAwait(false);
                 // Gemini may have been answered by its fallback model, and the transcript's quality depends on which; the log says so.
                 if (cloud == "gemini")
                     await File.AppendAllTextAsync(Path.Combine(directory, "transcribe.log"),
