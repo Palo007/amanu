@@ -24,7 +24,7 @@ breaks each time Google changes the page.
 | 4 | Diarization (split the call side by voice) | M | A: Speakers | Parked: built, off by default |
 | 5 | Stricter speaker-name checks | M | A: Speakers | Skipped for now: with step 4 off, only engines that label voices (AssemblyAI, later Gemini) need it |
 | 6 | Gemini: measure transcription (and summary) | M | C: Engines | Measured; decision: yes, as an option (step 6b) |
-| 6b | Gemini as an optional engine | L | C: Engines | Built and tested; the measurement inside the app waits for Gemini quota |
+| 6b | Gemini as an optional engine | L | C: Engines | Done; several keys, model order, Gemini Live captions |
 | 7 | Slovak Whisper (`whisper-sk`): measure | M | C: Engines | Measured; not better (higher WER, 4 times slower) |
 | 8 | Slovak Canary (`canary-sk`): research, measure | L | C: Engines | Measured; not better (higher WER, a little slower) |
 | 9 | Settings screen for more engines | M | D: Settings | Not started |
@@ -467,7 +467,8 @@ How it was measured:
 - Echo lines: almost none, because the audio was echo-cleaned first.
 - Summary: one summary of `2026.11.09-1001` with `gemini-3.8-flash` and the
   app's own `summary.template` (without the people list), next to the app's
-  current summary. Which one I chose: _open_.
+  current summary. Which one I chose: **the current one** (2026-11-10); the
+  summary stays as it is.
 - The free API tier lets Google use what is sent. Recordings sent: the first
   10 minutes of both tracks of `2026.11.06-1021` and `2026.11.06-1000`, and the
   transcript of `2026.11.09-1001`.
@@ -493,7 +494,8 @@ Facts from step 6 that the wiring needs:
   a safety net; with LocalVQE first, step 6 found 0-1 per recording.
 - [x] A request can take up to about 6 minutes. Do not time out sooner, and
   show progress.
-- [ ] Measure once in the app against the step 6 numbers (28.9 % / 39.1 %).
+- [x] ~~Measure once in the app against the step 6 numbers (28.9 % / 39.1 %).~~
+  Dropped (2026-11-10): not needed.
 
 Built (2026-11-09), commits `1e337c4` to the one with the cut-off fix:
 
@@ -515,6 +517,21 @@ Built (2026-11-09), commits `1e337c4` to the one with the cut-off fix:
   (`.cache-<provider>-*.json`, and AssemblyAI's job file) was written there and
   deleted with it; after a failure all audio was sent again. `SessionAudio`
   now has `CacheDirectory`, which stays the recording folder.
+
+Added (2026-11-10):
+
+- Up to nine Gemini keys (`Amanu/gemini`, `Amanu/gemini-2` … `gemini-9`). On
+  HTTP 429 the engine moves to the next key (`GeminiKeyRing`).
+- Setup picks up to three models in order, from the list Google gives the key
+  today (`transcription.gemini.models`).
+- Each request stops after 7 minutes and the next model is asked. Progress
+  moves after each piece, every ask, wait and answer is a line in
+  `transcribe.log`, and a "What is happening" fold-out under the progress bars
+  shows the end of that log.
+- Live transcript engine `gemini` (`live_transcription.engine`): each track
+  streams to `gemini-3.5-transcribe-live` over a WebSocket, a new session every
+  9 minutes. Captions know only "me" and "them". The final lines are kept in
+  `live-transcript.md` in the recording folder.
 
 
 ## Step 7: Slovak Whisper — measure only (size: M, session C)

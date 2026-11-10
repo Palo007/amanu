@@ -917,11 +917,11 @@ public sealed class GeminiTranscriptionEngine(
     public Action<string, string>? Note { get; set; }
 
     /// <summary>
-    /// The longest one request may take. The shared client allows 30 minutes, made for long uploads;
-    /// a five-minute piece answers in well under a minute when the model is well, so a request still
-    /// open after this is stuck, and the next model is asked instead.
+    /// The longest one request may take. The shared client allows 30 minutes, made for long uploads.
+    /// In step 6 of the roadmap a five-minute piece took 26 to 372 seconds on the free key, so a request
+    /// still open after seven minutes is taken as stuck, and the next model is asked instead.
     /// </summary>
-    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromMinutes(3);
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromMinutes(7);
 
     /// <summary>The status <see cref="SendAsync"/> gives a request that ran out of <see cref="RequestTimeout"/>.</summary>
     private const int TimedOut = 408;
