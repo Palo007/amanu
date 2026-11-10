@@ -1012,8 +1012,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         Publish(directory, "summary", T("Writing the summary…", "Пишу саммари…"), true, PassProgress.Summary);
         try
         {
-            var markdown = await File.ReadAllTextAsync(Path.Combine(directory, "transcript.md"), cancellationToken).ConfigureAwait(false);
-            var answer = await new SummaryService(languageModels, settings).GenerateAsync(directory, markdown, cancellationToken).ConfigureAwait(false);
+            var answer = await new SummaryService(languageModels, settings).GenerateAsync(directory, directory, cancellationToken).ConfigureAwait(false);
             File.Delete(Path.Combine(directory, "summary.deferred"));
             _ = analytics.RecordAsync("summary_finished", new Dictionary<string, object?>
             {
@@ -1058,9 +1057,8 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                 $"Пишу саммари через {SummaryVersions.BackendName(request.Backend)}…"), true, PassProgress.Summary);
             try
             {
-                var markdown = await File.ReadAllTextAsync(transcriptPath, cancellationToken).ConfigureAwait(false);
                 var (chosenModels, chosenSettings) = languageModels.WithSummaryBackend(request.Backend);
-                var answer = await new SummaryService(chosenModels, chosenSettings).GenerateAsync(target, markdown, cancellationToken).ConfigureAwait(false);
+                var answer = await new SummaryService(chosenModels, chosenSettings).GenerateAsync(target, directory, cancellationToken).ConfigureAwait(false);
                 _ = analytics.RecordAsync("summary_finished", new Dictionary<string, object?>
                 {
                     ["backend"] = answer.Backend, ["model"] = answer.Model,

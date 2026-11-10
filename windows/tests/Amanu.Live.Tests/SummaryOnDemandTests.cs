@@ -13,14 +13,55 @@ public sealed class SummaryOnDemandTests
     private sealed class FakeOllama : HttpMessageHandler
     {
         public Queue<string> Answers { get; } = new();
+        public List<string> Requests { get; } = [];
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(
                     System.Text.Json.JsonSerializer.Serialize(new { message = new { content = Answers.Dequeue() } }),
                     Encoding.UTF8, "application/json"),
-            });
+            };
+        }
+    }
+
+    [Theory]
+    [InlineData("transcript", true, false)]
+    [InlineData("live", false, true)]
+    [InlineData("both", true, true)]
+    public async Task The_summary_is_written_from_the_source_the_setting_names(string source, bool sendsFinal, bool sendsLive)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "amanu-summary-tests", Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(root, "meeting");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var settings = AppSettings.CreateDefault(root);
+            settings.Summary.Backend = "ollama";
+            settings.Summary.OllamaModel = "fake";
+            settings.Summary.Source = source;
+            settings.SpeakerNames.PeopleFile = Path.Combine(root, "no-people.txt");
+            await TranscriptWriter.WriteAsync(directory, "Test meeting",
+                new TranscriptDocument("assemblyai", "universal", DateTimeOffset.UtcNow, [new(0, 1000, "FinalWords", "A")]));
+            LiveTranscriptFile.Append(directory, 0, "me", "LiveWords", "Gemini Live (x)");
+
+            var ollama = new FakeOllama();
+            ollama.Answers.Enqueue("Summary");
+            using var http = new HttpClient(ollama);
+            await new SummaryService(new LanguageModels(http, new SecretStore(), () => settings), () => settings)
+                .GenerateAsync(directory, directory, CancellationToken.None);
+
+            var sent = Assert.Single(ollama.Requests);
+            Assert.Equal(sendsFinal, sent.Contains("FinalWords"));
+            Assert.Equal(sendsLive, sent.Contains("LiveWords"));
+            Assert.Equal(source == "both", sent.Contains("two transcripts of the same meeting"));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
@@ -46,8 +87,8 @@ public sealed class SummaryOnDemandTests
             ollama.Answers.Enqueue("Third summary");
             using var http = new HttpClient(ollama);
             var service = new SummaryService(new LanguageModels(http, new SecretStore(), () => settings), () => settings);
-            await service.GenerateAsync(directory, "Transcript", CancellationToken.None);
-            await service.GenerateAsync(directory, "Transcript", CancellationToken.None);
+            await service.GenerateAsync(directory, directory, CancellationToken.None);
+            await service.GenerateAsync(directory, directory, CancellationToken.None);
 
             var versions = await SummaryVersions.ReadAsync(directory);
             Assert.Equal(3, versions.Count);

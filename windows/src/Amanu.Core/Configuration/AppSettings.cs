@@ -295,6 +295,16 @@ public sealed class SummarySettings
     [JsonPropertyName("backend")]
     public string Backend { get; set; } = "auto";
 
+    /// <summary>
+    /// What the summary is written from: "transcript" is the final transcript,
+    /// "live" the live captions kept in live-transcript.md, "both" sends the two
+    /// together. A recording without live captions always uses the transcript.
+    /// </summary>
+    public static readonly IReadOnlyList<string> Sources = ["transcript", "live", "both"];
+
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = "transcript";
+
     [JsonPropertyName("language")]
     public string? Language { get; set; }
 
