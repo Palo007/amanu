@@ -39,6 +39,7 @@ internal sealed class RecordingsWindow : Window
     private readonly TabControl engineTabs = new() { Margin = new Thickness(0, 8, 0, 0), Visibility = Visibility.Collapsed };
     private readonly TextBlock processingStatus = Ui.Status("");
     private readonly ProgressBar processingBar = Ui.ProcessingBar();
+    private readonly ProcessingDetails processingDetails = new();
     private readonly StackPanel speakers = new() { Margin = new Thickness(12) };
     private readonly TextBlock empty = Ui.Detail("");
     private readonly System.Windows.Controls.Button finish;
@@ -162,6 +163,9 @@ internal sealed class RecordingsWindow : Window
         processingBar.HorizontalAlignment = HorizontalAlignment.Left;
         processingBar.Width = 360;
         statusPanel.Children.Add(processingBar);
+        processingDetails.View.MaxWidth = 560;
+        processingDetails.View.HorizontalAlignment = HorizontalAlignment.Left;
+        statusPanel.Children.Add(processingDetails.View);
         statusPanel.Children.Add(problem);
         Grid.SetRow(statusPanel, 1);
         detail.Children.Add(statusPanel);
@@ -200,6 +204,7 @@ internal sealed class RecordingsWindow : Window
             if (Selected is not { } row || !string.Equals(row.Item.Directory, status.SessionDirectory, StringComparison.OrdinalIgnoreCase)) return;
             if (status.IsBusy) processingStatus.Text = status.Message;
             Ui.ShowProgress(processingBar, status);
+            processingDetails.Show(status);
         });
         runtime.ProcessingStatusChanged += progressed;
         Closed += (_, _) =>
@@ -349,6 +354,7 @@ internal sealed class RecordingsWindow : Window
         problem.Visibility = item.Problem is null ? Visibility.Collapsed : Visibility.Visible;
         processingStatus.Text = row.Status is { IsBusy: true } status ? status.Message : row.TranscriptText;
         Ui.ShowProgress(processingBar, row.Status);
+        processingDetails.Show(row.Status);
         if (!item.HasAudio && !recording) processingStatus.Text += "\n" + noAudio;
         if (selectedTranscriptSession != item.Directory)
         {

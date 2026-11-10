@@ -907,6 +907,25 @@ public sealed class GeminiTranscriptionEngine(
     private readonly IReadOnlyList<string> order = GeminiTranscript.ModelOrder(models);
     private const int PieceSeconds = 300;
 
+    /// <summary>How far recognition is, 0 to 1, after each piece of either track.</summary>
+    public Action<double>? Progress { get; set; }
+
+    /// <summary>
+    /// What the engine is doing now: a line for the session's log, in English like the rest of it,
+    /// and the same news for the status line in the reader's language.
+    /// </summary>
+    public Action<string, string>? Note { get; set; }
+
+    /// <summary>
+    /// The longest one request may take. The shared client allows 30 minutes, made for long uploads;
+    /// a five-minute piece answers in well under a minute when the model is well, so a request still
+    /// open after this is stuck, and the next model is asked instead.
+    /// </summary>
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>The status <see cref="SendAsync"/> gives a request that ran out of <see cref="RequestTimeout"/>.</summary>
+    private const int TimedOut = 408;
+
     /// <summary>What a busy service is given before the next try: three tries, then the fallback model once.</summary>
     private static readonly TimeSpan[] DefaultBackoff = [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(45)];
 
@@ -925,8 +944,9 @@ public sealed class GeminiTranscriptionEngine(
         // The latest model in the order that answered any piece, and the name it gave.
         var weakest = -1;
         string? weakestAnswer = null;
-        foreach (var (path, side, offset) in tracks)
+        for (var trackIndex = 0; trackIndex < tracks.Length; trackIndex++)
         {
+            var (path, side, offset) = tracks[trackIndex];
             var work = Path.Combine(audio.Directory, $".gemini-{side}");
             try
             {
@@ -937,6 +957,8 @@ public sealed class GeminiTranscriptionEngine(
                 for (var index = 0; index < pieces.Count; index++)
                 {
                     var piece = pieces[index];
+                    var where = $"{side} piece {index + 1} of {pieces.Count}";
+                    var whereShown = T($"{side} piece {index + 1} of {pieces.Count}", $"{side}: часть {index + 1} из {pieces.Count}");
                     cancellationToken.ThrowIfCancellationRequested();
                     var length = new FileInfo(piece.Path).Length.ToString();
                     var number = index.ToString();
@@ -951,16 +973,19 @@ public sealed class GeminiTranscriptionEngine(
                         {
                             body = await File.ReadAllTextAsync(cached, cancellationToken).ConfigureAwait(false);
                             asked = m;
+                            Note?.Invoke($"gemini {where}: kept answer from {order[m]} reused",
+                                T($"Gemini: {whereShown}, answer kept from an earlier pass", $"Gemini: {whereShown}, ответ из прошлой попытки"));
                             break;
                         }
                     }
                     if (body is null)
                     {
                         var wavBytes = await File.ReadAllBytesAsync(piece.Path, cancellationToken).ConfigureAwait(false);
-                        (body, asked) = await AskAsync(GeminiTranscript.RequestBody(prompt, wavBytes), firstUsable, cancellationToken).ConfigureAwait(false);
+                        (body, asked) = await AskAsync(GeminiTranscript.RequestBody(prompt, wavBytes), firstUsable, where, whereShown, cancellationToken).ConfigureAwait(false);
                         firstUsable = asked;
                         if (CachePath(order[asked]) is { } cachePath) await AtomicFiles.WriteTextAsync(cachePath, body, cancellationToken).ConfigureAwait(false);
                     }
+                    Progress?.Invoke((trackIndex + (index + 1.0) / pieces.Count) / tracks.Length);
                     var (text, version) = GeminiTranscript.ReadResponse(body);
                     if (asked > weakest)
                     {
@@ -987,7 +1012,7 @@ public sealed class GeminiTranscriptionEngine(
     /// model is tried again after each back-off delay; every later one is asked once, since it is only
     /// reached when the one before it has given up.
     /// </summary>
-    private async Task<(string Body, int Model)> AskAsync(string requestBody, int start, CancellationToken cancellationToken)
+    private async Task<(string Body, int Model)> AskAsync(string requestBody, int start, string where, string whereShown, CancellationToken cancellationToken)
     {
         var delays = backoff ?? DefaultBackoff;
         ProcessingFailure? busy = null;
@@ -996,10 +1021,34 @@ public sealed class GeminiTranscriptionEngine(
             var model = order[m];
             for (var attempt = 0; ; attempt++)
             {
-                var (body, failure) = await keys.SendAsync(key => SendAsync(model, key, requestBody, cancellationToken)).ConfigureAwait(false);
-                if (body is not null) return (body, m);
+                Note?.Invoke($"gemini {where}: asking {model}" + (attempt > 0 ? $" (try {attempt + 1})" : ""),
+                    T($"Gemini: {whereShown}, asking {model}…", $"Gemini: {whereShown}, спрашиваю {model}…"));
+                var watch = Stopwatch.StartNew();
+                var status = 0;
+                var (body, failure) = await keys.SendAsync(async key =>
+                {
+                    var answer = await SendAsync(model, key, requestBody, cancellationToken).ConfigureAwait(false);
+                    status = answer.Status;
+                    return answer;
+                }).ConfigureAwait(false);
+                var took = $"{watch.Elapsed.TotalSeconds:0} s";
+                if (body is not null)
+                {
+                    Note?.Invoke($"gemini {where}: {model} answered in {took}",
+                        T($"Gemini: {whereShown} done by {model} in {took}", $"Gemini: {whereShown} готова, {model}, {took}"));
+                    return (body, m);
+                }
                 busy = failure;
-                if (m > 0 || attempt >= delays.Count) break;
+                var next = m + 1 < order.Count ? order[m + 1] : null;
+                // A stuck model is not asked again: three more tries would cost minutes each.
+                var retry = m == 0 && status != TimedOut && attempt < delays.Count;
+                var reason = status == TimedOut ? $"no answer after {took}" : $"busy (HTTP {status}) after {took}";
+                var reasonShown = status == TimedOut ? T($"no answer after {took}", $"нет ответа за {took}") : T($"busy (HTTP {status})", $"занята (HTTP {status})");
+                var then = retry ? $"trying again in {delays[attempt].TotalSeconds:0} s" : next is null ? "no model left" : $"trying {next}";
+                var thenShown = retry ? T($"trying again in {delays[attempt].TotalSeconds:0} s", $"повтор через {delays[attempt].TotalSeconds:0} с")
+                    : next is null ? T("no model left", "моделей больше нет") : T($"trying {next}", $"пробую {next}");
+                Note?.Invoke($"gemini {where}: {model} {reason}; {then}", T($"Gemini: {model} {reasonShown}; {thenShown}", $"Gemini: {model} {reasonShown}; {thenShown}"));
+                if (!retry) break;
                 await Task.Delay(delays[attempt], cancellationToken).ConfigureAwait(false);
             }
         }
@@ -1010,25 +1059,33 @@ public sealed class GeminiTranscriptionEngine(
     private async Task<(string? Body, ProcessingFailure? Busy, int Status)> SendAsync(string model, string apiKey, string requestBody, CancellationToken cancellationToken)
     {
         HttpResponseMessage response;
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(RequestTimeout);
         try
         {
             using var message = new HttpRequestMessage(HttpMethod.Post, $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
             // The key goes in a header: a URL ends up in logs and in exception messages.
             message.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
             message.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
-            response = await httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+            response = await httpClient.SendAsync(message, limit.Token).ConfigureAwait(false);
         }
         catch (HttpRequestException exception)
         {
             throw ProcessingFailure.FromHttp(Service, null, exception.Message);
         }
-        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new ProcessingFailure(FailureKind.Transient, T($"{Service} timed out", $"{Service} не ответил вовремя"), exception);
+            // A stuck request counts as a busy model, so the next model in the order is asked.
+            return (null, new ProcessingFailure(FailureKind.Transient, T($"{Service} timed out", $"{Service} не ответил вовремя"), exception), TimedOut);
         }
         using (response)
         {
-            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            string text;
+            try { text = await response.Content.ReadAsStringAsync(limit.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                return (null, new ProcessingFailure(FailureKind.Transient, T($"{Service} timed out", $"{Service} не ответил вовремя"), exception), TimedOut);
+            }
             if (response.IsSuccessStatusCode) return (text, null, 200);
             var status = (int)response.StatusCode;
             var failure = ProcessingFailure.FromHttp(Service, status, text);

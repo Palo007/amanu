@@ -31,6 +31,7 @@ internal sealed class StatusWindow : Window
     private readonly TextBlock state = new() { FontSize = 16, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock processingLine = Ui.Status();
     private readonly System.Windows.Controls.ProgressBar processingBar = Ui.ProcessingBar();
+    private readonly ProcessingDetails processingDetails = new();
     private readonly TextBlock problemLine = Ui.Status("", Ui.Caution);
     private readonly System.Windows.Controls.Button record;
     private readonly System.Windows.Controls.Button pause;
@@ -93,6 +94,8 @@ internal sealed class StatusWindow : Window
         stack.Children.Add(processingLine);
         processingBar.Margin = new Thickness(20, 6, 0, 2);
         stack.Children.Add(processingBar);
+        processingDetails.View.Margin = new Thickness(20, 2, 0, 2);
+        stack.Children.Add(processingDetails.View);
         problemLine.Margin = new Thickness(20, 4, 0, 0);
         stack.Children.Add(problemLine);
 
@@ -298,6 +301,7 @@ internal sealed class StatusWindow : Window
         };
         processingLine.SetResourceReference(TextBlock.ForegroundProperty, status.Stage == "failed" ? Ui.Critical : Ui.Secondary);
         Ui.ShowProgress(processingBar, status);
+        processingDetails.Show(status);
         if (status.Stage is "complete" or "deferred") processingFade.Start();
     }
 
