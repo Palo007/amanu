@@ -36,7 +36,8 @@ jobs:
       - name: Apply Amanu's AEC3 tuning patch
         shell: bash
         working-directory: sonora
-        run: git apply --whitespace=nowarn "$GITHUB_WORKSPACE/.github/sonora/amanu-aec3-tuning.patch"
+        # The runner checks out with CRLF; the patch is for LF files.
+        run: tr -d '' < "$GITHUB_WORKSPACE/.github/sonora/amanu-aec3-tuning.patch" | git apply --whitespace=nowarn -
 
       - name: Install Rust
         shell: bash
