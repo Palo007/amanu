@@ -74,6 +74,9 @@ internal sealed class SetupForm
     private readonly TextBlock languageNote = Ui.Status();
     private readonly CheckBox live = Ui.Switch(T("Live transcript", "Расшифровка на лету"));
     private readonly TextBlock liveModelStatus = Ui.Status();
+    private readonly Dictionary<string, RadioButton> liveCards = [];
+    private readonly TextBlock liveGeminiStatus = Ui.Status();
+    private Grid? liveModelRow;
 
     private readonly TextBlock folderPath = new() { FontFamily = new System.Windows.Media.FontFamily("Cascadia Mono, Consolas"), FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly TextBlock folderDetail = Ui.Detail(FolderAdvice);
@@ -144,9 +147,10 @@ internal sealed class SetupForm
             LanguageRow(),
             Ui.Box(Ui.Row(live,
                 Ui.Title(T("I want a live transcript during meetings", "Показывать расшифровку прямо во время встречи")),
-                Ui.Detail(T("Words appear as you speak, using a separate local model (about 750 MB to download). Nothing is sent to the cloud. The final transcript is made afterwards.",
-                    "Слова появляются по мере речи. Для этого нужна отдельная локальная модель — около 750 МБ для скачивания. Звук не уходит в облако. Итоговая расшифровка делается после встречи."))),
-                Ui.Row(Ui.Symbol(""), liveModelStatus, Ui.Detail(""), localDownload["nemotron-live"])))));
+                Ui.Detail(T("Words appear as you speak. The final transcript is still made afterwards, with the engine chosen above.",
+                    "Слова появляются по мере речи. Итоговая расшифровка всё равно делается после встречи движком, выбранным выше."))),
+                LiveEngineCards(),
+                liveModelRow = Ui.Row(Ui.Symbol(""), liveModelStatus, Ui.Detail(""), localDownload["nemotron-live"])))));
 
         View.Children.Add(Ui.Section(T("Files", "Файлы"), Ui.Box(
             Ui.Row(Ui.Symbol(""), folderPath, folderDetail, Ui.Button(T("Choose…", "Выбрать…"), ChooseFolder)),
@@ -507,6 +511,23 @@ internal sealed class SetupForm
     private bool HasKey(string name) => !string.IsNullOrWhiteSpace(runtime.GetSecret(name));
 
     /// <summary>The first empty slot for one more Gemini key, or null when all of them are used.</summary>
+    private UIElement LiveEngineCards()
+    {
+        liveCards["local"] = Ui.Card("local", T("On this PC", "На этом ПК"),
+            T("A separate local model, about 750 MB to download. Nothing is sent to the cloud.",
+              "Отдельная локальная модель, около 750 МБ для скачивания. Звук не уходит в облако."));
+        liveCards["gemini"] = Ui.Card("gemini", "Gemini Live",
+            T("Sends the audio to Google while you talk, with your Gemini key. It knows you from the others, but not one caller from another.",
+              "Отправляет звук в Google по ходу встречи по вашему ключу Gemini. Отличает вас от остальных, но не собеседников друг от друга."),
+            liveGeminiStatus);
+        foreach (var (id, card) in liveCards)
+        {
+            card.GroupName = "live-engine";
+            card.Click += (_, _) => Change(settings => settings.LiveTranscription.Engine = id);
+        }
+        return Ui.Cards([.. liveCards.Values]);
+    }
+
     private string? FreeGeminiSlot => SecretNames.GeminiExtras.FirstOrDefault(slot => !HasKey(slot));
 
     /// <summary>Keeps the first Gemini key and deletes the others; the first is replaced, not removed, with Replace key.</summary>
@@ -838,6 +859,20 @@ internal sealed class SetupForm
                 : downloadErrors.GetValueOrDefault("nemotron-live") ?? T("live model not downloaded", "модель лайва не скачана");
             localDownload["nemotron-live"].Visibility = liveReady ? Visibility.Collapsed : Visibility.Visible;
             localDownload["nemotron-live"].IsEnabled = !runtime.IsLocalModelDownloading("nemotron-live");
+            var geminiLive = settings.LiveTranscription.Engine == "gemini";
+            foreach (var (id, card) in liveCards)
+            {
+                card.IsChecked = settings.LiveTranscription.Engine == id;
+                card.IsEnabled = choice.Enabled;
+            }
+            if (liveModelRow is not null) liveModelRow.Visibility = geminiLive ? Visibility.Collapsed : Visibility.Visible;
+            var liveKeys = SecretNames.GeminiKeys(runtime.GetSecret).Count;
+            liveGeminiStatus.Text = liveKeys switch
+            {
+                0 => T("needs a Gemini key: add one under Transcription", "нужен ключ Gemini: добавьте его в разделе «Расшифровка»"),
+                1 => T("uses your Gemini key", "использует ваш ключ Gemini"),
+                _ => T($"uses your {liveKeys} Gemini keys in turn", $"использует ваши ключи Gemini по очереди ({liveKeys})"),
+            };
 
             folderPath.Text = settings.RecordingsDirectory;
             keepAudio.IsChecked = settings.KeepAudio;

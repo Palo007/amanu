@@ -261,8 +261,17 @@ public sealed class AssemblyAiTranscriptionSettings
 
 public sealed class LiveTranscriptionSettings
 {
+    /// <summary>"local" keeps the audio on this PC; "gemini" streams it to Gemini Live.</summary>
+    public static readonly IReadOnlyList<string> Engines = ["local", "gemini"];
+
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; }
+
+    [JsonPropertyName("engine")]
+    public string Engine { get; set; } = "local";
+
+    [JsonPropertyName("gemini_model")]
+    public string GeminiModel { get; set; } = Processing.GeminiLive.DefaultModel;
 }
 
 public sealed class SummarySettings
