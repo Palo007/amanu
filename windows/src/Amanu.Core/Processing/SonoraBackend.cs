@@ -77,7 +77,11 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend
     /// </summary>
     public int HopSize => EchoCanceller.FrameSize;
 
-    public SonoraBackend(string libraryPath)
+    /// <param name="tuning">
+    /// AEC3 settings as <c>path=value</c> entries separated by <c>;</c> (see
+    /// <see cref="LocalVqeModel.SonoraTuning"/>); null keeps WebRTC's defaults.
+    /// </param>
+    public SonoraBackend(string libraryPath, string? tuning = null)
     {
         nint library;
         lock (Loaded)
@@ -96,7 +100,6 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend
             ? address
             : throw new EchoCancellationException($"Sonora is missing required symbol {name}");
         var configDefault = (delegate* unmanaged[Cdecl]<WapConfig>)Symbol("wap_config_default");
-        var create = (delegate* unmanaged[Cdecl]<WapConfig, nint>)Symbol("wap_create_with_config");
         var initialize = (delegate* unmanaged[Cdecl]<nint, WapStreamConfig, WapStreamConfig, WapStreamConfig, WapStreamConfig, int>)Symbol("wap_initialize");
         destroy = (delegate* unmanaged[Cdecl]<nint, void>)Symbol("wap_destroy");
         processStream = (delegate* unmanaged[Cdecl]<nint, float**, WapStreamConfig, WapStreamConfig, float**, int>)Symbol("wap_process_stream_f32");
@@ -111,7 +114,25 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend
         config.CaptureLevelAdjustmentEnabled = 0;
         config.PreAmplifierEnabled = 0;
         config.AnalogMicGainEmulationEnabled = 0;
-        apm = create(config);
+        if (tuning is null)
+        {
+            var create = (delegate* unmanaged[Cdecl]<WapConfig, nint>)Symbol("wap_create_with_config");
+            apm = create(config);
+        }
+        else
+        {
+            // Only the patched DLL has these: a tuning must never fall back to the defaults unnoticed.
+            var check = (delegate* unmanaged[Cdecl]<byte*, int>)Symbol("wap_check_aec3_tuning");
+            var createTuned = (delegate* unmanaged[Cdecl]<WapConfig, byte*, nint>)Symbol("wap_create_with_aec3_tuning");
+            var text = System.Text.Encoding.ASCII.GetBytes(tuning + "\0");
+            fixed (byte* pointer = text)
+            {
+                var bad = check(pointer);
+                if (bad != 0)
+                    throw new EchoCancellationException($"Sonora does not understand entry {bad} of the tuning \"{tuning}\"");
+                apm = createTuned(config, pointer);
+            }
+        }
         if (apm == 0) throw new EchoCancellationException("Sonora could not create an audio processor");
         var result = initialize(apm, stream, stream, stream, stream);
         if (result != 0)

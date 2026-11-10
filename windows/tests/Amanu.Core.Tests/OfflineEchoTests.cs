@@ -416,8 +416,27 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Sonora_removes_far_end_echo_and_keeps_near_end_speech()
+    public void Sonora_refuses_a_tuning_it_does_not_understand()
     {
+        var library = Path.Combine(AppContext.BaseDirectory, LocalVqeAssets.RuntimeFolder, SonoraBackend.LibraryName);
+        if (!File.Exists(library)) return;
+        var error = Assert.Throws<EchoCancellationException>(() =>
+            new SonoraBackend(library, "suppressor.dominant_nearend_detection.enr_threshold=1;suppressor.no_such_knob=2"));
+        Assert.Contains("entry 2", error.Message);
+    }
+
+    [Theory]
+    [InlineData("sonora")]
+    [InlineData("sonora-linear")]
+    [InlineData("sonora-nearend")]
+    [InlineData("sonora-gentle")]
+    [InlineData("sonora-long")]
+    [InlineData("sonora-long80")]
+    [InlineData("sonora-long80-nearend")]
+    public void Sonora_removes_far_end_echo_and_keeps_near_end_speech(string key)
+    {
+        var model = LocalVqeAssets.For(key);
+        Assert.Equal(key, model.Key);
         var library = Path.Combine(AppContext.BaseDirectory, LocalVqeAssets.RuntimeFolder, SonoraBackend.LibraryName);
         if (!File.Exists(library)) return;
         const int rate = 16_000;
@@ -437,7 +456,7 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
         }
 
         var timer = Stopwatch.StartNew();
-        var (cleaned, system) = Run(mic, reference, new SonoraBackend(library));
+        var (cleaned, system) = Run(mic, reference, new SonoraBackend(library, model.SonoraTuning));
         timer.Stop();
 
         static double Db(float[] samples, int from, int to)
@@ -450,7 +469,7 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
         var echoAfter = Db(cleaned, 3 * rate, farEnds);
         var nearBefore = Db(mic, nearFrom + rate / 2, frames);
         var nearAfter = Db(cleaned, nearFrom + rate / 2, frames);
-        output.WriteLine($"Sonora: echo {echoBefore:0.0} -> {echoAfter:0.0} dB; near end {nearBefore:0.0} -> {nearAfter:0.0} dB; " +
+        output.WriteLine($"{key}: echo {echoBefore:0.0} -> {echoAfter:0.0} dB; near end {nearBefore:0.0} -> {nearAfter:0.0} dB; " +
                          $"{frames / (double)rate / timer.Elapsed.TotalSeconds:0.0}x real time");
 
         Assert.Equal(frames, cleaned.Length);

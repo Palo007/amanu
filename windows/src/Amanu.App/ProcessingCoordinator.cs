@@ -748,7 +748,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                     {
                         var assets = LocalVqeAssets.Resolve(model: model);
                         return model.IsSonora
-                            ? new SonoraBackend(assets.Library)
+                            ? new SonoraBackend(assets.Library, model.SonoraTuning)
                             : new LocalVqeBackend(assets.Library, assets.Model, threads);
                     }, cpu.Token, model), cpu.Token).ConfigureAwait(false);
                     break;

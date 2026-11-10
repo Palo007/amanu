@@ -56,7 +56,7 @@ RECORDINGS = ROOT / "recordings"
 RUNS = ROOT / "runs"
 DEFAULT_EXE = HERE.parent.parent / "artifacts" / "publish" / "Amanu.exe"
 
-ECHO_MODES = ["off", "sonora", "fast", "thorough"]
+ECHO_MODES = ["off", "sonora", "fast", "thorough", "sonora-linear", "sonora-nearend", "sonora-gentle", "sonora-long", "sonora-long80", "sonora-long80-nearend"]
 SNRS = [None, 20, 10, 5, 0, -5]          # near-end speech against noise, dB; None = no noise
 SERS = [5, -5, -15]                      # near-end speech against echo, dB; lower = louder echo
 NOISES = {"office": "OOFFICE", "cafe": "PCAFETER", "street": "STRAFFIC", "living": "DLIVING"}
@@ -530,6 +530,23 @@ def near_gain(estimate: np.ndarray, target: np.ndarray) -> float:
     return 20 * math.log10(max(abs(alpha), 1e-6))
 
 
+def cut_aligned(out: np.ndarray, target: np.ndarray, region: dict, span: int = 512) -> tuple:
+    """The output and the truth over one region, the output shifted to where it matches the truth best.
+
+    Amanu passes the mic through unchanged where the call is silent and runs the remover only
+    where it plays, and each remover adds its own small delay there (Sonora 128 samples, its
+    linear output 64, LocalVQE fast -256), so one lag for the whole file, as cleaned_mic finds,
+    leaves the double-talk parts a few milliseconds off. That was enough to make the voice look
+    15 to 20 dB quieter than it was.
+    """
+    start, end = region["start"], region["end"]
+    lo, hi = max(0, start - span), min(len(out), end + span)
+    t = target[start:end]
+    corr = signal.correlate(out[lo:hi], t, mode="valid", method="fft")
+    lag = int(np.argmax(np.abs(corr))) + lo - start
+    return out[start + lag:end + lag], t
+
+
 def score_one(run_folder: Path, recording: Path, mode: str) -> dict:
     truth = json.loads((recording / "truth.json").read_text(encoding="utf-8"))
     row = {"recording": recording.name, "kind": truth["kind"], "mode": mode,
@@ -565,9 +582,10 @@ def score_one(run_folder: Path, recording: Path, mode: str) -> dict:
                 row["near_loss_db"] = float(np.mean([db(region_power(raw, r) / region_power(out, r)) for r in near]))
                 cut = lambda x, r: x[r["start"]:r["end"]]
                 row["double_sisdr_in_db"] = float(np.mean([si_sdr(cut(raw, r), cut(near_truth, r)) for r in double]))
-                row["double_sisdr_out_db"] = float(np.mean([si_sdr(cut(out, r), cut(near_truth, r)) for r in double]))
+                aligned = [cut_aligned(out, near_truth, r) for r in double]
+                row["double_sisdr_out_db"] = float(np.mean([si_sdr(o, t) for o, t in aligned]))
                 # How loud my voice still is while both talk: the part of the output that is my voice, against my voice.
-                row["double_near_gain_db"] = float(np.mean([near_gain(cut(out, r), cut(near_truth, r)) for r in double]))
+                row["double_near_gain_db"] = float(np.mean([near_gain(o, t) for o, t in aligned]))
     return row
 
 

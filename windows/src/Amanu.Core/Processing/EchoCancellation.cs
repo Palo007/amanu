@@ -13,10 +13,14 @@ namespace Amanu.Core.Processing;
 /// The audio path's revision with this model: changing it changes the .echo-* cache
 /// folder's name. v3 is macOS's; v4 adds the whole-signal delay prime.
 /// </param>
-public sealed record LocalVqeModel(string Key, string FileName, string Sha256, string ProcessorVersion)
+/// <param name="SonoraTuning">
+/// For Sonora only: AEC3 settings changed from WebRTC's defaults, as
+/// <c>path=value</c> entries separated by <c>;</c>; null keeps the defaults.
+/// </param>
+public sealed record LocalVqeModel(string Key, string FileName, string Sha256, string ProcessorVersion, string? SonoraTuning = null)
 {
-    /// <summary>Sonora is not a LocalVQE model but shares this record, so the setting, the cache identity and the ledger treat all three alike.</summary>
-    public bool IsSonora => Key == LocalVqeAssets.Sonora.Key;
+    /// <summary>Sonora is not a LocalVQE model but shares this record, so the setting, the cache identity and the ledger treat them all alike.</summary>
+    public bool IsSonora => FileName == SonoraBackend.LibraryName;
 }
 
 public static class LocalVqeAssets
@@ -35,9 +39,64 @@ public static class LocalVqeAssets
     /// (4.5 s against 66.5 s, 5.9 s against 74.4 s) with the same word errors within
     /// three words, so it is the default. FileName is the DLL itself: it has no model file.
     /// </summary>
-    public static readonly LocalVqeModel Sonora = new("sonora", "sonora_ffi.dll",
-        "a2afc38614aed013e1f158e180c8b4f80459df2a43f5e67f03bf2e82e6654deb",
-        "sonora-aec3-1632d47-amanu-v1");
+    public static readonly LocalVqeModel Sonora = new("sonora", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v3");
+
+    /// <summary>
+    /// sonora_ffi.dll built with Amanu's patch (windows/native/sonora/amanu-aec3-tuning.patch),
+    /// which adds wap_create_with_aec3_tuning. Without a tuning it runs exactly as before.
+    /// </summary>
+    public const string SonoraSha256 = "9bdf9b051e6d5d4d5d6f09ce14ff2cf1ebd2fcdf7dfb6c08cce11c8b24785d6e";
+
+    /// <summary>
+    /// AEC3's linear filter alone: its output before the nonlinear suppressor, which is
+    /// what lowers the near voice while both people talk. On the quality suite it kept the
+    /// voice but removed only 2.7 dB of echo, so the default 52 ms filter does little here.
+    /// </summary>
+    public static readonly LocalVqeModel SonoraLinear = new("sonora-linear", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v3-linear", "output=linear");
+
+    /// <summary>
+    /// The suppressor treats a block as near speech sooner (echo below the voice instead
+    /// of a quarter of it, 4 blocks instead of 12, and holds it 400 ms), and while it does,
+    /// it lets bands through until the echo is well above the voice.
+    /// </summary>
+    public static readonly LocalVqeModel SonoraNearend = new("sonora-nearend", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v3-nearend", NearendTuning);
+
+    /// <summary>The near-end tuning, and the normal tuning also suppresses a band only at twice the default echo-to-voice ratio.</summary>
+    public static readonly LocalVqeModel SonoraGentle = new("sonora-gentle", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v3-gentle", NearendTuning +
+        ";suppressor.normal_tuning.mask_lf.enr_transparent=0.6;suppressor.normal_tuning.mask_lf.enr_suppress=0.8" +
+        ";suppressor.normal_tuning.mask_hf.enr_transparent=0.14;suppressor.normal_tuning.mask_hf.enr_suppress=0.2");
+
+    /// <summary>
+    /// A 160 ms linear filter instead of 52 ms, because the test rooms ring for 300 to 550 ms
+    /// and the short filter cleaned the voice by only 1 to 4 dB, leaving the suppressor to cut the rest.
+    /// </summary>
+    public static readonly LocalVqeModel SonoraLong = new("sonora-long", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v3-long", FilterBlocks(40));
+
+    /// <summary>A 320 ms linear filter.</summary>
+    public static readonly LocalVqeModel SonoraLong80 = new("sonora-long80", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v3-long80", FilterBlocks(80));
+
+    /// <summary>The 320 ms filter and the near-end tuning together.</summary>
+    public static readonly LocalVqeModel SonoraLong80Nearend = new("sonora-long80-nearend", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v3-long80-nearend", FilterBlocks(80) + ";" + NearendTuning);
+
+    /// <summary>All four filters at the same length: AEC3 runs the initial pair for its first 2.5 s.</summary>
+    private static string FilterBlocks(int blocks) =>
+        $"filter.refined.length_blocks={blocks};filter.coarse.length_blocks={blocks}" +
+        $";filter.refined_initial.length_blocks={blocks};filter.coarse_initial.length_blocks={blocks}";
+
+    private const string NearendTuning =
+        "suppressor.dominant_nearend_detection.enr_threshold=1" +
+        ";suppressor.dominant_nearend_detection.snr_threshold=10" +
+        ";suppressor.dominant_nearend_detection.trigger_threshold=4" +
+        ";suppressor.dominant_nearend_detection.hold_duration=100" +
+        ";suppressor.nearend_tuning.mask_lf.enr_transparent=1.5;suppressor.nearend_tuning.mask_lf.enr_suppress=3" +
+        ";suppressor.nearend_tuning.mask_hf.enr_transparent=0.5;suppressor.nearend_tuning.mask_hf.enr_suppress=1.5";
 
     public static readonly LocalVqeModel Fast = new("fast", "localvqe-v1.4-aec-2.7K-f32.gguf",
         "d79f824f6ee6f58b2a7108d1df90db51c42c15a7400a5addbd3be9972ba657a4",
@@ -48,7 +107,7 @@ public static class LocalVqeAssets
         "b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731",
         "localvqe-v1.4-aec-200k-f32-amanu-v4-delay-prime");
 
-    public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough];
+    public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough, SonoraLinear, SonoraNearend, SonoraGentle, SonoraLong, SonoraLong80, SonoraLong80Nearend];
 
     public static LocalVqeModel Default => Sonora;
 

@@ -54,7 +54,8 @@ public sealed class AppSettings
     [JsonPropertyName("echo_model")]
     public string EchoModel { get; set; } = "sonora";
 
-    public static readonly IReadOnlyList<string> EchoModels = ["sonora", "fast", "thorough"];
+    /// <summary>The sonora-* variants are tunings of Sonora's suppressor under measurement in the quality suite.</summary>
+    public static readonly IReadOnlyList<string> EchoModels = ["sonora", "fast", "thorough", "sonora-linear", "sonora-nearend", "sonora-gentle", "sonora-long", "sonora-long80", "sonora-long80-nearend"];
 
     /// <summary>
     /// Keeps the echo-cleaned mic and its aligned call track in the session, so
