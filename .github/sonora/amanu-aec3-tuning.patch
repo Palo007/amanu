@@ -1,8 +1,86 @@
+diff --git a/crates/sonora-aec3/src/block_processor.rs b/crates/sonora-aec3/src/block_processor.rs
+index 9ed1ba2..c0be1c9 100644
+--- a/crates/sonora-aec3/src/block_processor.rs
++++ b/crates/sonora-aec3/src/block_processor.rs
+@@ -30,6 +30,25 @@ pub struct BlockProcessor {
+     render_event: BufferingEvent,
+     capture_call_counter: usize,
+     estimated_delay: Option<DelayEstimate>,
++    // Amanu: how often the echo path delay changed, each a full filter reset.
++    delay_changes: u64,
++}
++
++/// Amanu: AEC3 internals for offline diagnosis.
++#[derive(Debug, Clone, Copy, Default)]
++pub struct Aec3DebugState {
++    /// Delay changes (new detected delay or buffer flush) since creation.
++    pub delay_changes: u64,
++    /// The render buffer delay in blocks.
++    pub render_delay_blocks: i32,
++    /// The linear filter's direct-path delay in blocks.
++    pub filter_delay_blocks: i32,
++    /// Whether AEC3 trusts its linear filter.
++    pub usable_linear_estimate: bool,
++    /// Whether transparent mode (no suppression) is active.
++    pub transparent_mode: bool,
++    /// Fullband ERLE estimate, log2 units.
++    pub erle_log2: f32,
+ }
+ 
+ /// Metrics output from the block processor.
+@@ -102,6 +121,20 @@ impl BlockProcessor {
+             render_event: BufferingEvent::None,
+             capture_call_counter: 0,
+             estimated_delay: None,
++            delay_changes: 0,
++        }
++    }
++
++    /// Amanu: AEC3 internals for offline diagnosis.
++    pub fn amanu_debug(&self) -> Aec3DebugState {
++        let state = self.echo_remover.aec_state();
++        Aec3DebugState {
++            delay_changes: self.delay_changes,
++            render_delay_blocks: self.render_buffer.delay() as i32,
++            filter_delay_blocks: state.min_direct_path_filter_delay(),
++            usable_linear_estimate: state.usable_linear_estimate(),
++            transparent_mode: state.transparent_mode_active(),
++            erle_log2: state.fullband_erle_log2(),
+         }
+     }
+ 
+@@ -194,6 +227,10 @@ impl BlockProcessor {
+             self.render_buffer.align_from_external_delay();
+         }
+ 
++        if echo_path_variability.delay_change != DelayAdjustment::None {
++            self.delay_changes += 1;
++        }
++
+         // Remove the echo from the capture signal.
+         if has_delay_estimator || self.render_buffer.has_received_buffer_delay() {
+             let render_buffer = self.render_buffer.get_render_buffer();
+diff --git a/crates/sonora-aec3/src/echo_remover.rs b/crates/sonora-aec3/src/echo_remover.rs
+index c5ffbe2..011cfe8 100644
+--- a/crates/sonora-aec3/src/echo_remover.rs
++++ b/crates/sonora-aec3/src/echo_remover.rs
+@@ -234,6 +234,11 @@ impl EchoRemover {
+         }
+     }
+ 
++    /// Amanu: the echo canceller's state, for diagnosis.
++    pub(crate) fn aec_state(&self) -> &AecState {
++        &self.aec_state
++    }
++
+     /// Returns current echo removal metrics.
+     pub(crate) fn get_metrics(&self) -> EchoRemoverMetricsOutput {
+         EchoRemoverMetricsOutput {
 diff --git a/crates/sonora-ffi/src/functions.rs b/crates/sonora-ffi/src/functions.rs
-index 1018869..b6ce423 100644
+index 1018869..4aa7d62 100644
 --- a/crates/sonora-ffi/src/functions.rs
 +++ b/crates/sonora-ffi/src/functions.rs
-@@ -58,6 +58,185 @@ pub extern "C" fn wap_create_with_config(config: WapConfig) -> *mut WapAudioProc
+@@ -58,6 +58,259 @@ pub extern "C" fn wap_create_with_config(config: WapConfig) -> *mut WapAudioProc
      }
  }
  
@@ -66,6 +144,28 @@ index 1018869..b6ce423 100644
 +        f32: filter.initial_state_seconds;
 +        usize: erle.num_sections;
 +        usize: delay.delay_headroom_samples;
++        usize: delay.default_delay;
++        usize: delay.num_filters;
++        usize: delay.hysteresis_limit_blocks;
++        usize: delay.fixed_capture_delay_samples;
++        f32: delay.delay_estimate_smoothing;
++        f32: delay.delay_estimate_smoothing_delay_found;
++        f32: delay.delay_candidate_detection_threshold;
++        i32: delay.delay_selection_thresholds.initial;
++        i32: delay.delay_selection_thresholds.converged;
++        bool: delay.use_external_delay_estimator;
++        bool: delay.detect_pre_echo;
++        f32: filter.refined.noise_gate;
++        f32: filter.coarse.noise_gate;
++        f32: filter.refined_initial.leakage_converged;
++        f32: filter.refined_initial.leakage_diverged;
++        f32: filter.refined_initial.error_floor;
++        f32: filter.refined_initial.error_ceil;
++        f32: filter.coarse_initial.rate;
++        usize: filter.config_change_duration_blocks;
++        i32: filter.coarse_reset_hangover_blocks;
++        bool: filter.enable_coarse_filter_output_usage;
++        bool: filter.high_pass_filter_echo_reference;
 +        bool: filter.use_linear_filter;
 +        bool: filter.export_linear_aec_output;
 +        f32: echo_audibility.audibility_threshold_lf;
@@ -185,11 +285,63 @@ index 1018869..b6ce423 100644
 +    }
 +}
 +
++/// Amanu: AEC3 internals for offline diagnosis.
++#[repr(C)]
++#[derive(Debug, Clone, Copy, Default)]
++pub struct WapAec3Debug {
++    /// Echo path delay changes since creation; each one fully resets the linear filter.
++    pub delay_changes: u64,
++    /// The render buffer delay in 4 ms blocks.
++    pub render_delay_blocks: i32,
++    /// The linear filter's direct-path delay in 4 ms blocks.
++    pub filter_delay_blocks: i32,
++    /// Whether AEC3 trusts its linear filter.
++    pub usable_linear_estimate: bool,
++    /// Whether transparent mode (no suppression) is active.
++    pub transparent_mode: bool,
++    /// AEC3's fullband ERLE estimate in dB.
++    pub erle_db: f32,
++}
++
++/// Amanu: reads AEC3's internal state into `out`. Returns
++/// `WapError::NullPointer` for a null argument and `WapError::BadStreamParameter`
++/// when no echo canceller runs.
++///
++/// # Safety
++///
++/// `apm` must be a valid pointer from a `wap_create*` function and `out`
++/// must point to a writable `WapAec3Debug`.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn wap_aec3_debug(
++    apm: *const WapAudioProcessing,
++    out: *mut WapAec3Debug,
++) -> WapError {
++    ffi_guard! {
++        if apm.is_null() || out.is_null() {
++            return WapError::NullPointer;
++        }
++        let apm = unsafe { &*apm };
++        let Some(state) = apm.inner.amanu_aec3_debug() else {
++            return WapError::BadStreamParameter;
++        };
++        let debug = WapAec3Debug {
++            delay_changes: state.delay_changes,
++            render_delay_blocks: state.render_delay_blocks,
++            filter_delay_blocks: state.filter_delay_blocks,
++            usable_linear_estimate: state.usable_linear_estimate,
++            transparent_mode: state.transparent_mode,
++            erle_db: state.erle_log2 * 3.010_3,
++        };
++        unsafe { ptr::write(out, debug) };
++        WapError::None
++    }
++}
++
  /// Destroys an audio processing instance and frees its memory.
  ///
  /// Passing `NULL` is a safe no-op. After this call the pointer is invalid.
 diff --git a/crates/sonora/src/audio_processing.rs b/crates/sonora/src/audio_processing.rs
-index 537b412..056808d 100644
+index 537b412..8e6d23e 100644
 --- a/crates/sonora/src/audio_processing.rs
 +++ b/crates/sonora/src/audio_processing.rs
 @@ -314,6 +314,7 @@ pub struct AudioProcessingBuilder {
@@ -229,8 +381,20 @@ index 537b412..056808d 100644
  
          if self.echo_detector {
              inner.set_echo_detector();
+@@ -579,6 +589,11 @@ impl AudioProcessing {
+         self.inner.get_statistics()
+     }
+ 
++    /// Amanu: AEC3 internals for offline diagnosis; `None` without an echo canceller.
++    pub fn amanu_aec3_debug(&self) -> Option<sonora_aec3::block_processor::Aec3DebugState> {
++        self.inner.amanu_aec3_debug()
++    }
++
+     /// Sets the applied input volume (e.g. from the OS mixer).
+     ///
+     /// Must be called before [`process_capture_f32()`](Self::process_capture_f32) if the input
 diff --git a/crates/sonora/src/audio_processing_impl.rs b/crates/sonora/src/audio_processing_impl.rs
-index 72630d2..5edcb32 100644
+index 72630d2..912ef84 100644
 --- a/crates/sonora/src/audio_processing_impl.rs
 +++ b/crates/sonora/src/audio_processing_impl.rs
 @@ -168,6 +168,8 @@ pub(crate) struct AudioProcessingImpl {
@@ -262,7 +426,19 @@ index 72630d2..5edcb32 100644
      /// Installs the residual echo detector (opt-in).
      ///
      /// Must be called before `initialize()`.
-@@ -1339,13 +1347,15 @@ impl AudioProcessingImpl {
+@@ -325,6 +333,11 @@ impl AudioProcessingImpl {
+         self.capture.applied_input_volume
+     }
+ 
++    /// Amanu: AEC3 internals for offline diagnosis; `None` without an echo canceller.
++    pub(crate) fn amanu_aec3_debug(&self) -> Option<sonora_aec3::block_processor::Aec3DebugState> {
++        self.submodules.echo_controller.as_ref().map(|ec| ec.amanu_debug())
++    }
++
+     /// Sets the stream delay in ms (forwarded from the public API).
+     pub(crate) fn set_stream_delay_ms(&mut self, delay_ms: i32) {
+         self.capture.was_stream_delay_set = true;
+@@ -1339,13 +1352,15 @@ impl AudioProcessingImpl {
              None => Some(EchoCanceller3Config::create_default_multichannel_config()),
          };
  
@@ -281,7 +457,7 @@ index 72630d2..5edcb32 100644
  
      fn initialize_noise_suppressor(&mut self) {
 diff --git a/crates/sonora/src/echo_canceller3.rs b/crates/sonora/src/echo_canceller3.rs
-index ebccbc6..0bb5a7d 100644
+index ebccbc6..a00f9d3 100644
 --- a/crates/sonora/src/echo_canceller3.rs
 +++ b/crates/sonora/src/echo_canceller3.rs
 @@ -313,6 +313,9 @@ pub(crate) struct EchoCanceller3 {
@@ -357,3 +533,15 @@ index ebccbc6..0bb5a7d 100644
          }
      }
  
+@@ -696,6 +711,11 @@ impl EchoCanceller3 {
+         self.block_processor.get_metrics()
+     }
+ 
++    /// Amanu: AEC3 internals for offline diagnosis.
++    pub(crate) fn amanu_debug(&self) -> sonora_aec3::block_processor::Aec3DebugState {
++        self.block_processor.amanu_debug()
++    }
++
+     /// Provides an optional external estimate of the audio buffer delay.
+     pub(crate) fn set_audio_buffer_delay(&mut self, delay_ms: i32) {
+         self.block_processor.set_audio_buffer_delay(delay_ms);
