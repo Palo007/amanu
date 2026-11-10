@@ -134,6 +134,36 @@ public sealed class LivePreloadTests
         Assert.Null(fixture.Source.LiveStopping);
     }
 
+    [Fact]
+    public async Task Gemini_live_without_a_key_says_so_and_starts_no_worker()
+    {
+        await using var fixture = new Fixture();
+        fixture.Settings.LiveTranscription.Engine = "gemini";
+        await fixture.Live.RefreshAsync();
+        Assert.Equal("Add a Gemini key in Settings", fixture.Live.Status);
+        Assert.Empty(fixture.Workers);
+        Assert.Empty(fixture.GeminiWorkers);
+    }
+
+    [Fact]
+    public async Task Gemini_live_with_a_key_uses_two_gemini_workers_and_no_local_decoder()
+    {
+        await using var fixture = new Fixture();
+        fixture.Settings.LiveTranscription.Engine = "gemini";
+        fixture.Secrets["gemini"] = "test-key";
+        await fixture.Live.RefreshAsync();
+        await fixture.WaitStatus("ready · Gemini Live");
+        Assert.Equal(2, fixture.GeminiWorkers.Count);
+        Assert.Empty(fixture.Workers);
+
+        // Going back to the local engine replaces the Gemini workers.
+        fixture.Settings.LiveTranscription.Engine = "local";
+        await fixture.Live.RefreshAsync();
+        await fixture.WaitStatus("ready");
+        Assert.Equal(2, fixture.Workers.Count);
+        Assert.All(fixture.GeminiWorkers, worker => Assert.True(worker.Disposed));
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string directory = Path.Combine(Path.GetTempPath(), "amanu-preload-" + Guid.NewGuid());
@@ -143,6 +173,8 @@ public sealed class LivePreloadTests
         public ModelManager Models { get; }
         public LiveTranscriptionCoordinator Live { get; }
         public ConcurrentQueue<Decoder> Workers { get; } = new();
+        public ConcurrentQueue<Decoder> GeminiWorkers { get; } = new();
+        public Dictionary<string, string> Secrets { get; } = [];
         public ConcurrentQueue<string> Statuses { get; } = new();
         public Func<CancellationToken, Task>? BeforeCreate { get; set; }
         public Fixture()
@@ -159,7 +191,12 @@ public sealed class LivePreloadTests
                 var decoder = new Decoder(language);
                 Workers.Enqueue(decoder);
                 return decoder;
-            });
+            }, createGeminiWorker: (_, _) =>
+            {
+                var decoder = new Decoder("gemini");
+                GeminiWorkers.Enqueue(decoder);
+                return Task.FromResult<ILiveSpeechWorker>(decoder);
+            }, secret: name => Secrets.GetValueOrDefault(name));
             Live.StatusChanged += (_, status) => Statuses.Enqueue(status);
         }
         public async Task WaitStatus(string status)

@@ -17,9 +17,11 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable
     private readonly Func<AppSettings> settings;
     private readonly SemaphoreSlim transitions = new(1);
     private readonly Func<string?, int, CancellationToken, Task<ILiveSpeechWorker>> createWorker;
+    private readonly Func<AppSettings, CancellationToken, Task<ILiveSpeechWorker>> createGeminiWorker;
+    private readonly Func<string, string?> secret;
     private CancellationTokenSource? preparationCancellation;
     private Task<Prepared?>? preparation;
-    private string? preparedLanguage;
+    private string? preparedFor;
     private string status = "";
     private CancellationTokenSource? cancellation;
     private Task worker = Task.CompletedTask;
@@ -27,19 +29,23 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable
     private long nextLine;
     private bool disposed;
 
-    public LiveTranscriptionCoordinator(ILiveAudioSource capture, ModelManager models, Func<AppSettings> settings)
+    public LiveTranscriptionCoordinator(ILiveAudioSource capture, ModelManager models, Func<AppSettings> settings, Func<string, string?>? secret = null)
         : this(capture, models, settings, async (language, threads, token) =>
-            await LiveSpeechWorker.CreateAsync(models.LiveRuntimeDirectory, models.ModelPath("nemotron-live"), language, threads, token).ConfigureAwait(false))
+            await LiveSpeechWorker.CreateAsync(models.LiveRuntimeDirectory, models.ModelPath("nemotron-live"), language, threads, token).ConfigureAwait(false),
+            secret: secret)
     {
     }
 
     internal LiveTranscriptionCoordinator(ILiveAudioSource capture, ModelManager models, Func<AppSettings> settings,
-        Func<string?, int, CancellationToken, Task<ILiveSpeechWorker>> createWorker)
+        Func<string?, int, CancellationToken, Task<ILiveSpeechWorker>> createWorker,
+        Func<AppSettings, CancellationToken, Task<ILiveSpeechWorker>>? createGeminiWorker = null, Func<string, string?>? secret = null)
     {
         this.capture = capture;
         this.models = models;
         this.settings = settings;
         this.createWorker = createWorker;
+        this.secret = secret ?? (_ => null);
+        this.createGeminiWorker = createGeminiWorker ?? CreateGeminiWorkerAsync;
         capture.LiveAudioAvailable += OnAudio;
         capture.CaptureStarted += OnStarted;
         capture.LiveStopping = StopAsync;
@@ -69,24 +75,33 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable
                 SetStatus("");
                 return;
             }
-            if (!models.IsReady("nemotron-live"))
+            var gemini = current.LiveTranscription.Engine == "gemini";
+            var unavailable = gemini
+                ? SecretNames.GeminiKeys(secret).Count == 0 ? T("Add a Gemini key in Settings", "Добавьте ключ Gemini в настройках") : null
+                : !models.IsReady("nemotron-live") ? T("Download the live model in Settings", "Скачайте модель лайва в настройках") : null;
+            if (unavailable is not null)
             {
                 await StopCoreAsync().ConfigureAwait(false);
                 await ClearPreparationAsync().ConfigureAwait(false);
-                SetStatus(T("Download the live model in Settings", "Скачайте модель лайва в настройках"));
+                SetStatus(unavailable);
                 return;
             }
             var language = MeetingLanguages.Pin(MeetingLanguages.Expected(current.Transcription.Language)) is "en" ? "en-US" : null;
-            if (preparation is null || preparedLanguage != language
+            // A change of engine, model or language needs new workers; the Gemini
+            // key list is read when they are made, so a new key waits for the next one.
+            var plan = gemini ? $"gemini|{current.LiveTranscription.GeminiModel}|{current.Transcription.Language}" : $"local|{language}";
+            if (preparation is null || preparedFor != plan
                 || (preparation.IsCompletedSuccessfully && preparation.Result is not { Healthy: true }))
             {
                 await StopCoreAsync().ConfigureAwait(false);
                 await ClearPreparationAsync().ConfigureAwait(false);
-                preparedLanguage = language;
+                preparedFor = plan;
                 preparationCancellation = new CancellationTokenSource();
                 var token = preparationCancellation.Token;
                 SetStatus(T("loading…", "загрузка…"));
-                preparation = Task.Run(() => PrepareAsync(language, token));
+                preparation = gemini
+                    ? Task.Run(() => PrepareGeminiAsync(current, token))
+                    : Task.Run(() => PrepareAsync(language, token));
             }
             if (capture.IsRunning && cancellation is null)
             {
@@ -110,7 +125,7 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable
             system = await createWorker(language, threads, token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             if (!capture.IsRunning) SetStatus(T("ready", "готово"));
-            return new Prepared(mic, system);
+            return new Prepared(mic, system, UsesCpu: true);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception exception)
@@ -122,6 +137,34 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable
         return null;
     }
 
+    /// <summary>Gemini workers use no CPU worth guarding and connect only when audio arrives.</summary>
+    private async Task<Prepared?> PrepareGeminiAsync(AppSettings current, CancellationToken token)
+    {
+        ILiveSpeechWorker? mic = null;
+        try
+        {
+            mic = await createGeminiWorker(current, token).ConfigureAwait(false);
+            var system = await createGeminiWorker(current, token).ConfigureAwait(false);
+            if (!capture.IsRunning) SetStatus(T("ready · Gemini Live", "готово · Gemini Live"));
+            return new Prepared(mic, system, UsesCpu: false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            SetStatus(T("live unavailable: ", "лайв недоступен: ") + exception.Message);
+        }
+        if (mic is not null) await mic.DisposeAsync().ConfigureAwait(false);
+        return null;
+    }
+
+    private Task<ILiveSpeechWorker> CreateGeminiWorkerAsync(AppSettings current, CancellationToken token)
+    {
+        var model = string.IsNullOrWhiteSpace(current.LiveTranscription.GeminiModel) ? GeminiLive.DefaultModel : current.LiveTranscription.GeminiModel.Trim();
+        var setup = GeminiLive.SetupMessage(model, MeetingLanguages.Expected(current.Transcription.Language),
+            ProcessingCoordinator.LoadCustomWords(current));
+        return Task.FromResult<ILiveSpeechWorker>(new GeminiLiveWorker(SecretNames.GeminiKeys(secret), setup, GeminiLiveSocket.OpenAsync));
+    }
+
     private async Task RunAsync(CancellationTokenSource source, Task<Prepared?> prepared)
     {
         var token = source.Token;
@@ -130,13 +173,13 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable
         {
             decoders = await prepared.WaitAsync(token).ConfigureAwait(false);
             if (decoders is null) return;
-            using var cpu = await models.CpuTranscription.EnterLiveAsync(token).ConfigureAwait(false);
+            using var cpu = decoders.UsesCpu ? await models.CpuTranscription.EnterLiveAsync(token).ConfigureAwait(false) : null;
             token.ThrowIfCancellationRequested();
             var mic = decoders.Mic;
             var system = decoders.System;
             var run = new Run(source);
             Volatile.Write(ref active, run);
-            SetStatus(T("live", "в реальном времени"));
+            SetStatus(decoders.UsesCpu ? T("live", "в реальном времени") : T("live · Gemini", "в реальном времени · Gemini"));
             await Task.WhenAll(ConsumeAsync(run, run.Mic, mic, SpeakerLabels.Me),
                 ConsumeAsync(run, run.System, system, SpeakerLabels.Them)).ConfigureAwait(false);
             // A fresh session must never inherit the previous session's decoder state.
@@ -346,7 +389,7 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable
         capture.LiveStopping = null;
         await RefreshAsync().ConfigureAwait(false);
     }
-    private sealed record Prepared(ILiveSpeechWorker Mic, ILiveSpeechWorker System) : IAsyncDisposable
+    private sealed record Prepared(ILiveSpeechWorker Mic, ILiveSpeechWorker System, bool UsesCpu) : IAsyncDisposable
     {
         public bool Invalid;
         public bool Healthy => !Invalid && Mic.Healthy && System.Healthy;

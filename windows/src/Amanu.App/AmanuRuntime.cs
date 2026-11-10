@@ -76,7 +76,7 @@ public sealed class AmanuRuntime : IAsyncDisposable
         models = new ModelManager(dataDirectory, httpClient);
         analytics = new AnalyticsService(dataDirectory, () => Settings, () => !ConfigUnreadable, httpClient);
         processing = new ProcessingCoordinator(() => Settings, () => !ConfigUnreadable, secrets, models, httpClient, analytics);
-        liveTranscription = new LiveTranscriptionCoordinator(capture, models, () => Settings);
+        liveTranscription = new LiveTranscriptionCoordinator(capture, models, () => Settings, secrets.Get);
 
         coordinator.StateChanged += (_, state) =>
         {
@@ -405,6 +405,8 @@ public sealed class AmanuRuntime : IAsyncDisposable
             coordinator.SetSessionsRoot(next.RecordingsDirectory);
         }
         if (previous.LiveTranscription.Enabled != next.LiveTranscription.Enabled
+            || previous.LiveTranscription.Engine != next.LiveTranscription.Engine
+            || previous.LiveTranscription.GeminiModel != next.LiveTranscription.GeminiModel
             || previous.Transcription.Enabled != next.Transcription.Enabled
             || previous.Transcription.Language != next.Transcription.Language)
             _ = liveTranscription.RefreshAsync();
