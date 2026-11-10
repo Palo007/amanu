@@ -127,7 +127,11 @@ public sealed class AmanuRuntime : IAsyncDisposable
             if (item.Equals("Model nemotron-live", StringComparison.OrdinalIgnoreCase)) _ = liveTranscription.RefreshAsync();
         };
         models.DownloadFailed += (_, item) => _ = analytics.RecordAsync("model_download_failed", new Dictionary<string, object?> { ["asset"] = AnalyticsAsset(item), ["reason"] = "unknown" });
-        liveTranscription.LineReady += (_, line) => LiveLineReady?.Invoke(this, line);
+        liveTranscription.LineReady += (_, line) =>
+        {
+            LiveLineReady?.Invoke(this, line);
+            if (line.IsFinal && coordinator.State.SessionDirectory is { } session) KeepLiveLine(session, line);
+        };
         capture.TrackLost += (_, track) => Notify(
             T("A recording device went away", "Устройство записи пропало"),
             track == "mic"
@@ -192,6 +196,17 @@ public sealed class AmanuRuntime : IAsyncDisposable
     public event EventHandler<DownloadProgress>? DownloadProgressChanged;
     public event EventHandler? SessionsChanged;
     public event EventHandler<LiveLine>? LiveLineReady;
+
+    /// <summary>A copy of the captions must never cost the recording, so a file that cannot be written is skipped.</summary>
+    private void KeepLiveLine(string session, LiveLine line)
+    {
+        var live = Settings.LiveTranscription;
+        var engine = live.Engine == "gemini"
+            ? "Gemini Live (" + (string.IsNullOrWhiteSpace(live.GeminiModel) ? GeminiLive.DefaultModel : live.GeminiModel.Trim()) + ")"
+            : "the local live model";
+        try { LiveTranscriptFile.Append(session, (long)line.At.TotalMilliseconds, SpeakerLabels.Display(line.Speaker), line.Text, engine); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+    }
     public event EventHandler<string>? LiveStatusChanged;
     /// <summary>The "summary ready" card should come up for this session folder.</summary>
     public event EventHandler<string>? SlackOfferReady;
