@@ -20,6 +20,7 @@
   <ItemGroup>
     <!-- The real-DLL echo test runs when these are present and skips otherwise. -->
     <None Include="../../native/localvqe/liblocalvqe.dll" Link="echo-runtime/liblocalvqe.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../native/localvqe/liblocalvqe.dll')" />
+    <None Include="../../native/sonora/sonora_ffi.dll" Link="echo-runtime/sonora_ffi.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../native/sonora/sonora_ffi.dll')" />
     <None Include="../../native/localvqe/localvqe-v1.4-aec-2.7K-f32.gguf" Link="echo-runtime/localvqe-v1.4-aec-2.7K-f32.gguf" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../native/localvqe/localvqe-v1.4-aec-2.7K-f32.gguf')" />
     <None Include="../../native/localvqe/localvqe-v1.4-aec-200K-f32.gguf" Link="echo-runtime/localvqe-v1.4-aec-200K-f32.gguf" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../native/localvqe/localvqe-v1.4-aec-200K-f32.gguf')" />
   </ItemGroup>

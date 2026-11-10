@@ -669,8 +669,11 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         if (!namedCloud && plan.Local is null) throw new InvalidOperationException($"No local model for '{engine}': {plan.Missing}");
         var measurePlan = namedCloud ? plan : plan with { Cloud = null };
         var overlap = OverlapFor(measurePlan, audio, current, output);
-        // A measurement times echo removal, so it never reuses or keeps a cleaned copy.
-        var (echoed, cleaned) = await HearAsync(output, audio, current, overlap, keep: false, cancellationToken).ConfigureAwait(false);
+        // A measurement times echo removal, so it never reuses a cleaned copy. The quality
+        // suite asks it to keep one in the fresh output folder, because it scores the cleaned
+        // mic against the clean speech it mixed in.
+        var keepCleaned = Environment.GetEnvironmentVariable("AMANU_MEASURE_KEEP_ECHO") == "1";
+        var (echoed, cleaned) = await HearAsync(output, audio, current, overlap, keep: keepCleaned, cancellationToken).ConfigureAwait(false);
         LevelAudio.Result? leveled = null;
         try
         {
@@ -744,7 +747,9 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                     prepared = await Task.Run(() => OfflineEchoAudio.Prepare(audio, threads =>
                     {
                         var assets = LocalVqeAssets.Resolve(model: model);
-                        return new LocalVqeBackend(assets.Library, assets.Model, threads);
+                        return model.IsSonora
+                            ? new SonoraBackend(assets.Library)
+                            : new LocalVqeBackend(assets.Library, assets.Model, threads);
                     }, cpu.Token, model), cpu.Token).ConfigureAwait(false);
                     break;
                 }
@@ -776,7 +781,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo stages: {prepared.Timings}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var echoRecord = new EchoCancellationRecord(model.ProcessorVersion,
             prepared.ModelRan ? model.Sha256 : null, EchoCanceller.SampleRate, prepared.Frames,
-            Mode: prepared.ModelRan ? "localvqe" : "silent_reference_passthrough",
+            Mode: !prepared.ModelRan ? "silent_reference_passthrough" : model.IsSonora ? "sonora" : "localvqe",
             DelayPrime: prepared.DelayPrime?.Describe());
         WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = echoRecord });
         if (keep)
@@ -788,9 +793,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                 await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo-cleaned audio not kept — {exception.Message}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
             }
         }
-        if (prepared.DelayPrime is { Applied: false } prime)
+        if (!model.IsSonora && prepared.DelayPrime is { Applied: false } prime)
             await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo delay prime unavailable ({prime.Status}); LocalVQE estimated the delay online{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var how = !prepared.ModelRan ? "no playback, mic kept exact"
+            : model.IsSonora ? "Sonora"
             : prepared.DelayPrime is { ShiftSamples: { } shift } ? $"LocalVQE, echo delay primed at {shift} samples"
             : "LocalVQE";
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} audio echo cancellation complete in {timer.Elapsed.TotalSeconds:0.0} s " +

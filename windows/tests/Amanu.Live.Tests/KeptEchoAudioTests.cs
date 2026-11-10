@@ -32,7 +32,7 @@ public sealed class KeptEchoAudioTests
             Tone(Path.Combine(directory, "system.wav"), 1.0, 440), null, 20, 0);
         var prepared = OfflineEchoAudio.Prepare(audio, _ => new PassBackend(), CancellationToken.None);
         var echo = new EchoCancellationRecord(LocalVqeAssets.Default.ProcessorVersion,
-            prepared.ModelRan ? LocalVqeAssets.Default.Sha256 : null, EchoCanceller.SampleRate, prepared.Frames, Mode: "localvqe");
+            prepared.ModelRan ? LocalVqeAssets.Default.Sha256 : null, EchoCanceller.SampleRate, prepared.Frames, Mode: "sonora");
         var kept = OfflineEchoAudio.Keep(prepared, directory, echo, CancellationToken.None);
         Assert.False(Directory.Exists(prepared.Directory));
         return (directory, kept, echo);
@@ -83,7 +83,7 @@ public sealed class KeptEchoAudioTests
     }
 
     [Fact]
-    public void Audio_kept_by_another_LocalVQE_revision_is_not_reused()
+    public void Audio_kept_by_another_echo_remover_revision_is_not_reused()
     {
         var (directory, kept, _) = KeepOne();
         try
@@ -101,8 +101,8 @@ public sealed class KeptEchoAudioTests
         var (directory, _, _) = KeepOne();
         try
         {
-            Assert.NotNull(OfflineEchoAudio.TryReuse(directory, LocalVqeAssets.Fast));
-            Assert.Null(OfflineEchoAudio.TryReuse(directory, LocalVqeAssets.Thorough));
+            Assert.NotNull(OfflineEchoAudio.TryReuse(directory, LocalVqeAssets.Default));
+            Assert.Null(OfflineEchoAudio.TryReuse(directory, LocalVqeAssets.Fast));
         }
         finally { Directory.Delete(directory, recursive: true); }
     }

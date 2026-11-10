@@ -319,12 +319,14 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void The_fast_echo_model_is_the_default_and_the_setting_picks_the_other()
+    public void Sonora_is_the_default_echo_remover_and_the_setting_picks_the_others()
     {
-        Assert.Equal("fast", new AppSettings().EchoModel);
-        Assert.Same(LocalVqeAssets.Fast, LocalVqeAssets.For(new AppSettings().EchoModel));
+        Assert.Equal("sonora", new AppSettings().EchoModel);
+        Assert.Same(LocalVqeAssets.Sonora, LocalVqeAssets.For(new AppSettings().EchoModel));
+        Assert.True(LocalVqeAssets.Sonora.IsSonora);
+        Assert.Same(LocalVqeAssets.Fast, LocalVqeAssets.For("fast"));
         Assert.Same(LocalVqeAssets.Thorough, LocalVqeAssets.For(JsonSerializer.Deserialize<AppSettings>("""{"echo_model": "thorough"}""")!.EchoModel));
-        Assert.Same(LocalVqeAssets.Fast, LocalVqeAssets.For("nonsense"));
+        Assert.Same(LocalVqeAssets.Sonora, LocalVqeAssets.For("nonsense"));
         Assert.Equal(AppSettings.EchoModels, LocalVqeAssets.Models.Select(model => model.Key));
     }
 
@@ -353,7 +355,7 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
     {
         public LocalVqeFactAttribute()
         {
-            try { LocalVqeAssets.Resolve(); }
+            try { LocalVqeAssets.Resolve(model: LocalVqeAssets.Fast); }
             catch (EchoCancellationException) { Skip = "LocalVQE is not in echo-runtime\\ beside the tests."; }
             if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess) Skip = "LocalVQE is built for 64-bit Windows.";
         }
@@ -413,15 +415,59 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
         Assert.True(Math.Abs(nearBefore - nearAfter) < 1, $"near-end speech changed by {nearAfter - nearBefore:0.0} dB");
     }
 
+    [Fact]
+    public void Sonora_removes_far_end_echo_and_keeps_near_end_speech()
+    {
+        var library = Path.Combine(AppContext.BaseDirectory, LocalVqeAssets.RuntimeFolder, SonoraBackend.LibraryName);
+        if (!File.Exists(library)) return;
+        const int rate = 16_000;
+        var frames = 14 * rate;
+        var farEnd = Signal(99, frames);
+        var reference = new float[frames];
+        var mic = new float[frames];
+        var farEnds = 8 * rate;
+        Array.Copy(farEnd, reference, farEnds);
+        const int delay = 30 * rate / 1000;
+        for (var index = delay; index < farEnds + delay; index++) mic[index] += 0.5f * farEnd[index - delay];
+        var nearFrom = 9 * rate + rate / 2;
+        for (var index = nearFrom; index < frames; index++)
+        {
+            var t = (double)index / rate;
+            mic[index] += (float)(0.08 * Math.Sin(2 * Math.PI * 200 * t) + 0.04 * Math.Sin(2 * Math.PI * 400 * t) + 0.02 * Math.Sin(2 * Math.PI * 600 * t));
+        }
+
+        var timer = Stopwatch.StartNew();
+        var (cleaned, system) = Run(mic, reference, new SonoraBackend(library));
+        timer.Stop();
+
+        static double Db(float[] samples, int from, int to)
+        {
+            double sum = 0;
+            for (var index = from; index < to; index++) sum += samples[index] * (double)samples[index];
+            return 10 * Math.Log10(sum / (to - from) + 1e-20);
+        }
+        var echoBefore = Db(mic, 3 * rate, farEnds);
+        var echoAfter = Db(cleaned, 3 * rate, farEnds);
+        var nearBefore = Db(mic, nearFrom + rate / 2, frames);
+        var nearAfter = Db(cleaned, nearFrom + rate / 2, frames);
+        output.WriteLine($"Sonora: echo {echoBefore:0.0} -> {echoAfter:0.0} dB; near end {nearBefore:0.0} -> {nearAfter:0.0} dB; " +
+                         $"{frames / (double)rate / timer.Elapsed.TotalSeconds:0.0}x real time");
+
+        Assert.Equal(frames, cleaned.Length);
+        Assert.Equal(reference, system);
+        Assert.True(echoBefore - echoAfter > 10, $"echo only dropped {echoBefore - echoAfter:0.0} dB");
+        Assert.True(Math.Abs(nearBefore - nearAfter) < 1, $"near-end speech changed by {nearAfter - nearBefore:0.0} dB");
+    }
+
     [LocalVqeFact]
     public void LocalVQE_loads_its_model_from_a_non_ascii_folder()
     {
-        var assets = LocalVqeAssets.Resolve();
+        var assets = LocalVqeAssets.Resolve(model: LocalVqeAssets.Fast);
         var folder = Path.Combine(Path.GetTempPath(), $"amanu-эхо-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         try
         {
-            var model = Path.Combine(folder, LocalVqeAssets.Default.FileName);
+            var model = Path.Combine(folder, LocalVqeAssets.Fast.FileName);
             File.Copy(assets.Model, model);
             using var backend = new LocalVqeBackend(assets.Library, model);
             Assert.Equal(256, backend.HopSize);

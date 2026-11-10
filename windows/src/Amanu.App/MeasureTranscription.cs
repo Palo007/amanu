@@ -35,6 +35,13 @@ internal static class MeasureTranscription
             // Measurement only: try level normalization on or off without changing config.json.
             if (Environment.GetEnvironmentVariable("AMANU_MEASURE_LEVELS") is { Length: > 0 } levels)
                 settings.Transcription.LevelNormalization = levels;
+            // Measurement only: the quality suite runs one recording through every echo
+            // remover, and "off" gives the baseline of no echo removal, without touching config.json.
+            if (Environment.GetEnvironmentVariable("AMANU_MEASURE_ECHO") is { Length: > 0 } echo)
+            {
+                settings.OfflineEchoCancellation = echo != "off";
+                if (echo != "off") settings.EchoModel = echo;
+            }
             // The same limit as the running app: one Gemini request took six minutes in a test,
             // and the default of 100 s would fail a cloud engine that the app itself would let finish.
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };

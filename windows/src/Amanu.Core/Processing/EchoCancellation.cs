@@ -13,7 +13,11 @@ namespace Amanu.Core.Processing;
 /// The audio path's revision with this model: changing it changes the .echo-* cache
 /// folder's name. v3 is macOS's; v4 adds the whole-signal delay prime.
 /// </param>
-public sealed record LocalVqeModel(string Key, string FileName, string Sha256, string ProcessorVersion);
+public sealed record LocalVqeModel(string Key, string FileName, string Sha256, string ProcessorVersion)
+{
+    /// <summary>Sonora is not a LocalVQE model but shares this record, so the setting, the cache identity and the ledger treat all three alike.</summary>
+    public bool IsSonora => Key == LocalVqeAssets.Sonora.Key;
+}
 
 public static class LocalVqeAssets
 {
@@ -23,8 +27,18 @@ public static class LocalVqeAssets
     /// <summary>
     /// The adaptive filter alone, without the neural mask. It removed echo 2.2 times
     /// faster than the 200K model on two real calls (65 s against 145 s, 78 s against
-    /// 169 s) with the same word errors within three words, so it is the default.
+    /// 169 s) with the same word errors within three words.
     /// </summary>
+    /// <summary>
+    /// Sonora, a Rust port of WebRTC's AEC3 echo canceller (sonora_ffi.dll, BSD-3-Clause).
+    /// On two real calls it removed echo 13 to 15 times faster than the 2.7K model
+    /// (4.5 s against 66.5 s, 5.9 s against 74.4 s) with the same word errors within
+    /// three words, so it is the default. FileName is the DLL itself: it has no model file.
+    /// </summary>
+    public static readonly LocalVqeModel Sonora = new("sonora", "sonora_ffi.dll",
+        "a2afc38614aed013e1f158e180c8b4f80459df2a43f5e67f03bf2e82e6654deb",
+        "sonora-aec3-1632d47-amanu-v1");
+
     public static readonly LocalVqeModel Fast = new("fast", "localvqe-v1.4-aec-2.7K-f32.gguf",
         "d79f824f6ee6f58b2a7108d1df90db51c42c15a7400a5addbd3be9972ba657a4",
         "localvqe-v1.4-aec-2.7k-f32-amanu-v4-delay-prime");
@@ -34,9 +48,9 @@ public static class LocalVqeAssets
         "b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731",
         "localvqe-v1.4-aec-200k-f32-amanu-v4-delay-prime");
 
-    public static readonly IReadOnlyList<LocalVqeModel> Models = [Fast, Thorough];
+    public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough];
 
-    public static LocalVqeModel Default => Fast;
+    public static LocalVqeModel Default => Sonora;
 
     /// <summary>The model the echo_model setting names; an unknown name gets the default rather than no echo removal.</summary>
     public static LocalVqeModel For(string? key) =>
@@ -47,9 +61,13 @@ public static class LocalVqeAssets
     public static Paths Resolve(string? applicationDirectory = null, LocalVqeModel? model = null)
     {
         var root = Path.Combine(applicationDirectory ?? AppContext.BaseDirectory, RuntimeFolder);
-        var paths = new Paths(Path.Combine(root, LibraryName), Path.Combine(root, (model ?? Default).FileName));
+        model ??= Default;
+        // Sonora is one DLL with nothing to load into it, so both paths name that DLL.
+        var paths = model.IsSonora
+            ? new Paths(Path.Combine(root, model.FileName), Path.Combine(root, model.FileName))
+            : new Paths(Path.Combine(root, LibraryName), Path.Combine(root, model.FileName));
         foreach (var path in new[] { paths.Library, paths.Model })
-            if (!File.Exists(path)) throw new EchoCancellationException($"LocalVQE asset is missing: {path}");
+            if (!File.Exists(path)) throw new EchoCancellationException($"echo removal asset is missing: {path}");
         return paths;
     }
 

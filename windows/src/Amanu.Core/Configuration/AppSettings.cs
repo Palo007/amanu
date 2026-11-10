@@ -47,13 +47,14 @@ public sealed class AppSettings
     public bool OfflineEchoCancellation { get; set; } = true;
 
     /// <summary>
-    /// <c>fast</c>: LocalVQE's adaptive filter alone, about twice as fast. <c>thorough</c>:
-    /// the filter and a neural mask, for rooms whose echo is heavily reverberant.
+    /// <c>sonora</c>: WebRTC's AEC3 echo canceller, the default and by far the fastest.
+    /// <c>fast</c>: LocalVQE's adaptive filter alone. <c>thorough</c>: the filter and a
+    /// neural mask, for rooms whose echo is heavily reverberant.
     /// </summary>
     [JsonPropertyName("echo_model")]
-    public string EchoModel { get; set; } = "fast";
+    public string EchoModel { get; set; } = "sonora";
 
-    public static readonly IReadOnlyList<string> EchoModels = ["fast", "thorough"];
+    public static readonly IReadOnlyList<string> EchoModels = ["sonora", "fast", "thorough"];
 
     /// <summary>
     /// Keeps the echo-cleaned mic and its aligned call track in the session, so
