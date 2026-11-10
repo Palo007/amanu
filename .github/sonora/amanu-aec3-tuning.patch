@@ -1,8 +1,8 @@
 diff --git a/crates/sonora-ffi/src/functions.rs b/crates/sonora-ffi/src/functions.rs
-index 1018869..1dfa690 100644
+index 1018869..b6ce423 100644
 --- a/crates/sonora-ffi/src/functions.rs
 +++ b/crates/sonora-ffi/src/functions.rs
-@@ -58,6 +58,173 @@ pub extern "C" fn wap_create_with_config(config: WapConfig) -> *mut WapAudioProc
+@@ -58,6 +58,185 @@ pub extern "C" fn wap_create_with_config(config: WapConfig) -> *mut WapAudioProc
      }
  }
  
@@ -54,6 +54,18 @@ index 1018869..1dfa690 100644
 +        f32: erle.max_h;
 +        bool: erle.onset_detection;
 +        bool: filter.conservative_initial_phase;
++        usize: filter.refined.length_blocks;
++        f32: filter.refined.leakage_converged;
++        f32: filter.refined.leakage_diverged;
++        f32: filter.refined.error_floor;
++        f32: filter.refined.error_ceil;
++        usize: filter.coarse.length_blocks;
++        f32: filter.coarse.rate;
++        usize: filter.refined_initial.length_blocks;
++        usize: filter.coarse_initial.length_blocks;
++        f32: filter.initial_state_seconds;
++        usize: erle.num_sections;
++        usize: delay.delay_headroom_samples;
 +        bool: filter.use_linear_filter;
 +        bool: filter.export_linear_aec_output;
 +        f32: echo_audibility.audibility_threshold_lf;
