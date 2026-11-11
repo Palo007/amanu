@@ -747,9 +747,12 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                     prepared = await Task.Run(() => OfflineEchoAudio.Prepare(audio, threads =>
                     {
                         var assets = LocalVqeAssets.Resolve(model: model);
-                        return model.IsSonora
-                            ? new SonoraBackend(assets.Library)
-                            : new LocalVqeBackend(assets.Library, assets.Model, threads);
+                        if (!model.IsSonora) return new LocalVqeBackend(assets.Library, assets.Model, threads);
+                        if (model.SonoraPrime is null) return new SonoraBackend(assets.Library, model.SonoraTuning);
+                        // The delay prime is LocalVQE's; only its front end runs, so the small model is enough.
+                        var primer = LocalVqeAssets.Resolve(model: LocalVqeAssets.Fast);
+                        return new SonoraBackend(assets.Library, model.SonoraTuning, model.SonoraPrime,
+                            () => new LocalVqeBackend(primer.Library, primer.Model, 1));
                     }, cpu.Token, model), cpu.Token).ConfigureAwait(false);
                     break;
                 }
@@ -781,7 +784,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo stages: {prepared.Timings}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var echoRecord = new EchoCancellationRecord(model.ProcessorVersion,
             prepared.ModelRan ? model.Sha256 : null, EchoCanceller.SampleRate, prepared.Frames,
-            Mode: !prepared.ModelRan ? "silent_reference_passthrough" : model.IsSonora ? "sonora" : "localvqe",
+            Mode: !prepared.ModelRan ? "silent_reference_passthrough" : prepared.Solved ? "echo_solver" : model.IsSonora ? "sonora" : "localvqe",
             DelayPrime: prepared.DelayPrime?.Describe());
         WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = echoRecord });
         if (keep)
@@ -795,8 +798,15 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         }
         if (!model.IsSonora && prepared.DelayPrime is { Applied: false } prime)
             await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo delay prime unavailable ({prime.Status}); LocalVQE estimated the delay online{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+        // A primed Sonora variant without one delay for the whole recording runs as plain
+        // Sonora; the record still names the variant, so the log says what really ran.
+        if (model.SonoraPrime is not null && prepared.ModelRan && prepared.DelayPrime is { Applied: false } sonoraPrime)
+            await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo delay prime found no delay for the whole recording ({sonoraPrime.Status}); plain Sonora ran instead of {model.Key}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+        if (model.Solver is not null && prepared.ModelRan && !prepared.Solved)
+            await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} the echo solver found {prepared.Solver}; plain Sonora ran instead of {model.Key}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var how = !prepared.ModelRan ? "no playback, mic kept exact"
-            : model.IsSonora ? "Sonora"
+            : prepared.Solved ? $"echo solver, {prepared.Solver}"
+            : model.IsSonora ? prepared.DelayPrime is { ShiftSamples: { } fixedShift } ? $"Sonora, echo delay fixed at {fixedShift} samples" : "Sonora"
             : prepared.DelayPrime is { ShiftSamples: { } shift } ? $"LocalVQE, echo delay primed at {shift} samples"
             : "LocalVQE";
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} audio echo cancellation complete in {timer.Elapsed.TotalSeconds:0.0} s " +

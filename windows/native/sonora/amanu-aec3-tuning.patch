@@ -1,0 +1,604 @@
+diff --git a/crates/sonora-aec3/src/block_processor.rs b/crates/sonora-aec3/src/block_processor.rs
+index 9ed1ba2..c0be1c9 100644
+--- a/crates/sonora-aec3/src/block_processor.rs
++++ b/crates/sonora-aec3/src/block_processor.rs
+@@ -30,6 +30,25 @@ pub struct BlockProcessor {
+     render_event: BufferingEvent,
+     capture_call_counter: usize,
+     estimated_delay: Option<DelayEstimate>,
++    // Amanu: how often the echo path delay changed, each a full filter reset.
++    delay_changes: u64,
++}
++
++/// Amanu: AEC3 internals for offline diagnosis.
++#[derive(Debug, Clone, Copy, Default)]
++pub struct Aec3DebugState {
++    /// Delay changes (new detected delay or buffer flush) since creation.
++    pub delay_changes: u64,
++    /// The render buffer delay in blocks.
++    pub render_delay_blocks: i32,
++    /// The linear filter's direct-path delay in blocks.
++    pub filter_delay_blocks: i32,
++    /// Whether AEC3 trusts its linear filter.
++    pub usable_linear_estimate: bool,
++    /// Whether transparent mode (no suppression) is active.
++    pub transparent_mode: bool,
++    /// Fullband ERLE estimate, log2 units.
++    pub erle_log2: f32,
+ }
+ 
+ /// Metrics output from the block processor.
+@@ -102,6 +121,20 @@ impl BlockProcessor {
+             render_event: BufferingEvent::None,
+             capture_call_counter: 0,
+             estimated_delay: None,
++            delay_changes: 0,
++        }
++    }
++
++    /// Amanu: AEC3 internals for offline diagnosis.
++    pub fn amanu_debug(&self) -> Aec3DebugState {
++        let state = self.echo_remover.aec_state();
++        Aec3DebugState {
++            delay_changes: self.delay_changes,
++            render_delay_blocks: self.render_buffer.delay() as i32,
++            filter_delay_blocks: state.min_direct_path_filter_delay(),
++            usable_linear_estimate: state.usable_linear_estimate(),
++            transparent_mode: state.transparent_mode_active(),
++            erle_log2: state.fullband_erle_log2(),
+         }
+     }
+ 
+@@ -194,6 +227,10 @@ impl BlockProcessor {
+             self.render_buffer.align_from_external_delay();
+         }
+ 
++        if echo_path_variability.delay_change != DelayAdjustment::None {
++            self.delay_changes += 1;
++        }
++
+         // Remove the echo from the capture signal.
+         if has_delay_estimator || self.render_buffer.has_received_buffer_delay() {
+             let render_buffer = self.render_buffer.get_render_buffer();
+diff --git a/crates/sonora-aec3/src/config.rs b/crates/sonora-aec3/src/config.rs
+index 40624d1..fcb60de 100644
+--- a/crates/sonora-aec3/src/config.rs
++++ b/crates/sonora-aec3/src/config.rs
+@@ -299,6 +299,8 @@ impl EchoCanceller3Config {
+         );
+ 
+         ok &= limit_f32(&mut self.suppressor.floor_first_increase, 0.0, 1_000_000.0);
++        ok &= limit_f32(&mut self.suppressor.amanu_gain_floor, 0.0, 1.0);
++        ok &= limit_f32(&mut self.suppressor.amanu_nearend_gain_floor, 0.0, 1.0);
+ 
+         ok
+     }
+@@ -943,6 +945,10 @@ pub struct Suppressor {
+     pub floor_first_increase: f32,
+     /// Whether to apply conservative suppression in HF bands.
+     pub conservative_hf_suppression: bool,
++    /// Amanu: the lowest suppression gain any band gets, 0 to 1 (default: 0, no floor).
++    pub amanu_gain_floor: f32,
++    /// Amanu: the lowest gain while the near end is dominant, 0 to 1 (default: 0, no floor).
++    pub amanu_nearend_gain_floor: f32,
+ }
+ 
+ impl Default for Suppressor {
+@@ -989,6 +995,8 @@ impl Default for Suppressor {
+             high_frequency_suppression: HighFrequencySuppression::default(),
+             floor_first_increase: 0.00001,
+             conservative_hf_suppression: false,
++            amanu_gain_floor: 0.0,
++            amanu_nearend_gain_floor: 0.0,
+         }
+     }
+ }
+diff --git a/crates/sonora-aec3/src/echo_remover.rs b/crates/sonora-aec3/src/echo_remover.rs
+index c5ffbe2..781817e 100644
+--- a/crates/sonora-aec3/src/echo_remover.rs
++++ b/crates/sonora-aec3/src/echo_remover.rs
+@@ -234,6 +234,11 @@ impl EchoRemover {
+         }
+     }
+ 
++    /// Amanu: the echo canceller's state, for diagnosis.
++    pub(crate) fn aec_state(&self) -> &AecState {
++        &self.aec_state
++    }
++
+     /// Returns current echo removal metrics.
+     pub(crate) fn get_metrics(&self) -> EchoRemoverMetricsOutput {
+         EchoRemoverMetricsOutput {
+@@ -469,6 +474,21 @@ impl EchoRemover {
+                 &mut g,
+             );
+ 
++            // Amanu: no band is suppressed below the gain floor, so the near voice keeps
++            // at least that much of its level when AEC3 mistakes it for echo. While the
++            // near end is dominant a separate floor holds, so echo alone can still be
++            // suppressed fully.
++            let mut floor = self.config.suppressor.amanu_gain_floor;
++            if self.suppression_gain.is_dominant_nearend() {
++                floor = floor.max(self.config.suppressor.amanu_nearend_gain_floor);
++            }
++            if floor > 0.0 {
++                for gain in g.iter_mut() {
++                    *gain = gain.max(floor);
++                }
++                high_bands_gain = high_bands_gain.max(floor);
++            }
++
+             self.suppression_filter.apply_gain(
+                 comfort_noise,
+                 high_band_comfort_noise,
+diff --git a/crates/sonora-ffi/src/functions.rs b/crates/sonora-ffi/src/functions.rs
+index 1018869..e032450 100644
+--- a/crates/sonora-ffi/src/functions.rs
++++ b/crates/sonora-ffi/src/functions.rs
+@@ -58,6 +58,261 @@ pub extern "C" fn wap_create_with_config(config: WapConfig) -> *mut WapAudioProc
+     }
+ }
+ 
++/// Amanu: applies one `path=value` entry to an AEC3 configuration. Returns
++/// `false` if the path is unknown or the value does not parse. `output=linear`
++/// sets `filter.export_linear_aec_output` and `*output_linear`.
++fn apply_aec3_entry(
++    cfg: &mut sonora::config::EchoCanceller3Config,
++    output_linear: &mut bool,
++    key: &str,
++    value: &str,
++) -> bool {
++    macro_rules! knobs {
++        ($($t:ty : $($f:ident).+ ;)*) => {
++            $(
++                if key == stringify!($($f).+).replace(' ', "") {
++                    return match value.parse::<$t>() {
++                        Ok(v) => { cfg$(.$f)+ = v; true }
++                        Err(_) => false,
++                    };
++                }
++            )*
++        };
++    }
++    if key == "output" {
++        return match value {
++            "linear" => {
++                cfg.filter.export_linear_aec_output = true;
++                *output_linear = true;
++                true
++            }
++            "suppressed" => {
++                *output_linear = false;
++                true
++            }
++            _ => false,
++        };
++    }
++    knobs! {
++        f32: ep_strength.default_gain;
++        f32: ep_strength.default_len;
++        f32: ep_strength.nearend_len;
++        bool: ep_strength.echo_can_saturate;
++        bool: ep_strength.bounded_erl;
++        bool: ep_strength.erle_onset_compensation_in_dominant_nearend;
++        bool: ep_strength.use_conservative_tail_frequency_response;
++        f32: erle.min;
++        f32: erle.max_l;
++        f32: erle.max_h;
++        bool: erle.onset_detection;
++        bool: filter.conservative_initial_phase;
++        usize: filter.refined.length_blocks;
++        f32: filter.refined.leakage_converged;
++        f32: filter.refined.leakage_diverged;
++        f32: filter.refined.error_floor;
++        f32: filter.refined.error_ceil;
++        usize: filter.coarse.length_blocks;
++        f32: filter.coarse.rate;
++        usize: filter.refined_initial.length_blocks;
++        usize: filter.coarse_initial.length_blocks;
++        f32: filter.initial_state_seconds;
++        usize: erle.num_sections;
++        usize: delay.delay_headroom_samples;
++        usize: delay.default_delay;
++        usize: delay.num_filters;
++        usize: delay.hysteresis_limit_blocks;
++        usize: delay.fixed_capture_delay_samples;
++        f32: delay.delay_estimate_smoothing;
++        f32: delay.delay_estimate_smoothing_delay_found;
++        f32: delay.delay_candidate_detection_threshold;
++        i32: delay.delay_selection_thresholds.initial;
++        i32: delay.delay_selection_thresholds.converged;
++        bool: delay.use_external_delay_estimator;
++        bool: delay.detect_pre_echo;
++        f32: filter.refined.noise_gate;
++        f32: filter.coarse.noise_gate;
++        f32: filter.refined_initial.leakage_converged;
++        f32: filter.refined_initial.leakage_diverged;
++        f32: filter.refined_initial.error_floor;
++        f32: filter.refined_initial.error_ceil;
++        f32: filter.coarse_initial.rate;
++        usize: filter.config_change_duration_blocks;
++        i32: filter.coarse_reset_hangover_blocks;
++        bool: filter.enable_coarse_filter_output_usage;
++        bool: filter.high_pass_filter_echo_reference;
++        bool: filter.use_linear_filter;
++        bool: filter.export_linear_aec_output;
++        f32: echo_audibility.audibility_threshold_lf;
++        f32: echo_audibility.audibility_threshold_mf;
++        f32: echo_audibility.audibility_threshold_hf;
++        bool: echo_removal_control.linear_and_stable_echo_path;
++        f32: comfort_noise.noise_floor_dbfs;
++        usize: suppressor.nearend_average_blocks;
++        f32: suppressor.normal_tuning.mask_lf.enr_transparent;
++        f32: suppressor.normal_tuning.mask_lf.enr_suppress;
++        f32: suppressor.normal_tuning.mask_lf.emr_transparent;
++        f32: suppressor.normal_tuning.mask_hf.enr_transparent;
++        f32: suppressor.normal_tuning.mask_hf.enr_suppress;
++        f32: suppressor.normal_tuning.mask_hf.emr_transparent;
++        f32: suppressor.normal_tuning.max_inc_factor;
++        f32: suppressor.normal_tuning.max_dec_factor_lf;
++        f32: suppressor.nearend_tuning.mask_lf.enr_transparent;
++        f32: suppressor.nearend_tuning.mask_lf.enr_suppress;
++        f32: suppressor.nearend_tuning.mask_lf.emr_transparent;
++        f32: suppressor.nearend_tuning.mask_hf.enr_transparent;
++        f32: suppressor.nearend_tuning.mask_hf.enr_suppress;
++        f32: suppressor.nearend_tuning.mask_hf.emr_transparent;
++        f32: suppressor.nearend_tuning.max_inc_factor;
++        f32: suppressor.nearend_tuning.max_dec_factor_lf;
++        f32: suppressor.dominant_nearend_detection.enr_threshold;
++        f32: suppressor.dominant_nearend_detection.enr_exit_threshold;
++        f32: suppressor.dominant_nearend_detection.snr_threshold;
++        i32: suppressor.dominant_nearend_detection.hold_duration;
++        i32: suppressor.dominant_nearend_detection.trigger_threshold;
++        bool: suppressor.dominant_nearend_detection.use_during_initial_phase;
++        bool: suppressor.dominant_nearend_detection.use_unbounded_echo_spectrum;
++        bool: suppressor.use_subband_nearend_detection;
++        usize: suppressor.subband_nearend_detection.nearend_average_blocks;
++        f32: suppressor.subband_nearend_detection.nearend_threshold;
++        f32: suppressor.subband_nearend_detection.snr_threshold;
++        f32: suppressor.high_bands_suppression.enr_threshold;
++        f32: suppressor.high_bands_suppression.max_gain_during_echo;
++        f32: suppressor.floor_first_increase;
++        bool: suppressor.conservative_hf_suppression;
++        f32: suppressor.amanu_gain_floor;
++        f32: suppressor.amanu_nearend_gain_floor;
++    }
++    false
++}
++
++/// Amanu: parses a `path=value;...` tuning. `Err(index)` is the 1-based index
++/// of the first entry that is not understood.
++fn parse_aec3_tuning(
++    tuning: *const c_char,
++) -> Result<(sonora::config::EchoCanceller3Config, bool), i32> {
++    let mut cfg = sonora::config::EchoCanceller3Config::default();
++    let mut output_linear = false;
++    if tuning.is_null() {
++        return Ok((cfg, output_linear));
++    }
++    // Safety: the caller passes a NUL-terminated string.
++    let text = unsafe { std::ffi::CStr::from_ptr(tuning) };
++    let Ok(text) = text.to_str() else {
++        return Err(1);
++    };
++    let entries = text.split(';').map(str::trim).filter(|e| !e.is_empty());
++    for (index, entry) in entries.enumerate() {
++        let position = i32::try_from(index + 1).unwrap_or(i32::MAX);
++        let Some((key, value)) = entry.split_once('=') else {
++            return Err(position);
++        };
++        if !apply_aec3_entry(&mut cfg, &mut output_linear, key.trim(), value.trim()) {
++            return Err(position);
++        }
++    }
++    Ok((cfg, output_linear))
++}
++
++/// Amanu: like [`wap_create_with_config()`], but starts from the default AEC3
++/// configuration changed by `tuning`, a NUL-terminated list of `path=value`
++/// entries separated by `;` (paths as in `EchoCanceller3Config`, for example
++/// `suppressor.dominant_nearend_detection.enr_threshold=1.0`). The entry
++/// `output=linear` hands out the linear filter's output instead of the
++/// suppressed one. NULL or empty tuning gives the default AEC3 configuration.
++///
++/// Returns `NULL` if an entry is not understood (see
++/// [`wap_check_aec3_tuning()`]) or on internal error.
++///
++/// # Safety
++///
++/// `tuning` must be NULL or point to a NUL-terminated string.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn wap_create_with_aec3_tuning(
++    config: WapConfig,
++    tuning: *const c_char,
++) -> *mut WapAudioProcessing {
++    ffi_guard_ptr! {
++        let Ok((aec3, output_linear)) = parse_aec3_tuning(tuning) else {
++            return ptr::null_mut();
++        };
++        let rust_config = config.to_rust();
++        let apm = AudioProcessing::builder()
++            .config(rust_config)
++            .echo_canceller3_config(aec3)
++            .aec3_output_linear(output_linear)
++            .build();
++        let boxed = Box::new(WapAudioProcessing { inner: apm });
++        Box::into_raw(boxed)
++    }
++}
++
++/// Amanu: returns 0 if `tuning` is understood, otherwise the 1-based index of
++/// the first entry that is not, or -1 on internal error.
++///
++/// # Safety
++///
++/// `tuning` must be NULL or point to a NUL-terminated string.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn wap_check_aec3_tuning(tuning: *const c_char) -> i32 {
++    match panic::catch_unwind(AssertUnwindSafe(move || parse_aec3_tuning(tuning))) {
++        Ok(Ok(_)) => 0,
++        Ok(Err(index)) => index,
++        Err(_) => -1,
++    }
++}
++
++/// Amanu: AEC3 internals for offline diagnosis.
++#[repr(C)]
++#[derive(Debug, Clone, Copy, Default)]
++pub struct WapAec3Debug {
++    /// Echo path delay changes since creation; each one fully resets the linear filter.
++    pub delay_changes: u64,
++    /// The render buffer delay in 4 ms blocks.
++    pub render_delay_blocks: i32,
++    /// The linear filter's direct-path delay in 4 ms blocks.
++    pub filter_delay_blocks: i32,
++    /// Whether AEC3 trusts its linear filter.
++    pub usable_linear_estimate: bool,
++    /// Whether transparent mode (no suppression) is active.
++    pub transparent_mode: bool,
++    /// AEC3's fullband ERLE estimate in dB.
++    pub erle_db: f32,
++}
++
++/// Amanu: reads AEC3's internal state into `out`. Returns
++/// `WapError::NullPointer` for a null argument and `WapError::BadStreamParameter`
++/// when no echo canceller runs.
++///
++/// # Safety
++///
++/// `apm` must be a valid pointer from a `wap_create*` function and `out`
++/// must point to a writable `WapAec3Debug`.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn wap_aec3_debug(
++    apm: *const WapAudioProcessing,
++    out: *mut WapAec3Debug,
++) -> WapError {
++    ffi_guard! {
++        if apm.is_null() || out.is_null() {
++            return WapError::NullPointer;
++        }
++        let apm = unsafe { &*apm };
++        let Some(state) = apm.inner.amanu_aec3_debug() else {
++            return WapError::BadStreamParameter;
++        };
++        let debug = WapAec3Debug {
++            delay_changes: state.delay_changes,
++            render_delay_blocks: state.render_delay_blocks,
++            filter_delay_blocks: state.filter_delay_blocks,
++            usable_linear_estimate: state.usable_linear_estimate,
++            transparent_mode: state.transparent_mode,
++            erle_db: state.erle_log2 * 3.010_3,
++        };
++        unsafe { ptr::write(out, debug) };
++        WapError::None
++    }
++}
++
+ /// Destroys an audio processing instance and frees its memory.
+ ///
+ /// Passing `NULL` is a safe no-op. After this call the pointer is invalid.
+diff --git a/crates/sonora/src/audio_processing.rs b/crates/sonora/src/audio_processing.rs
+index 537b412..8e6d23e 100644
+--- a/crates/sonora/src/audio_processing.rs
++++ b/crates/sonora/src/audio_processing.rs
+@@ -314,6 +314,7 @@ pub struct AudioProcessingBuilder {
+     render_config: StreamConfig,
+     echo_detector: bool,
+     echo_canceller3_config: Option<EchoCanceller3Config>,
++    aec3_output_linear: bool,
+ }
+ 
+ impl Default for AudioProcessingBuilder {
+@@ -324,6 +325,7 @@ impl Default for AudioProcessingBuilder {
+             render_config: DEFAULT_STREAM_CONFIG,
+             echo_detector: false,
+             echo_canceller3_config: None,
++            aec3_output_linear: false,
+         }
+     }
+ }
+@@ -375,12 +377,20 @@ impl AudioProcessingBuilder {
+         self
+     }
+ 
++    /// Amanu: output the linear AEC3 filter's result (before the nonlinear
++    /// suppressor). The AEC3 config must set `filter.export_linear_aec_output`.
++    pub fn aec3_output_linear(mut self, output_linear: bool) -> Self {
++        self.aec3_output_linear = output_linear;
++        self
++    }
++
+     /// Build the [`AudioProcessing`] instance.
+     pub fn build(self) -> AudioProcessing {
+         let mut inner = AudioProcessingImpl::with_config(self.config);
+         if let Some(config) = self.echo_canceller3_config {
+             inner.set_echo_canceller3_config(config);
+         }
++        inner.set_aec3_output_linear(self.aec3_output_linear);
+ 
+         if self.echo_detector {
+             inner.set_echo_detector();
+@@ -579,6 +589,11 @@ impl AudioProcessing {
+         self.inner.get_statistics()
+     }
+ 
++    /// Amanu: AEC3 internals for offline diagnosis; `None` without an echo canceller.
++    pub fn amanu_aec3_debug(&self) -> Option<sonora_aec3::block_processor::Aec3DebugState> {
++        self.inner.amanu_aec3_debug()
++    }
++
+     /// Sets the applied input volume (e.g. from the OS mixer).
+     ///
+     /// Must be called before [`process_capture_f32()`](Self::process_capture_f32) if the input
+diff --git a/crates/sonora/src/audio_processing_impl.rs b/crates/sonora/src/audio_processing_impl.rs
+index 72630d2..912ef84 100644
+--- a/crates/sonora/src/audio_processing_impl.rs
++++ b/crates/sonora/src/audio_processing_impl.rs
+@@ -168,6 +168,8 @@ pub(crate) struct AudioProcessingImpl {
+     capture_rms_interval_counter: usize,
+     // AEC3 tuning given to the builder; the default configuration if `None`.
+     echo_canceller3_config: Option<EchoCanceller3Config>,
++    // Amanu: hand out the linear AEC output instead of the suppressed one.
++    aec3_output_linear: bool,
+ }
+ 
+ impl AudioProcessingImpl {
+@@ -197,6 +199,7 @@ impl AudioProcessingImpl {
+             capture_output_rms: RmsLevel::new(),
+             capture_rms_interval_counter: 0,
+             echo_canceller3_config: None,
++            aec3_output_linear: false,
+         };
+         if !DenormalDisabler::is_supported() {
+             tracing::info!("Denormal disabler unsupported");
+@@ -210,6 +213,11 @@ impl AudioProcessingImpl {
+         self.echo_canceller3_config = Some(config);
+     }
+ 
++    /// Amanu: use the linear AEC output as the capture output.
++    pub(crate) fn set_aec3_output_linear(&mut self, output_linear: bool) {
++        self.aec3_output_linear = output_linear;
++    }
++
+     /// Installs the residual echo detector (opt-in).
+     ///
+     /// Must be called before `initialize()`.
+@@ -325,6 +333,11 @@ impl AudioProcessingImpl {
+         self.capture.applied_input_volume
+     }
+ 
++    /// Amanu: AEC3 internals for offline diagnosis; `None` without an echo canceller.
++    pub(crate) fn amanu_aec3_debug(&self) -> Option<sonora_aec3::block_processor::Aec3DebugState> {
++        self.submodules.echo_controller.as_ref().map(|ec| ec.amanu_debug())
++    }
++
+     /// Sets the stream delay in ms (forwarded from the public API).
+     pub(crate) fn set_stream_delay_ms(&mut self, delay_ms: i32) {
+         self.capture.was_stream_delay_set = true;
+@@ -1339,13 +1352,15 @@ impl AudioProcessingImpl {
+             None => Some(EchoCanceller3Config::create_default_multichannel_config()),
+         };
+ 
+-        self.submodules.echo_controller = Some(EchoCanceller3::new(
++        let mut echo_controller = EchoCanceller3::new(
+             config,
+             multichannel_config,
+             sample_rate_hz,
+             num_render_channels,
+             num_capture_channels,
+-        ));
++        );
++        echo_controller.set_output_linear(self.aec3_output_linear);
++        self.submodules.echo_controller = Some(echo_controller);
+     }
+ 
+     fn initialize_noise_suppressor(&mut self) {
+diff --git a/crates/sonora/src/echo_canceller3.rs b/crates/sonora/src/echo_canceller3.rs
+index ebccbc6..a00f9d3 100644
+--- a/crates/sonora/src/echo_canceller3.rs
++++ b/crates/sonora/src/echo_canceller3.rs
+@@ -313,6 +313,9 @@ pub(crate) struct EchoCanceller3 {
+     // State.
+     saturated_microphone_signal: bool,
+     api_call_metrics: ApiCallJitterMetrics,
++    // Amanu: write the linear filter's output (before the suppressor) to the
++    // capture buffer instead of the suppressed output.
++    output_linear: bool,
+ }
+ 
+ impl EchoCanceller3 {
+@@ -426,9 +429,16 @@ impl EchoCanceller3 {
+             block_processor,
+             saturated_microphone_signal: false,
+             api_call_metrics: ApiCallJitterMetrics::new(),
++            output_linear: false,
+         }
+     }
+ 
++    /// Amanu: replace the capture output with the linear AEC output. Needs
++    /// `filter.export_linear_aec_output` in the config; ignored without it.
++    pub(crate) fn set_output_linear(&mut self, output_linear: bool) {
++        self.output_linear = output_linear && self.linear_output_framer.is_some();
++    }
++
+     /// Re-initializes internal state (called when stereo content changes).
+     fn initialize(&mut self) {
+         self.num_render_channels_to_aec = if self
+@@ -493,7 +503,8 @@ impl EchoCanceller3 {
+         debug_assert_eq!(SPLIT_BAND_SIZE, capture.num_frames_per_band());
+         debug_assert_eq!(capture.num_channels(), self.num_capture_channels);
+ 
+-        if linear_output.is_some() && self.linear_output_framer.is_none() {
++        let has_linear = linear_output.is_some() || self.output_linear;
++        if has_linear && self.linear_output_framer.is_none() {
+             tracing::error!(
+                 "Trying to retrieve the linear AEC output without properly configuring AEC3."
+             );
+@@ -525,7 +536,7 @@ impl EchoCanceller3 {
+         for sub_frame_idx in 0..2 {
+             self.process_capture_sub_frame(
+                 capture,
+-                linear_output.is_some(),
++                has_linear,
+                 level_change,
+                 aec_reference_is_downmixed_stereo,
+                 sub_frame_idx,
+@@ -536,7 +547,7 @@ impl EchoCanceller3 {
+         self.process_remaining_capture(
+             level_change,
+             aec_reference_is_downmixed_stereo,
+-            linear_output.is_some(),
++            has_linear,
+         );
+ 
+         // Write sub-frame views back to capture AudioBuffer.
+@@ -594,6 +605,7 @@ impl EchoCanceller3 {
+         write_sub_frame_to_audio_buffer(&self.capture_sub_frame_view, sub_frame_index, capture);
+ 
+         // Handle linear output framer.
++        let output_linear = self.output_linear;
+         if has_linear_output
+             && let (Some(lo_framer), Some(lo_block), Some(lo_view)) = (
+                 &mut self.linear_output_framer,
+@@ -602,6 +614,9 @@ impl EchoCanceller3 {
+             )
+         {
+             lo_framer.insert_block_and_extract_sub_frame(lo_block, lo_view);
++            if output_linear {
++                write_sub_frame_to_audio_buffer(lo_view, sub_frame_index, capture);
++            }
+         }
+     }
+ 
+@@ -696,6 +711,11 @@ impl EchoCanceller3 {
+         self.block_processor.get_metrics()
+     }
+ 
++    /// Amanu: AEC3 internals for offline diagnosis.
++    pub(crate) fn amanu_debug(&self) -> sonora_aec3::block_processor::Aec3DebugState {
++        self.block_processor.amanu_debug()
++    }
++
+     /// Provides an optional external estimate of the audio buffer delay.
+     pub(crate) fn set_audio_buffer_delay(&mut self, delay_ms: i32) {
+         self.block_processor.set_audio_buffer_delay(delay_ms);
