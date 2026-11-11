@@ -245,3 +245,43 @@ gate, with sherpa-onnx's `OfflineSpeechDenoiser`, which the app already carries.
 `solve-gate` (with the gate; the lab's `solve-res15-gate`). `p1.py` on one suite call
 (cafe, SER -5, SNR 0): the app's `solve-gate` output differs from the lab's by -39 dB;
 the solver takes 2.2 s for 156 s of audio.
+
+## 8. The proof: held-out set and suite with the app's build
+
+Held-out, lab pipeline (`ho.py lab:`): solve with suppressor 12.8 (against `thorough`
+-11.9 [-17.0, -6.8]); with the gate 11.7 (-13.0 [-18.0, -8.0]); 1 echo word each.
+
+Held-out, the app's models from the build of this branch (`AMANU_LAB_EXE`, `ho.py amanu:`):
+`solve-floor` 13.0 (-11.7 [-16.6, -6.8], echo time 175 s), `solve-gate` 11.8
+(-12.9 [-17.9, -7.9], 1320 s); 1 echo word each, against 119 for `thorough`. The app agrees
+with the lab within 0.2 points. By kind of call (`hg.py`), `solve-gate` against `thorough`:
+steady -3.8 [-6.4, -1.5], drift -17.5, device change -9.5, no echo +0.2 [-0.8, +0.6],
+12 minutes -18.4. The gate against `solve-floor`: -1.2 [-2.2, -0.3].
+
+Suite, the app's models (run `sonora-tuning` resumed for the echo calls):
+
+| Model | My WER | No noise | SNR 20..5 | SNR 0 | SNR -5 | Echo words | ERLE real | DT voice | Echo time |
+|---|---|---|---|---|---|---|---|---|---|
+| solve | 25.5 | 10.2 | 13.2 | 40.1 | 62.0 | 1 | 21.7 | -0.0 | 66 s |
+| solve-floor | 21.1 | 10.2 | 12.6 | 24.7 | 55.6 | 4 | 21.7 | -0.4 | 90 s |
+| solve-gate | 18.4 | 10.2 | 12.5 | 20.7 | 43.3 | 3 | 33.7 | -0.4 | 427 s |
+
+The lab loop had said 25.6, 21.0 and 18.6.
+
+Echo words: every one is a single word ("v", "tri") in cafe noise at 0 dB (office at
+-5 dB once in the lab). The oracle `nn-duckfar` of section 6, which has no echo in its
+input, inserts the same "v" in `echo-cafe-ser-5-snr+0`. They are the engine's errors on
+noisy speech that are also words of the far end, not echo. The bar's limit of 2 is still
+missed by one word for `solve-gate` and two for `solve-floor`.
+
+Time on an idle machine, one call of 156 s: solver 1.7 s, gate 7.0 s. DPDFNet alone takes
+2.4 s for 30 s on one thread, and six pieces side by side take 5.2 s: it does not scale
+with threads here.
+
+A mistake to avoid: `quality.py run --name sonora-tuning` without `--only` also starts
+the 754 clean-set files, because that run never held them.
+
+Conclusion: the bar is reached on the held-out set with a wide margin and on the suite
+except for the echo-word count. The headroom left on the suite (18.4 against 9.7) is
+noise over my words at SNR 0 and -5; it needs a denoiser the engine likes or the engine
+in the loop (family E), which were not tried.
