@@ -798,6 +798,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         }
         if (!model.IsSonora && prepared.DelayPrime is { Applied: false } prime)
             await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo delay prime unavailable ({prime.Status}); LocalVQE estimated the delay online{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+        // A primed Sonora variant without one delay for the whole recording runs as plain
+        // Sonora; the record still names the variant, so the log says what really ran.
+        if (model.SonoraPrime is not null && prepared.ModelRan && prepared.DelayPrime is { Applied: false } sonoraPrime)
+            await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo delay prime found no delay for the whole recording ({sonoraPrime.Status}); plain Sonora ran instead of {model.Key}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var how = !prepared.ModelRan ? "no playback, mic kept exact"
             : model.IsSonora ? prepared.DelayPrime is { ShiftSamples: { } fixedShift } ? $"Sonora, echo delay fixed at {fixedShift} samples" : "Sonora"
             : prepared.DelayPrime is { ShiftSamples: { } shift } ? $"LocalVQE, echo delay primed at {shift} samples"

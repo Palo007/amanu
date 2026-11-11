@@ -78,13 +78,12 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend, IEchoDelayP
     private int cleanedCount;
     private bool first = true;
 
-    // The delay prime, one window at a time, and the start of the recording kept for the warm-up.
+    // The delay prime, one window at a time, and the stretch of the recording kept for the warm-up.
     private IEchoDelayPrimer? windowPrimer;
     private int windowFed;
+    private int windowIndex;
     private readonly List<int> windowShifts = [];
-    private float[]? warmMicrophone;
-    private float[]? warmReference;
-    private int warmFilled;
+    private WarmupWindow? warmup;
     private int? externalDelayMs;
 
     public int SampleRate => 16_000;
@@ -198,6 +197,20 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend, IEchoDelayP
     /// </summary>
     public const int PrimeWindowSamples = 30 * EchoCanceller.SampleRate;
 
+    /// <summary>
+    /// After the first <see cref="PrimeFirstWindows"/>, only every fourth window is primed.
+    /// One device keeps one delay, so a sample of the windows finds it as well as all of
+    /// them, and the prime then costs about a quarter: with every window primed it took
+    /// about as long as Sonora itself on a long call.
+    /// </summary>
+    public const int PrimeWindowStride = 4;
+
+    /// <summary>
+    /// The first two minutes are primed window by window, so a short call is not decided by
+    /// its first 30 s alone, which often hold a join tone or a silent far end.
+    /// </summary>
+    public const int PrimeFirstWindows = 4;
+
     /// <summary>The share of confident windows that must agree with their median.</summary>
     public const double PrimeAgreement = 0.75;
 
@@ -212,34 +225,37 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend, IEchoDelayP
         var code = windowPrimer.BeginDelayPrime();
         if (code < 0) return GiveUp(code);
         windowFed = 0;
+        windowIndex = 0;
         windowShifts.Clear();
-        warmMicrophone = new float[prime.WarmupSeconds * EchoCanceller.SampleRate];
-        warmReference = new float[warmMicrophone.Length];
-        warmFilled = 0;
+        warmup = new WarmupWindow(prime.WarmupSeconds * EchoCanceller.SampleRate);
         return 0;
     }
 
     public int FeedDelayPrime(ReadOnlySpan<float> microphone, ReadOnlySpan<float> reference)
     {
         if (windowPrimer is null) return DelayPrime.Unsupported;
-        var keep = Math.Min(microphone.Length, warmMicrophone!.Length - warmFilled);
-        microphone[..keep].CopyTo(warmMicrophone.AsSpan(warmFilled));
-        reference[..keep].CopyTo(warmReference.AsSpan(warmFilled));
-        warmFilled += keep;
+        warmup!.Add(microphone, reference);
         // Window edges are multiples of 128 samples, as is every chunk the canceller feeds.
         for (var offset = 0; offset < microphone.Length;)
         {
             var take = Math.Min(microphone.Length - offset, PrimeWindowSamples - windowFed);
-            var code = windowPrimer.FeedDelayPrime(microphone.Slice(offset, take), reference.Slice(offset, take));
-            if (code < 0) return GiveUp(code);
+            if (Primed(windowIndex))
+            {
+                var code = windowPrimer.FeedDelayPrime(microphone.Slice(offset, take), reference.Slice(offset, take));
+                if (code < 0) return GiveUp(code);
+            }
             offset += take;
             windowFed += take;
             if (windowFed == PrimeWindowSamples)
             {
-                windowShifts.Add(windowPrimer.EndDelayPrime());
-                code = windowPrimer.BeginDelayPrime();
-                if (code < 0) return GiveUp(code);
+                if (Primed(windowIndex))
+                {
+                    windowShifts.Add(windowPrimer.EndDelayPrime());
+                    var code = windowPrimer.BeginDelayPrime();
+                    if (code < 0) return GiveUp(code);
+                }
                 windowFed = 0;
+                windowIndex++;
             }
         }
         return 0;
@@ -250,19 +266,24 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend, IEchoDelayP
         if (windowPrimer is null) return DelayPrime.Unsupported;
         // A short last window says little; one longer than half a window counts, and so
         // does the only one of a recording shorter than a window, which is the whole signal.
-        if (windowFed * 2 > PrimeWindowSamples || (windowShifts.Count == 0 && windowFed > 0))
+        if (Primed(windowIndex) && (windowFed * 2 > PrimeWindowSamples || (windowShifts.Count == 0 && windowFed > 0)))
             windowShifts.Add(windowPrimer.EndDelayPrime());
         if (Agreed(windowShifts) is not { } shift) return GiveUp(DelayPrime.NotConfident);
         ClosePrimers();
         externalDelayMs = shift * 1000 / EchoCanceller.SampleRate;
         Create((tuning is null ? "" : tuning + ";") + "delay.use_external_delay_estimator=true");
-        // The warm-up: the start of the recording once, output dropped, so the filter has converged when the stream begins.
+        // The warm-up: the stretch where the far end plays most, once, output dropped, so the
+        // filter has converged when the stream begins.
         var scratch = new float[Frame];
-        for (var start = 0; start + Frame <= warmFilled; start += Frame)
-            RunFrame(warmMicrophone.AsSpan(start, Frame), warmReference.AsSpan(start, Frame), scratch);
-        warmMicrophone = warmReference = null;
+        var warmMicrophone = warmup!.BestMicrophone;
+        var warmReference = warmup.BestReference;
+        for (var start = 0; start + Frame <= warmMicrophone.Length; start += Frame)
+            RunFrame(warmMicrophone.Slice(start, Frame), warmReference.Slice(start, Frame), scratch);
+        warmup = null;
         return shift;
     }
+
+    private static bool Primed(int window) => window < PrimeFirstWindows || window % PrimeWindowStride == 0;
 
     /// <summary>
     /// The one delay that fits the whole recording, or null: the median of the windows that
@@ -282,7 +303,7 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend, IEchoDelayP
     private int GiveUp(int code)
     {
         ClosePrimers();
-        warmMicrophone = warmReference = null;
+        warmup = null;
         if (apm == 0) Create(null);
         return code;
     }
@@ -323,7 +344,7 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend, IEchoDelayP
         cleanedCount -= HopSize;
     }
 
-    private void RunFrame(Span<float> microphone, Span<float> reference, Span<float> output)
+    private void RunFrame(ReadOnlySpan<float> microphone, ReadOnlySpan<float> reference, Span<float> output)
     {
         fixed (float* far = reference)
         fixed (float* farOut = referenceOut)
@@ -360,7 +381,102 @@ public sealed unsafe class SonoraBackend : IEchoCancellationBackend, IEchoDelayP
 /// When the delay is not the same over the whole recording, plain Sonora runs instead.
 /// </summary>
 /// <param name="WarmupSeconds">
-/// The first seconds of the recording run once before the stream, output dropped,
-/// so a long filter has converged by the time the stream begins.
+/// The length of the stretch of the recording in which the far end plays most; it runs
+/// once before the stream, output dropped, so a long filter has converged by the time
+/// the stream begins. The first seconds of a call were a poor choice: in the suite they
+/// held 20 s of far-end speech in 60 s, and the filter was 10 dB short when the stream began.
 /// </param>
 public sealed record SonoraPrime(int WarmupSeconds);
+
+/// <summary>
+/// Finds, in one pass over the recording, the stretch of <c>length</c> samples in which the
+/// far end plays most and keeps its audio: a ring of the last <c>length</c> samples, the
+/// activity of its 10 ms frames, and a copy taken at the end of a chunk (about 15 s in
+/// Amanu) when the ring holds more far-end speech than any stretch before it. Stretches
+/// that end inside a chunk are not considered, which costs at most a chunk's worth of
+/// the best stretch and saves a copy per frame. One stretch, not the active frames from all over the
+/// recording: AEC3 adapts wrongly at every join where its render history does not match
+/// the mic, and joining many short pieces left the filter worse than the first seconds did.
+/// </summary>
+public sealed class WarmupWindow
+{
+    public const int FrameSamples = 160;
+
+    /// <summary>A 10 ms frame of the far end is active above this mean power, -50 dBFS.</summary>
+    public const double ActivePower = 1e-5;
+
+    private readonly int length;
+    private readonly float[] ringMicrophone;
+    private readonly float[] ringReference;
+    private readonly bool[] ringActive;
+    private readonly float[] bestMicrophone;
+    private readonly float[] bestReference;
+    private long seen;
+    private int active;
+    private int bestActive = -1;
+    private int bestLength;
+    private double framePower;
+
+    public WarmupWindow(int length)
+    {
+        if (length <= 0 || length % FrameSamples != 0)
+            throw new ArgumentException($"the warm-up must be whole {FrameSamples}-sample frames", nameof(length));
+        this.length = length;
+        ringMicrophone = new float[length];
+        ringReference = new float[length];
+        ringActive = new bool[length / FrameSamples];
+        bestMicrophone = new float[length];
+        bestReference = new float[length];
+    }
+
+    /// <summary>The far end's active frames in the best stretch so far.</summary>
+    public int BestActiveFrames => Math.Max(bestActive, 0);
+
+    /// <summary>The mic of the best stretch so far, in order; shorter than the window only for a shorter recording.</summary>
+    public ReadOnlySpan<float> BestMicrophone => bestMicrophone.AsSpan(0, bestLength);
+
+    /// <summary>The far end of the best stretch so far.</summary>
+    public ReadOnlySpan<float> BestReference => bestReference.AsSpan(0, bestLength);
+
+    /// <summary>The next samples of the recording, in order; chunks may split frames anywhere.</summary>
+    public void Add(ReadOnlySpan<float> microphone, ReadOnlySpan<float> reference)
+    {
+        for (var index = 0; index < microphone.Length; index++)
+        {
+            var at = (int)(seen % length);
+            ringMicrophone[at] = microphone[index];
+            ringReference[at] = reference[index];
+            framePower += reference[index] * (double)reference[index];
+            seen++;
+            if (seen % FrameSamples != 0) continue;
+            var frame = (int)((seen / FrameSamples - 1) % ringActive.Length);
+            if (ringActive[frame]) active--;
+            ringActive[frame] = framePower / FrameSamples > ActivePower;
+            if (ringActive[frame]) active++;
+            framePower = 0;
+        }
+        Consider();
+    }
+
+    /// <summary>Copies the ring out when it holds more far-end speech than the best stretch so far.</summary>
+    private void Consider()
+    {
+        if (seen <= length)
+        {
+            // Not a full window yet: the recording so far is the stretch.
+            bestLength = (int)seen;
+            ringMicrophone.AsSpan(0, bestLength).CopyTo(bestMicrophone);
+            ringReference.AsSpan(0, bestLength).CopyTo(bestReference);
+            bestActive = active;
+            return;
+        }
+        if (active <= bestActive) return;
+        var start = (int)(seen % length);
+        ringMicrophone.AsSpan(start).CopyTo(bestMicrophone);
+        ringMicrophone.AsSpan(0, start).CopyTo(bestMicrophone.AsSpan(length - start));
+        ringReference.AsSpan(start).CopyTo(bestReference);
+        ringReference.AsSpan(0, start).CopyTo(bestReference.AsSpan(length - start));
+        bestLength = length;
+        bestActive = active;
+    }
+}

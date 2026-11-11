@@ -50,7 +50,7 @@ public static class LocalVqeAssets
     /// sonora_ffi.dll built with Amanu's patch (windows/native/sonora/amanu-aec3-tuning.patch),
     /// which adds wap_create_with_aec3_tuning and wap_aec3_debug. Without a tuning it runs exactly as before.
     /// </summary>
-    public const string SonoraSha256 = "35f84d9855dd22ed7a27fe99e444099d80f6a203bee0518c79801d8839e9bab5";
+    public const string SonoraSha256 = "26409ec9d1d4f27b30440656693417e313127b3fcce13711606f1b35878ca3ab";
 
     /// <summary>
     /// AEC3's linear filter alone: its output before the nonlinear suppressor, which is
@@ -91,18 +91,18 @@ public static class LocalVqeAssets
 
     /// <summary>
     /// AEC3 takes its echo delay from the delay prime instead of estimating it, with a 256 ms
-    /// filter and the first 60 s run once before the stream. In the quality suite's rooms
+    /// filter and the 60 s with the most far-end speech run once before the stream. In the quality suite's rooms
     /// AEC3's own delay estimate jumped about 90 times in 150 s, and every jump reset the
     /// linear filter, so the filter never covered the 300 to 550 ms room tails. Output is the
     /// linear filter's, before the suppressor, which lowered the near voice in double talk.
     /// When the delay is not the same over the recording, plain Sonora runs instead.
     /// </summary>
     public static readonly LocalVqeModel SonoraDelayLinear = new("sonora-delay-linear", SonoraBackend.LibraryName, SonoraSha256,
-        "sonora-aec3-1632d47-amanu-v4-delay-linear", FilterBlocks(64) + ";output=linear", new SonoraPrime(60));
+        "sonora-aec3-1632d47-amanu-v5-delay-linear", FilterBlocks(64) + ";output=linear", new SonoraPrime(60));
 
     /// <summary>The delay prime, filter and warm-up of <see cref="SonoraDelayLinear"/>, with the suppressor in its near-end tuning.</summary>
     public static readonly LocalVqeModel SonoraDelayNearend = new("sonora-delay-nearend", SonoraBackend.LibraryName, SonoraSha256,
-        "sonora-aec3-1632d47-amanu-v4-delay-nearend", FilterBlocks(64) + ";" + NearendTuning, new SonoraPrime(60));
+        "sonora-aec3-1632d47-amanu-v5-delay-nearend", FilterBlocks(64) + ";" + NearendTuning, new SonoraPrime(60));
 
     /// <summary>
     /// The delay prime, filter and warm-up of <see cref="SonoraDelayLinear"/> with WebRTC's
@@ -110,11 +110,30 @@ public static class LocalVqeAssets
     /// alone left enough echo in loud rooms to be transcribed as words.
     /// </summary>
     public static readonly LocalVqeModel SonoraDelayFloor = new("sonora-delay-floor", SonoraBackend.LibraryName, SonoraSha256,
-        "sonora-aec3-1632d47-amanu-v4-delay-floor", FilterBlocks(64) + GainFloor, new SonoraPrime(60));
+        "sonora-aec3-1632d47-amanu-v5-delay-floor", FilterBlocks(64) + GainFloor, new SonoraPrime(60));
 
     /// <summary><see cref="SonoraDelayFloor"/> with the suppressor in its near-end tuning.</summary>
     public static readonly LocalVqeModel SonoraDelayNearendFloor = new("sonora-delay-nearend-floor", SonoraBackend.LibraryName, SonoraSha256,
-        "sonora-aec3-1632d47-amanu-v4-delay-nearend-floor", FilterBlocks(64) + ";" + NearendTuning + GainFloor, new SonoraPrime(60));
+        "sonora-aec3-1632d47-amanu-v5-delay-nearend-floor", FilterBlocks(64) + ";" + NearendTuning + GainFloor, new SonoraPrime(60));
+
+    /// <summary><see cref="SonoraDelayFloor"/> with a floor of 0.7 (3 dB), which left no echo words in the lab.</summary>
+    public static readonly LocalVqeModel SonoraDelayFloor70 = new("sonora-delay-floor70", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v5-delay-floor70", FilterBlocks(64) + ";suppressor.amanu_gain_floor=0.7", new SonoraPrime(60));
+
+    /// <summary>
+    /// The suppressor in its near-end tuning, with a floor of 0.7 only while it finds the near
+    /// end dominant, so echo alone is still suppressed fully.
+    /// </summary>
+    public static readonly LocalVqeModel SonoraDelayNearendNf70 = new("sonora-delay-nearend-nf70", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v5-delay-nearend-nf70", FilterBlocks(64) + ";" + NearendTuning + ";suppressor.amanu_nearend_gain_floor=0.7", new SonoraPrime(60));
+
+    /// <summary>
+    /// The suppressor in its near-end tuning with a floor of 0.7 (3 dB) in every band: in the
+    /// lab it matched or beat LocalVQE fast in all three of my WER, my WER without noise and
+    /// echo words.
+    /// </summary>
+    public static readonly LocalVqeModel SonoraDelayNearendFloor70 = new("sonora-delay-nearend-floor70", SonoraBackend.LibraryName, SonoraSha256,
+        "sonora-aec3-1632d47-amanu-v5-delay-nearend-floor70", FilterBlocks(64) + ";" + NearendTuning + ";suppressor.amanu_gain_floor=0.7", new SonoraPrime(60));
 
     /// <summary>The suppressor keeps at least half of every band.</summary>
     private const string GainFloor = ";suppressor.amanu_gain_floor=0.5";
@@ -141,7 +160,7 @@ public static class LocalVqeAssets
         "b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731",
         "localvqe-v1.4-aec-200k-f32-amanu-v4-delay-prime");
 
-    public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough, SonoraLinear, SonoraNearend, SonoraGentle, SonoraLong, SonoraLong80, SonoraLong80Nearend, SonoraDelayLinear, SonoraDelayNearend, SonoraDelayFloor, SonoraDelayNearendFloor];
+    public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough, SonoraLinear, SonoraNearend, SonoraGentle, SonoraLong, SonoraLong80, SonoraLong80Nearend, SonoraDelayLinear, SonoraDelayNearend, SonoraDelayFloor, SonoraDelayNearendFloor, SonoraDelayFloor70, SonoraDelayNearendNf70, SonoraDelayNearendFloor70];
 
     public static LocalVqeModel Default => Sonora;
 

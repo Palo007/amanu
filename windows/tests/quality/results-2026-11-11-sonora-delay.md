@@ -21,10 +21,13 @@ WER = words wrong per 100 words. CER = characters wrong per 100 characters.
 | sonora-long | 37.2 | 5 | 8.1 | 14.0 | 48.6 |
 | sonora-long80 | 37.9 | 2 | 8.1 | 9.7 | 60.0 |
 | sonora-long80-nearend | 40.0 | 21 | 8.1 | 5.4 | 60.4 |
-| sonora-delay-linear | 33.1 | 88 | 8.1 | 9.3 | 86.8 |
-| sonora-delay-nearend | 31.4 | 3 | 8.1 | 14.1 | 86.8 |
-| sonora-delay-floor | 27.2 | 24 | 8.1 | 13.2 | 86.7 |
-| sonora-delay-nearend-floor | 27.4 | 15 | 8.1 | 11.8 | 86.6 |
+| sonora-delay-linear | 27.8 | 1 | 8.1 | 11.6 | 75.3 |
+| sonora-delay-nearend | 31.1 | 2 | 8.1 | 19.0 | 75.5 |
+| sonora-delay-floor | 23.6 | 5 | 8.1 | 15.6 | 75.5 |
+| sonora-delay-nearend-floor | 24.0 | 1 | 8.1 | 14.9 | 75.8 |
+| sonora-delay-floor70 | 25.2 | 2 | 8.1 | 13.8 | 75.2 |
+| sonora-delay-nearend-nf70 | 23.9 | 7 | 8.1 | 14.3 | 76.1 |
+| sonora-delay-nearend-floor70 | 25.5 | 2 | 8.1 | 13.5 | 75.7 |
 
 ## Real device echo (Microsoft AEC Challenge, far end only)
 
@@ -40,10 +43,13 @@ WER = words wrong per 100 words. CER = characters wrong per 100 characters.
 | sonora-long | 16.4 | 6.1 |
 | sonora-long80 | 10.8 | 8.4 |
 | sonora-long80-nearend | 5.7 | 8.7 |
-| sonora-delay-linear | 21.7 | 10.1 |
-| sonora-delay-nearend | 21.7 | 10.1 |
-| sonora-delay-floor | 21.7 | 10.7 |
-| sonora-delay-nearend-floor | 21.7 | 11.2 |
+| sonora-delay-linear | 21.7 | 7.5 |
+| sonora-delay-nearend | 21.7 | 7.5 |
+| sonora-delay-floor | 21.7 | 7.3 |
+| sonora-delay-nearend-floor | 21.7 | 7.5 |
+| sonora-delay-floor70 | 21.7 | 7.8 |
+| sonora-delay-nearend-nf70 | 21.7 | 7.9 |
+| sonora-delay-nearend-floor70 | 21.7 | 7.4 |
 
 ## My WER %
 
@@ -111,30 +117,48 @@ Rows: noise type and echo level (SER: lower = louder echo). Columns: noise level
 | sonora-long80-nearend | cafe | +5 | 13.6 | 16.4 | 20.9 | 26.6 | 78.0 | 99.4 |
 | sonora-long80-nearend | cafe | -5 | 36.7 | 35.6 | 32.8 | 52.0 | 76.8 | 100.0 |
 | sonora-long80-nearend | cafe | -15 | 43.5 | 45.8 | 55.4 | 59.3 | 86.4 | 94.9 |
-| sonora-delay-linear | office | +5 | 8.3 | 9.9 | 10.5 | 12.2 | 10.5 | 25.4 |
-| sonora-delay-linear | office | -5 | 9.9 | 12.7 | 11.6 | 21.5 | 13.8 | 54.7 |
-| sonora-delay-linear | office | -15 | 26.0 | 26.5 | 37.0 | 27.6 | 39.2 | 72.9 |
-| sonora-delay-linear | cafe | +5 | 12.4 | 13.0 | 14.7 | 24.3 | 76.3 | 99.4 |
-| sonora-delay-linear | cafe | -5 | 12.4 | 13.0 | 19.8 | 26.0 | 75.7 | 99.4 |
-| sonora-delay-linear | cafe | -15 | 15.8 | 23.7 | 34.5 | 43.5 | 85.3 | 100.0 |
-| sonora-delay-nearend | office | +5 | 10.5 | 11.0 | 9.4 | 11.0 | 11.6 | 22.1 |
-| sonora-delay-nearend | office | -5 | 20.4 | 22.7 | 17.1 | 15.5 | 17.7 | 14.9 |
-| sonora-delay-nearend | office | -15 | 24.9 | 33.7 | 26.5 | 33.1 | 30.4 | 33.1 |
-| sonora-delay-nearend | cafe | +5 | 13.6 | 14.1 | 16.4 | 26.0 | 71.2 | 98.9 |
-| sonora-delay-nearend | cafe | -5 | 27.1 | 19.2 | 29.4 | 25.4 | 47.5 | 95.5 |
-| sonora-delay-nearend | cafe | -15 | 43.5 | 43.5 | 46.3 | 52.5 | 58.2 | 83.1 |
-| sonora-delay-floor | office | +5 | 9.4 | 9.9 | 12.2 | 12.7 | 9.9 | 9.4 |
-| sonora-delay-floor | office | -5 | 10.5 | 12.7 | 12.7 | 13.3 | 13.8 | 21.0 |
-| sonora-delay-floor | office | -15 | 16.0 | 25.4 | 20.4 | 25.4 | 27.1 | 24.9 |
-| sonora-delay-floor | cafe | +5 | 11.9 | 10.7 | 13.0 | 25.4 | 66.1 | 98.9 |
-| sonora-delay-floor | cafe | -5 | 11.9 | 13.6 | 26.0 | 22.6 | 57.6 | 95.5 |
-| sonora-delay-floor | cafe | -15 | 14.7 | 28.2 | 29.4 | 45.8 | 57.1 | 91.0 |
-| sonora-delay-nearend-floor | office | +5 | 8.8 | 9.9 | 9.9 | 9.9 | 9.4 | 21.0 |
-| sonora-delay-nearend-floor | office | -5 | 11.0 | 13.3 | 11.6 | 16.0 | 13.3 | 21.0 |
-| sonora-delay-nearend-floor | office | -15 | 16.0 | 20.4 | 20.4 | 27.6 | 19.9 | 29.8 |
-| sonora-delay-nearend-floor | cafe | +5 | 11.3 | 11.3 | 16.9 | 26.0 | 71.2 | 98.9 |
-| sonora-delay-nearend-floor | cafe | -5 | 12.4 | 13.0 | 18.1 | 26.6 | 50.8 | 95.5 |
-| sonora-delay-nearend-floor | cafe | -15 | 16.9 | 23.2 | 33.9 | 45.2 | 58.8 | 97.2 |
+| sonora-delay-linear | office | +5 | 8.3 | 8.3 | 8.8 | 9.4 | 9.9 | 25.4 |
+| sonora-delay-linear | office | -5 | 8.8 | 8.8 | 10.5 | 8.8 | 12.7 | 34.3 |
+| sonora-delay-linear | office | -15 | 12.2 | 12.7 | 13.3 | 12.2 | 16.0 | 58.6 |
+| sonora-delay-linear | cafe | +5 | 13.0 | 12.4 | 14.7 | 22.0 | 79.1 | 99.4 |
+| sonora-delay-linear | cafe | -5 | 11.9 | 15.3 | 16.4 | 22.6 | 77.4 | 99.4 |
+| sonora-delay-linear | cafe | -15 | 12.4 | 14.1 | 18.1 | 31.6 | 75.7 | 100.0 |
+| sonora-delay-nearend | office | +5 | 12.2 | 11.0 | 10.5 | 9.4 | 11.6 | 17.7 |
+| sonora-delay-nearend | office | -5 | 26.0 | 19.3 | 22.1 | 23.8 | 17.1 | 23.2 |
+| sonora-delay-nearend | office | -15 | 26.0 | 33.7 | 28.7 | 32.6 | 26.0 | 29.8 |
+| sonora-delay-nearend | cafe | +5 | 14.7 | 14.7 | 16.9 | 23.2 | 53.1 | 99.4 |
+| sonora-delay-nearend | cafe | -5 | 21.5 | 19.2 | 22.0 | 28.2 | 48.0 | 93.2 |
+| sonora-delay-nearend | cafe | -15 | 43.5 | 42.9 | 48.0 | 50.3 | 57.6 | 83.1 |
+| sonora-delay-floor | office | +5 | 8.8 | 9.4 | 8.3 | 9.4 | 9.9 | 9.4 |
+| sonora-delay-floor | office | -5 | 8.8 | 10.5 | 12.2 | 12.2 | 13.3 | 16.6 |
+| sonora-delay-floor | office | -15 | 11.6 | 11.0 | 13.8 | 12.2 | 18.8 | 27.1 |
+| sonora-delay-floor | cafe | +5 | 12.4 | 12.4 | 16.9 | 24.9 | 52.5 | 99.4 |
+| sonora-delay-floor | cafe | -5 | 13.0 | 14.7 | 16.4 | 25.4 | 48.6 | 93.8 |
+| sonora-delay-floor | cafe | -15 | 13.6 | 14.7 | 22.0 | 32.8 | 58.8 | 82.5 |
+| sonora-delay-nearend-floor | office | +5 | 8.3 | 8.8 | 9.9 | 8.3 | 9.9 | 18.8 |
+| sonora-delay-nearend-floor | office | -5 | 9.9 | 9.9 | 11.6 | 11.6 | 12.2 | 12.2 |
+| sonora-delay-nearend-floor | office | -15 | 10.5 | 10.5 | 14.4 | 11.6 | 16.6 | 22.1 |
+| sonora-delay-nearend-floor | cafe | +5 | 12.4 | 12.4 | 15.8 | 22.0 | 70.1 | 98.9 |
+| sonora-delay-nearend-floor | cafe | -5 | 11.3 | 13.6 | 14.7 | 23.7 | 46.9 | 95.5 |
+| sonora-delay-nearend-floor | cafe | -15 | 14.1 | 16.4 | 21.5 | 37.3 | 57.1 | 91.0 |
+| sonora-delay-floor70 | office | +5 | 8.3 | 8.3 | 8.3 | 8.8 | 8.8 | 11.6 |
+| sonora-delay-floor70 | office | -5 | 9.4 | 10.5 | 10.5 | 10.5 | 13.3 | 18.2 |
+| sonora-delay-floor70 | office | -15 | 11.6 | 12.7 | 13.3 | 10.5 | 14.9 | 34.8 |
+| sonora-delay-floor70 | cafe | +5 | 12.4 | 11.3 | 13.6 | 24.3 | 70.1 | 98.9 |
+| sonora-delay-floor70 | cafe | -5 | 13.0 | 13.0 | 16.4 | 26.0 | 64.4 | 96.0 |
+| sonora-delay-floor70 | cafe | -15 | 12.4 | 14.1 | 20.3 | 33.9 | 82.5 | 96.6 |
+| sonora-delay-nearend-nf70 | office | +5 | 7.7 | 8.8 | 8.3 | 8.3 | 10.5 | 18.8 |
+| sonora-delay-nearend-nf70 | office | -5 | 8.8 | 11.6 | 9.9 | 11.0 | 9.9 | 11.0 |
+| sonora-delay-nearend-nf70 | office | -15 | 17.7 | 15.5 | 13.8 | 11.6 | 18.2 | 27.1 |
+| sonora-delay-nearend-nf70 | cafe | +5 | 10.7 | 12.4 | 15.8 | 22.6 | 53.1 | 99.4 |
+| sonora-delay-nearend-nf70 | cafe | -5 | 13.6 | 12.4 | 15.8 | 24.3 | 42.4 | 97.2 |
+| sonora-delay-nearend-nf70 | cafe | -15 | 16.9 | 22.0 | 27.1 | 40.1 | 54.8 | 83.6 |
+| sonora-delay-nearend-floor70 | office | +5 | 7.7 | 8.3 | 8.3 | 8.3 | 9.4 | 23.2 |
+| sonora-delay-nearend-floor70 | office | -5 | 9.4 | 9.9 | 11.6 | 11.6 | 14.4 | 23.8 |
+| sonora-delay-nearend-floor70 | office | -15 | 10.5 | 11.0 | 12.2 | 11.6 | 14.9 | 30.9 |
+| sonora-delay-nearend-floor70 | cafe | +5 | 12.4 | 11.3 | 13.6 | 21.5 | 71.8 | 98.9 |
+| sonora-delay-nearend-floor70 | cafe | -5 | 12.4 | 13.0 | 16.4 | 24.9 | 70.6 | 96.0 |
+| sonora-delay-nearend-floor70 | cafe | -15 | 12.4 | 14.1 | 20.9 | 30.5 | 79.7 | 100.0 |
 
 ## Echo words that leaked into my text
 
@@ -202,30 +226,48 @@ Rows: noise type and echo level (SER: lower = louder echo). Columns: noise level
 | sonora-long80-nearend | cafe | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-long80-nearend | cafe | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-long80-nearend | cafe | -15 | 0 | 0 | 6 | 4 | 0 | 0 |
-| sonora-delay-linear | office | +5 | 0 | 0 | 0 | 2 | 0 | 0 |
-| sonora-delay-linear | office | -5 | 0 | 0 | 0 | 7 | 0 | 0 |
-| sonora-delay-linear | office | -15 | 9 | 7 | 22 | 10 | 27 | 0 |
+| sonora-delay-linear | office | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-linear | office | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-linear | office | -15 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-delay-linear | cafe | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-delay-linear | cafe | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sonora-delay-linear | cafe | -15 | 1 | 1 | 1 | 0 | 0 | 0 |
+| sonora-delay-linear | cafe | -15 | 0 | 0 | 0 | 0 | 1 | 0 |
 | sonora-delay-nearend | office | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-delay-nearend | office | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-delay-nearend | office | -15 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-delay-nearend | cafe | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sonora-delay-nearend | cafe | -5 | 0 | 0 | 0 | 0 | 2 | 0 |
+| sonora-delay-nearend | cafe | -5 | 0 | 0 | 0 | 0 | 1 | 0 |
 | sonora-delay-nearend | cafe | -15 | 0 | 0 | 0 | 0 | 1 | 0 |
 | sonora-delay-floor | office | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-delay-floor | office | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sonora-delay-floor | office | -15 | 0 | 5 | 0 | 7 | 6 | 0 |
-| sonora-delay-floor | cafe | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sonora-delay-floor | cafe | -5 | 0 | 0 | 1 | 0 | 1 | 0 |
-| sonora-delay-floor | cafe | -15 | 1 | 1 | 0 | 0 | 1 | 0 |
+| sonora-delay-floor | office | -15 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-floor | cafe | +5 | 0 | 0 | 0 | 1 | 0 | 0 |
+| sonora-delay-floor | cafe | -5 | 0 | 0 | 0 | 0 | 1 | 0 |
+| sonora-delay-floor | cafe | -15 | 0 | 0 | 1 | 0 | 1 | 0 |
 | sonora-delay-nearend-floor | office | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-delay-nearend-floor | office | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sonora-delay-nearend-floor | office | -15 | 0 | 0 | 0 | 8 | 0 | 0 |
+| sonora-delay-nearend-floor | office | -15 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sonora-delay-nearend-floor | cafe | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sonora-delay-nearend-floor | cafe | -5 | 0 | 0 | 1 | 0 | 1 | 0 |
-| sonora-delay-nearend-floor | cafe | -15 | 1 | 1 | 1 | 0 | 1 | 0 |
+| sonora-delay-nearend-floor | cafe | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-nearend-floor | cafe | -15 | 0 | 1 | 0 | 0 | 0 | 0 |
+| sonora-delay-floor70 | office | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-floor70 | office | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-floor70 | office | -15 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-floor70 | cafe | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-floor70 | cafe | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-floor70 | cafe | -15 | 0 | 0 | 2 | 0 | 0 | 0 |
+| sonora-delay-nearend-nf70 | office | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-nearend-nf70 | office | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-nearend-nf70 | office | -15 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-nearend-nf70 | cafe | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-nearend-nf70 | cafe | -5 | 1 | 0 | 1 | 0 | 1 | 0 |
+| sonora-delay-nearend-nf70 | cafe | -15 | 0 | 1 | 1 | 0 | 2 | 0 |
+| sonora-delay-nearend-floor70 | office | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-nearend-floor70 | office | -5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-nearend-floor70 | office | -15 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-nearend-floor70 | cafe | +5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sonora-delay-nearend-floor70 | cafe | -5 | 0 | 0 | 0 | 0 | 1 | 0 |
+| sonora-delay-nearend-floor70 | cafe | -15 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## Echo removed in far-end-only parts (dB)
 
@@ -293,30 +335,48 @@ Rows: noise type and echo level (SER: lower = louder echo). Columns: noise level
 | sonora-long80-nearend | cafe | +5 | 9.3 | 6.5 | 3.1 | 1.4 | 0.6 | 0.6 |
 | sonora-long80-nearend | cafe | -5 | 7.8 | 7.0 | 6.4 | 4.6 | 2.8 | 1.0 |
 | sonora-long80-nearend | cafe | -15 | 7.8 | 7.4 | 6.5 | 6.1 | 5.2 | 4.9 |
-| sonora-delay-linear | office | +5 | 19.2 | 12.8 | 6.7 | 2.0 | 1.8 | 0.7 |
-| sonora-delay-linear | office | -5 | 17.8 | 15.0 | 11.6 | 6.0 | 6.6 | 3.6 |
-| sonora-delay-linear | office | -15 | 18.1 | 16.7 | 14.9 | 11.0 | 11.9 | 9.2 |
-| sonora-delay-linear | cafe | +5 | 16.4 | 9.6 | 3.5 | 1.6 | 0.6 | 0.2 |
-| sonora-delay-linear | cafe | -5 | 17.4 | 13.0 | 8.9 | 6.6 | 3.7 | 1.8 |
-| sonora-delay-linear | cafe | -15 | 18.0 | 15.0 | 12.8 | 11.8 | 9.5 | 7.1 |
-| sonora-delay-nearend | office | +5 | 30.3 | 18.2 | 10.0 | 3.2 | 3.3 | 1.5 |
-| sonora-delay-nearend | office | -5 | 23.9 | 19.5 | 15.3 | 8.6 | 9.7 | 5.5 |
-| sonora-delay-nearend | office | -15 | 28.7 | 25.4 | 19.0 | 17.1 | 15.6 | 12.4 |
-| sonora-delay-nearend | cafe | +5 | 29.4 | 14.4 | 5.5 | 2.6 | 0.9 | 0.6 |
-| sonora-delay-nearend | cafe | -5 | 30.9 | 20.9 | 12.8 | 9.1 | 5.2 | 2.8 |
-| sonora-delay-nearend | cafe | -15 | 31.7 | 26.8 | 20.1 | 17.2 | 13.5 | 10.0 |
-| sonora-delay-floor | office | +5 | 24.9 | 17.7 | 10.5 | 4.0 | 4.8 | 3.5 |
-| sonora-delay-floor | office | -5 | 23.6 | 20.4 | 16.1 | 8.9 | 10.0 | 6.6 |
-| sonora-delay-floor | office | -15 | 23.8 | 22.3 | 20.1 | 16.3 | 16.4 | 13.1 |
-| sonora-delay-floor | cafe | +5 | 22.4 | 13.8 | 6.0 | 3.2 | 1.0 | 0.6 |
-| sonora-delay-floor | cafe | -5 | 23.4 | 18.5 | 12.7 | 9.7 | 5.6 | 3.0 |
-| sonora-delay-floor | cafe | -15 | 24.0 | 21.0 | 18.2 | 16.5 | 13.6 | 10.3 |
-| sonora-delay-nearend-floor | office | +5 | 23.4 | 16.0 | 8.9 | 2.9 | 3.0 | 1.3 |
-| sonora-delay-nearend-floor | office | -5 | 21.3 | 17.9 | 14.0 | 7.8 | 8.7 | 5.1 |
-| sonora-delay-nearend-floor | office | -15 | 22.2 | 20.7 | 17.6 | 14.4 | 14.3 | 11.4 |
-| sonora-delay-nearend-floor | cafe | +5 | 21.5 | 12.6 | 5.0 | 2.4 | 0.8 | 0.5 |
-| sonora-delay-nearend-floor | cafe | -5 | 22.5 | 17.0 | 11.4 | 8.4 | 4.8 | 2.6 |
-| sonora-delay-nearend-floor | cafe | -15 | 23.1 | 19.8 | 16.6 | 15.1 | 12.1 | 9.1 |
+| sonora-delay-linear | office | +5 | 25.7 | 15.7 | 7.7 | 2.6 | 2.1 | 0.7 |
+| sonora-delay-linear | office | -5 | 25.1 | 20.8 | 15.6 | 8.0 | 7.9 | 4.2 |
+| sonora-delay-linear | office | -15 | 25.6 | 23.8 | 20.5 | 15.4 | 15.9 | 11.5 |
+| sonora-delay-linear | cafe | +5 | 19.2 | 10.5 | 3.9 | 1.9 | 0.7 | 0.3 |
+| sonora-delay-linear | cafe | -5 | 19.5 | 15.6 | 10.8 | 7.7 | 4.2 | 2.0 |
+| sonora-delay-linear | cafe | -15 | 19.6 | 17.8 | 15.5 | 14.5 | 11.2 | 8.0 |
+| sonora-delay-nearend | office | +5 | 41.7 | 22.6 | 12.5 | 4.1 | 4.0 | 1.4 |
+| sonora-delay-nearend | office | -5 | 41.2 | 31.6 | 22.4 | 11.7 | 12.4 | 7.0 |
+| sonora-delay-nearend | office | -15 | 41.8 | 39.6 | 31.2 | 27.2 | 22.3 | 16.7 |
+| sonora-delay-nearend | cafe | +5 | 40.1 | 16.3 | 6.1 | 3.1 | 1.3 | 0.6 |
+| sonora-delay-nearend | cafe | -5 | 40.8 | 26.2 | 15.8 | 10.8 | 6.3 | 3.4 |
+| sonora-delay-nearend | cafe | -15 | 41.6 | 35.7 | 26.0 | 21.3 | 15.9 | 11.4 |
+| sonora-delay-floor | office | +5 | 31.7 | 20.3 | 11.8 | 5.0 | 5.2 | 3.0 |
+| sonora-delay-floor | office | -5 | 31.1 | 26.5 | 20.4 | 11.0 | 11.9 | 7.6 |
+| sonora-delay-floor | office | -15 | 31.6 | 29.8 | 26.3 | 21.0 | 20.6 | 15.9 |
+| sonora-delay-floor | cafe | +5 | 25.2 | 14.4 | 6.3 | 3.6 | 1.8 | 0.7 |
+| sonora-delay-floor | cafe | -5 | 25.5 | 20.9 | 14.4 | 10.7 | 6.7 | 3.6 |
+| sonora-delay-floor | cafe | -15 | 25.6 | 23.7 | 20.7 | 18.8 | 14.9 | 11.0 |
+| sonora-delay-nearend-floor | office | +5 | 31.0 | 19.6 | 10.8 | 3.8 | 3.6 | 1.3 |
+| sonora-delay-nearend-floor | office | -5 | 30.0 | 25.6 | 19.5 | 10.4 | 10.9 | 6.2 |
+| sonora-delay-nearend-floor | office | -15 | 30.7 | 29.3 | 25.4 | 20.1 | 19.7 | 14.8 |
+| sonora-delay-nearend-floor | cafe | +5 | 25.1 | 14.1 | 5.6 | 2.9 | 1.3 | 0.6 |
+| sonora-delay-nearend-floor | cafe | -5 | 25.4 | 20.7 | 14.0 | 9.9 | 5.8 | 3.1 |
+| sonora-delay-nearend-floor | cafe | -15 | 25.5 | 23.6 | 20.5 | 18.5 | 14.3 | 10.3 |
+| sonora-delay-floor70 | office | +5 | 28.8 | 18.3 | 10.0 | 4.1 | 4.0 | 2.2 |
+| sonora-delay-floor70 | office | -5 | 28.2 | 23.8 | 18.2 | 9.7 | 10.2 | 6.2 |
+| sonora-delay-floor70 | office | -15 | 28.7 | 26.9 | 23.5 | 18.3 | 18.5 | 14.0 |
+| sonora-delay-floor70 | cafe | +5 | 22.3 | 12.8 | 5.4 | 3.0 | 1.5 | 0.5 |
+| sonora-delay-floor70 | cafe | -5 | 22.6 | 18.5 | 12.9 | 9.5 | 5.8 | 3.1 |
+| sonora-delay-floor70 | cafe | -15 | 22.7 | 20.8 | 18.3 | 16.9 | 13.4 | 9.8 |
+| sonora-delay-nearend-nf70 | office | +5 | 29.7 | 18.4 | 9.9 | 3.4 | 3.4 | 1.2 |
+| sonora-delay-nearend-nf70 | office | -5 | 29.0 | 25.3 | 18.5 | 9.7 | 10.2 | 5.7 |
+| sonora-delay-nearend-nf70 | office | -15 | 29.5 | 28.1 | 24.0 | 18.5 | 18.7 | 13.8 |
+| sonora-delay-nearend-nf70 | cafe | +5 | 23.9 | 14.1 | 5.7 | 3.0 | 1.3 | 0.6 |
+| sonora-delay-nearend-nf70 | cafe | -5 | 23.7 | 19.8 | 14.0 | 10.0 | 5.9 | 3.3 |
+| sonora-delay-nearend-nf70 | cafe | -15 | 24.1 | 22.3 | 19.9 | 18.2 | 14.1 | 10.5 |
+| sonora-delay-nearend-floor70 | office | +5 | 28.5 | 17.9 | 9.6 | 3.4 | 3.1 | 1.1 |
+| sonora-delay-nearend-floor70 | office | -5 | 27.8 | 23.4 | 17.8 | 9.5 | 9.7 | 5.5 |
+| sonora-delay-nearend-floor70 | office | -15 | 28.4 | 26.7 | 23.2 | 18.0 | 18.1 | 13.5 |
+| sonora-delay-nearend-floor70 | cafe | +5 | 22.2 | 12.6 | 5.0 | 2.6 | 1.1 | 0.4 |
+| sonora-delay-nearend-floor70 | cafe | -5 | 22.5 | 18.4 | 12.7 | 9.1 | 5.2 | 2.8 |
+| sonora-delay-nearend-floor70 | cafe | -15 | 22.6 | 20.8 | 18.2 | 16.8 | 13.0 | 9.5 |
 
 ## My voice lost where there was no echo (dB, 0 is best)
 
@@ -385,29 +445,47 @@ Rows: noise type and echo level (SER: lower = louder echo). Columns: noise level
 | sonora-long80-nearend | cafe | -5 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 | -0.0 |
 | sonora-long80-nearend | cafe | -15 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 | -0.0 |
 | sonora-delay-linear | office | +5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
-| sonora-delay-linear | office | -5 | 0.0 | -0.0 | 0.0 | -0.0 | 0.0 | -0.0 |
+| sonora-delay-linear | office | -5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
 | sonora-delay-linear | office | -15 | 0.0 | -0.0 | 0.0 | -0.0 | 0.0 | -0.0 |
 | sonora-delay-linear | cafe | +5 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | 0.0 |
-| sonora-delay-linear | cafe | -5 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 | 0.0 |
-| sonora-delay-linear | cafe | -15 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 | 0.0 |
+| sonora-delay-linear | cafe | -5 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | 0.0 |
+| sonora-delay-linear | cafe | -15 | 0.0 | -0.0 | 0.0 | 0.0 | -0.0 | 0.0 |
 | sonora-delay-nearend | office | +5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
-| sonora-delay-nearend | office | -5 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
-| sonora-delay-nearend | office | -15 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
-| sonora-delay-nearend | cafe | +5 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
-| sonora-delay-nearend | cafe | -5 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 |
-| sonora-delay-nearend | cafe | -15 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend | office | -5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| sonora-delay-nearend | office | -15 | 0.0 | 0.0 | 0.0 | -0.0 | 0.0 | -0.0 |
+| sonora-delay-nearend | cafe | +5 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend | cafe | -5 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend | cafe | -15 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 |
 | sonora-delay-floor | office | +5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
-| sonora-delay-floor | office | -5 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
-| sonora-delay-floor | office | -15 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-floor | office | -5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| sonora-delay-floor | office | -15 | 0.0 | -0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
 | sonora-delay-floor | cafe | +5 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 |
-| sonora-delay-floor | cafe | -5 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 |
-| sonora-delay-floor | cafe | -15 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-floor | cafe | -5 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 |
+| sonora-delay-floor | cafe | -15 | 0.0 | -0.0 | -0.0 | 0.0 | -0.0 | -0.0 |
 | sonora-delay-nearend-floor | office | +5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
-| sonora-delay-nearend-floor | office | -5 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
-| sonora-delay-nearend-floor | office | -15 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-floor | office | -5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
+| sonora-delay-nearend-floor | office | -15 | 0.0 | -0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
 | sonora-delay-nearend-floor | cafe | +5 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
-| sonora-delay-nearend-floor | cafe | -5 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 | -0.0 |
-| sonora-delay-nearend-floor | cafe | -15 | 0.0 | -0.0 | -0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-floor | cafe | -5 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-floor | cafe | -15 | 0.0 | -0.0 | -0.0 | 0.0 | -0.0 | -0.0 |
+| sonora-delay-floor70 | office | +5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
+| sonora-delay-floor70 | office | -5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
+| sonora-delay-floor70 | office | -15 | 0.0 | -0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-floor70 | cafe | +5 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 |
+| sonora-delay-floor70 | cafe | -5 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 |
+| sonora-delay-floor70 | cafe | -15 | 0.0 | -0.0 | -0.0 | 0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-nf70 | office | +5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
+| sonora-delay-nearend-nf70 | office | -5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
+| sonora-delay-nearend-nf70 | office | -15 | 0.0 | -0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-nf70 | cafe | +5 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-nf70 | cafe | -5 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-nf70 | cafe | -15 | 0.0 | -0.0 | -0.0 | 0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-floor70 | office | +5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
+| sonora-delay-nearend-floor70 | office | -5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | -0.0 |
+| sonora-delay-nearend-floor70 | office | -15 | 0.0 | -0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-floor70 | cafe | +5 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-floor70 | cafe | -5 | 0.0 | 0.0 | 0.0 | -0.0 | -0.0 | -0.0 |
+| sonora-delay-nearend-floor70 | cafe | -15 | 0.0 | -0.0 | -0.0 | 0.0 | -0.0 | -0.0 |
 
 ## Double talk: my voice level after echo removal (dB, 0 is best)
 
@@ -477,28 +555,46 @@ Rows: noise type and echo level (SER: lower = louder echo). Columns: noise level
 | sonora-long80-nearend | cafe | -15 | -5.0 | -3.6 | -2.5 | -1.9 | -2.0 | -1.5 |
 | sonora-delay-linear | office | +5 | -0.2 | -0.2 | -0.2 | -0.2 | -0.2 | -0.2 |
 | sonora-delay-linear | office | -5 | -0.2 | -0.2 | -0.2 | -0.2 | -0.2 | -0.2 |
-| sonora-delay-linear | office | -15 | -0.2 | -0.2 | -0.2 | -0.2 | -0.2 | -0.2 |
-| sonora-delay-linear | cafe | +5 | -0.2 | -0.2 | -0.2 | -0.1 | -0.2 | -0.2 |
-| sonora-delay-linear | cafe | -5 | -0.1 | -0.2 | -0.1 | -0.1 | -0.2 | -0.1 |
-| sonora-delay-linear | cafe | -15 | -0.2 | -0.1 | -0.1 | -0.2 | -0.1 | -0.1 |
-| sonora-delay-nearend | office | +5 | -1.4 | -0.8 | -0.4 | -0.3 | -0.3 | -0.3 |
-| sonora-delay-nearend | office | -5 | -2.6 | -2.1 | -1.3 | -1.3 | -0.8 | -0.6 |
-| sonora-delay-nearend | office | -15 | -4.4 | -4.1 | -3.5 | -3.4 | -3.0 | -2.6 |
-| sonora-delay-nearend | cafe | +5 | -2.4 | -0.6 | -0.3 | -0.2 | -0.1 | -0.1 |
-| sonora-delay-nearend | cafe | -5 | -5.8 | -2.5 | -1.5 | -0.9 | -0.5 | -0.4 |
-| sonora-delay-nearend | cafe | -15 | -12.4 | -8.9 | -6.6 | -5.6 | -4.2 | -3.1 |
-| sonora-delay-floor | office | +5 | -1.1 | -0.8 | -0.6 | -0.5 | -0.5 | -0.8 |
-| sonora-delay-floor | office | -5 | -1.9 | -1.7 | -1.5 | -1.4 | -1.3 | -1.1 |
-| sonora-delay-floor | office | -15 | -2.4 | -2.4 | -2.2 | -2.1 | -2.1 | -2.1 |
-| sonora-delay-floor | cafe | +5 | -2.0 | -0.7 | -0.6 | -0.8 | -0.4 | -0.1 |
-| sonora-delay-floor | cafe | -5 | -3.8 | -2.8 | -2.4 | -2.1 | -1.9 | -1.6 |
-| sonora-delay-floor | cafe | -15 | -5.1 | -4.9 | -4.5 | -4.7 | -4.6 | -3.9 |
-| sonora-delay-nearend-floor | office | +5 | -0.9 | -0.6 | -0.4 | -0.3 | -0.3 | -0.2 |
-| sonora-delay-nearend-floor | office | -5 | -1.5 | -1.2 | -0.9 | -0.9 | -0.6 | -0.4 |
-| sonora-delay-nearend-floor | office | -15 | -2.2 | -2.1 | -1.9 | -1.8 | -1.7 | -1.5 |
-| sonora-delay-nearend-floor | cafe | +5 | -1.4 | -0.5 | -0.3 | -0.2 | -0.1 | -0.1 |
-| sonora-delay-nearend-floor | cafe | -5 | -2.8 | -1.5 | -1.0 | -0.6 | -0.4 | -0.3 |
-| sonora-delay-nearend-floor | cafe | -15 | -4.5 | -3.8 | -3.1 | -2.9 | -2.4 | -1.9 |
+| sonora-delay-linear | office | -15 | -0.2 | -0.2 | -0.2 | -0.2 | -0.2 | -0.1 |
+| sonora-delay-linear | cafe | +5 | -0.2 | -0.2 | -0.2 | -0.1 | -0.2 | -0.1 |
+| sonora-delay-linear | cafe | -5 | -0.2 | -0.2 | -0.1 | -0.1 | -0.2 | -0.1 |
+| sonora-delay-linear | cafe | -15 | -0.2 | -28.4 | -0.2 | -0.2 | -0.2 | -0.1 |
+| sonora-delay-nearend | office | +5 | -1.4 | -0.9 | -0.6 | -0.5 | -0.4 | -0.3 |
+| sonora-delay-nearend | office | -5 | -2.7 | -2.3 | -1.7 | -1.6 | -1.2 | -0.9 |
+| sonora-delay-nearend | office | -15 | -4.4 | -4.4 | -3.8 | -3.6 | -3.4 | -3.1 |
+| sonora-delay-nearend | cafe | +5 | -2.4 | -0.7 | -0.4 | -0.3 | -0.2 | -0.1 |
+| sonora-delay-nearend | cafe | -5 | -5.7 | -3.3 | -2.3 | -1.7 | -1.2 | -0.7 |
+| sonora-delay-nearend | cafe | -15 | -12.0 | -9.6 | -8.2 | -6.5 | -6.2 | -5.9 |
+| sonora-delay-floor | office | +5 | -1.1 | -0.8 | -0.7 | -0.6 | -0.5 | -0.8 |
+| sonora-delay-floor | office | -5 | -1.9 | -1.8 | -1.6 | -1.5 | -1.5 | -1.4 |
+| sonora-delay-floor | office | -15 | -2.4 | -2.4 | -2.2 | -2.2 | -2.2 | -2.2 |
+| sonora-delay-floor | cafe | +5 | -2.0 | -0.9 | -0.7 | -0.9 | -0.8 | -0.1 |
+| sonora-delay-floor | cafe | -5 | -3.8 | -3.1 | -2.9 | -2.7 | -2.8 | -2.2 |
+| sonora-delay-floor | cafe | -15 | -5.1 | -4.9 | -4.8 | -4.7 | -4.8 | -4.4 |
+| sonora-delay-nearend-floor | office | +5 | -0.9 | -0.6 | -0.5 | -0.4 | -0.3 | -0.3 |
+| sonora-delay-nearend-floor | office | -5 | -1.5 | -1.3 | -1.1 | -1.0 | -0.8 | -0.7 |
+| sonora-delay-nearend-floor | office | -15 | -2.2 | -2.2 | -1.9 | -1.9 | -1.8 | -1.7 |
+| sonora-delay-nearend-floor | cafe | +5 | -1.4 | -0.5 | -0.4 | -0.2 | -0.2 | -0.1 |
+| sonora-delay-nearend-floor | cafe | -5 | -2.8 | -1.9 | -1.5 | -1.1 | -0.9 | -0.6 |
+| sonora-delay-nearend-floor | cafe | -15 | -4.5 | -4.0 | -3.7 | -3.3 | -3.2 | -3.3 |
+| sonora-delay-floor70 | office | +5 | -0.8 | -0.6 | -0.5 | -0.5 | -0.4 | -0.5 |
+| sonora-delay-floor70 | office | -5 | -1.2 | -1.1 | -1.0 | -1.0 | -1.0 | -0.9 |
+| sonora-delay-floor70 | office | -15 | -1.5 | -1.4 | -1.4 | -1.4 | -1.3 | -1.3 |
+| sonora-delay-floor70 | cafe | +5 | -1.2 | -0.6 | -0.5 | -0.6 | -0.6 | -0.1 |
+| sonora-delay-floor70 | cafe | -5 | -2.2 | -1.8 | -1.7 | -1.6 | -1.7 | -1.4 |
+| sonora-delay-floor70 | cafe | -15 | -2.8 | -2.7 | -2.6 | -2.7 | -2.7 | -2.4 |
+| sonora-delay-nearend-nf70 | office | +5 | -0.6 | -0.5 | -0.4 | -0.3 | -0.3 | -0.2 |
+| sonora-delay-nearend-nf70 | office | -5 | -1.0 | -0.9 | -0.8 | -0.7 | -0.6 | -0.5 |
+| sonora-delay-nearend-nf70 | office | -15 | -1.5 | -1.6 | -1.3 | -1.3 | -1.3 | -1.2 |
+| sonora-delay-nearend-nf70 | cafe | +5 | -1.0 | -0.4 | -0.3 | -0.2 | -0.2 | -0.1 |
+| sonora-delay-nearend-nf70 | cafe | -5 | -1.8 | -1.4 | -1.1 | -0.8 | -0.7 | -0.5 |
+| sonora-delay-nearend-nf70 | cafe | -15 | -2.8 | -3.1 | -2.9 | -2.4 | -2.8 | -4.1 |
+| sonora-delay-nearend-floor70 | office | +5 | -0.6 | -0.5 | -0.4 | -0.3 | -0.3 | -0.2 |
+| sonora-delay-nearend-floor70 | office | -5 | -1.0 | -0.9 | -0.7 | -0.7 | -0.6 | -0.5 |
+| sonora-delay-nearend-floor70 | office | -15 | -1.3 | -1.3 | -1.2 | -1.2 | -1.1 | -1.0 |
+| sonora-delay-nearend-floor70 | cafe | +5 | -0.9 | -0.4 | -0.3 | -0.2 | -0.2 | -0.1 |
+| sonora-delay-nearend-floor70 | cafe | -5 | -1.7 | -1.2 | -1.0 | -0.7 | -0.6 | -0.4 |
+| sonora-delay-nearend-floor70 | cafe | -15 | -2.5 | -2.3 | -2.2 | -2.0 | -1.9 | -1.9 |
 
 ## Double talk: my voice cleaner by (SI-SDR dB, higher is better)
 
@@ -566,30 +662,48 @@ Rows: noise type and echo level (SER: lower = louder echo). Columns: noise level
 | sonora-long80-nearend | cafe | +5 | 0.5 | 1.7 | 0.2 | 0.0 | 0.1 | -0.0 |
 | sonora-long80-nearend | cafe | -5 | 2.3 | 2.6 | 2.3 | 1.6 | 1.3 | -0.1 |
 | sonora-long80-nearend | cafe | -15 | 0.5 | 1.6 | 2.1 | 2.0 | 1.7 | 2.3 |
-| sonora-delay-linear | office | +5 | 9.5 | 5.9 | 1.4 | 2.3 | 0.9 | -0.1 |
-| sonora-delay-linear | office | -5 | 14.6 | 12.2 | 6.4 | 8.1 | 5.0 | 0.5 |
-| sonora-delay-linear | office | -15 | 16.8 | 15.6 | 12.5 | 13.7 | 11.4 | 4.0 |
-| sonora-delay-linear | cafe | +5 | 9.0 | 5.4 | 2.9 | 1.0 | 0.3 | 0.0 |
-| sonora-delay-linear | cafe | -5 | 13.8 | 10.4 | 8.4 | 5.7 | 3.4 | 1.5 |
-| sonora-delay-linear | cafe | -15 | 16.5 | 14.3 | 12.9 | 11.6 | 9.4 | 6.6 |
-| sonora-delay-nearend | office | +5 | 3.4 | 4.7 | 1.5 | 3.0 | 1.6 | -0.1 |
-| sonora-delay-nearend | office | -5 | 10.1 | 10.3 | 8.2 | 9.4 | 6.1 | 0.3 |
-| sonora-delay-nearend | office | -15 | 15.9 | 15.3 | 13.7 | 14.7 | 12.6 | 2.7 |
-| sonora-delay-nearend | cafe | +5 | 1.3 | 5.1 | 3.2 | 1.3 | 0.3 | -0.0 |
-| sonora-delay-nearend | cafe | -5 | 6.7 | 9.0 | 8.3 | 5.9 | 3.5 | 1.5 |
-| sonora-delay-nearend | cafe | -15 | 10.8 | 11.8 | 10.3 | 10.6 | 8.1 | 5.3 |
-| sonora-delay-floor | office | +5 | 6.4 | 5.4 | 3.2 | 3.5 | 2.0 | -0.4 |
-| sonora-delay-floor | office | -5 | 13.6 | 12.6 | 9.4 | 9.7 | 6.5 | -0.1 |
-| sonora-delay-floor | office | -15 | 18.8 | 17.9 | 14.9 | 16.0 | 13.6 | 5.0 |
-| sonora-delay-floor | cafe | +5 | 5.1 | 5.6 | 3.3 | 1.3 | 0.3 | -0.0 |
-| sonora-delay-floor | cafe | -5 | 12.4 | 10.5 | 8.6 | 5.9 | 3.5 | 1.3 |
-| sonora-delay-floor | cafe | -15 | 17.0 | 15.1 | 13.0 | 11.8 | 9.0 | 5.7 |
-| sonora-delay-nearend-floor | office | +5 | 7.1 | 5.9 | 1.5 | 2.9 | 1.5 | -0.1 |
-| sonora-delay-nearend-floor | office | -5 | 14.0 | 12.6 | 8.1 | 9.5 | 6.0 | 0.4 |
-| sonora-delay-nearend-floor | office | -15 | 18.2 | 17.0 | 14.1 | 15.3 | 12.8 | 3.6 |
-| sonora-delay-nearend-floor | cafe | +5 | 5.9 | 5.7 | 3.2 | 1.2 | 0.3 | -0.0 |
-| sonora-delay-nearend-floor | cafe | -5 | 12.5 | 10.7 | 8.8 | 6.0 | 3.6 | 1.6 |
-| sonora-delay-nearend-floor | cafe | -15 | 16.9 | 15.0 | 12.8 | 12.0 | 9.3 | 6.1 |
+| sonora-delay-linear | office | +5 | 9.8 | 6.1 | 1.6 | 2.7 | 1.1 | -0.1 |
+| sonora-delay-linear | office | -5 | 15.1 | 13.0 | 7.6 | 9.4 | 5.9 | 0.6 |
+| sonora-delay-linear | office | -15 | 18.1 | 17.7 | 14.5 | 15.8 | 13.5 | 4.5 |
+| sonora-delay-linear | cafe | +5 | 9.1 | 6.6 | 3.6 | 1.3 | 0.5 | 0.1 |
+| sonora-delay-linear | cafe | -5 | 14.7 | 12.3 | 10.2 | 6.6 | 4.2 | 1.8 |
+| sonora-delay-linear | cafe | -15 | 17.0 | -15.4 | 14.8 | 12.9 | 10.9 | 7.7 |
+| sonora-delay-nearend | office | +5 | 3.4 | 4.4 | 1.7 | 3.7 | 1.8 | -0.1 |
+| sonora-delay-nearend | office | -5 | 10.2 | 10.4 | 9.5 | 9.8 | 7.1 | 0.1 |
+| sonora-delay-nearend | office | -15 | 17.2 | 17.3 | 17.1 | 16.7 | 14.2 | 2.5 |
+| sonora-delay-nearend | cafe | +5 | 1.3 | 5.8 | 3.9 | 1.7 | 0.6 | 0.0 |
+| sonora-delay-nearend | cafe | -5 | 6.9 | 9.4 | 9.3 | 6.5 | 4.1 | 1.7 |
+| sonora-delay-nearend | cafe | -15 | 11.7 | 13.2 | 13.0 | 11.7 | 8.7 | 4.9 |
+| sonora-delay-floor | office | +5 | 6.5 | 5.5 | 2.4 | 3.9 | 2.1 | -0.4 |
+| sonora-delay-floor | office | -5 | 13.9 | 12.9 | 10.3 | 10.5 | 7.0 | -0.2 |
+| sonora-delay-floor | office | -15 | 20.0 | 19.8 | 17.3 | 17.8 | 14.9 | 4.0 |
+| sonora-delay-floor | cafe | +5 | 5.1 | 6.3 | 3.9 | 1.6 | 0.6 | -0.0 |
+| sonora-delay-floor | cafe | -5 | 12.8 | 11.8 | 9.9 | 6.4 | 3.6 | 1.2 |
+| sonora-delay-floor | cafe | -15 | 17.5 | 16.5 | 15.2 | 12.8 | 10.0 | 6.2 |
+| sonora-delay-nearend-floor | office | +5 | 7.1 | 5.9 | 1.8 | 3.7 | 1.8 | -0.1 |
+| sonora-delay-nearend-floor | office | -5 | 14.4 | 13.3 | 9.7 | 10.6 | 7.1 | 0.4 |
+| sonora-delay-nearend-floor | office | -15 | 20.1 | 19.9 | 17.3 | 17.8 | 14.9 | 3.7 |
+| sonora-delay-nearend-floor | cafe | +5 | 5.9 | 6.8 | 4.0 | 1.7 | 0.6 | 0.1 |
+| sonora-delay-nearend-floor | cafe | -5 | 13.0 | 12.3 | 10.6 | 7.0 | 4.3 | 1.8 |
+| sonora-delay-nearend-floor | cafe | -15 | 17.7 | 16.9 | 15.7 | 13.5 | 10.6 | 6.8 |
+| sonora-delay-floor70 | office | +5 | 8.5 | 6.2 | 2.2 | 3.6 | 1.8 | -0.3 |
+| sonora-delay-floor70 | office | -5 | 15.3 | 13.6 | 9.2 | 10.3 | 6.7 | 0.1 |
+| sonora-delay-floor70 | office | -15 | 19.5 | 19.1 | 16.1 | 17.1 | 14.4 | 4.3 |
+| sonora-delay-floor70 | cafe | +5 | 7.7 | 6.9 | 4.0 | 1.6 | 0.7 | 0.0 |
+| sonora-delay-floor70 | cafe | -5 | 14.6 | 12.7 | 10.4 | 6.7 | 4.0 | 1.6 |
+| sonora-delay-floor70 | cafe | -15 | 17.4 | 16.3 | 15.2 | 13.0 | 10.6 | 7.1 |
+| sonora-delay-nearend-nf70 | office | +5 | 8.8 | 6.3 | 1.8 | 3.5 | 1.7 | -0.1 |
+| sonora-delay-nearend-nf70 | office | -5 | 15.4 | 13.7 | 9.0 | 10.6 | 6.9 | 0.5 |
+| sonora-delay-nearend-nf70 | office | -15 | 19.6 | 19.1 | 16.3 | 17.4 | 14.7 | 4.0 |
+| sonora-delay-nearend-nf70 | cafe | +5 | 7.7 | 7.0 | 4.0 | 1.7 | 0.6 | 0.0 |
+| sonora-delay-nearend-nf70 | cafe | -5 | 14.0 | 12.5 | 10.6 | 7.0 | 4.4 | 1.8 |
+| sonora-delay-nearend-nf70 | cafe | -15 | 17.3 | 15.8 | 15.1 | 13.1 | 10.4 | 5.9 |
+| sonora-delay-nearend-floor70 | office | +5 | 8.8 | 6.3 | 1.8 | 3.4 | 1.6 | -0.1 |
+| sonora-delay-nearend-floor70 | office | -5 | 15.5 | 13.7 | 9.0 | 10.3 | 6.8 | 0.5 |
+| sonora-delay-nearend-floor70 | office | -15 | 19.5 | 19.2 | 16.1 | 17.1 | 14.4 | 4.1 |
+| sonora-delay-nearend-floor70 | cafe | +5 | 8.0 | 7.0 | 3.9 | 1.6 | 0.6 | 0.1 |
+| sonora-delay-nearend-floor70 | cafe | -5 | 14.6 | 12.8 | 10.7 | 7.0 | 4.3 | 1.8 |
+| sonora-delay-nearend-floor70 | cafe | -15 | 17.5 | 16.5 | 15.4 | 13.3 | 10.9 | 7.3 |
 
 ## Where each remover stops working
 
@@ -658,29 +772,47 @@ The noise level at which my WER first passes 1.5 × its clean value + 5 points. 
 | sonora-long80-nearend | cafe | -5 | +0 dB |
 | sonora-long80-nearend | cafe | -15 | +0 dB |
 | sonora-delay-linear | office | +5 | -5 dB |
-| sonora-delay-linear | office | -5 | +5 dB |
+| sonora-delay-linear | office | -5 | -5 dB |
 | sonora-delay-linear | office | -15 | -5 dB |
-| sonora-delay-linear | cafe | +5 | +5 dB |
-| sonora-delay-linear | cafe | -5 | +5 dB |
-| sonora-delay-linear | cafe | -15 | +10 dB |
-| sonora-delay-nearend | office | +5 | -5 dB |
+| sonora-delay-linear | cafe | +5 | +0 dB |
+| sonora-delay-linear | cafe | -5 | +0 dB |
+| sonora-delay-linear | cafe | -15 | +5 dB |
+| sonora-delay-nearend | office | +5 | – |
 | sonora-delay-nearend | office | -5 | – |
 | sonora-delay-nearend | office | -15 | – |
-| sonora-delay-nearend | cafe | +5 | +5 dB |
+| sonora-delay-nearend | cafe | +5 | +0 dB |
 | sonora-delay-nearend | cafe | -5 | +0 dB |
 | sonora-delay-nearend | cafe | -15 | -5 dB |
 | sonora-delay-floor | office | +5 | – |
-| sonora-delay-floor | office | -5 | -5 dB |
-| sonora-delay-floor | office | -15 | – |
+| sonora-delay-floor | office | -5 | – |
+| sonora-delay-floor | office | -15 | -5 dB |
 | sonora-delay-floor | cafe | +5 | +5 dB |
-| sonora-delay-floor | cafe | -5 | +10 dB |
-| sonora-delay-floor | cafe | -15 | +20 dB |
+| sonora-delay-floor | cafe | -5 | +5 dB |
+| sonora-delay-floor | cafe | -15 | +5 dB |
 | sonora-delay-nearend-floor | office | +5 | -5 dB |
 | sonora-delay-nearend-floor | office | -5 | – |
 | sonora-delay-nearend-floor | office | -15 | -5 dB |
-| sonora-delay-nearend-floor | cafe | +5 | +5 dB |
+| sonora-delay-nearend-floor | cafe | +5 | +0 dB |
 | sonora-delay-nearend-floor | cafe | -5 | +5 dB |
-| sonora-delay-nearend-floor | cafe | -15 | +10 dB |
+| sonora-delay-nearend-floor | cafe | -15 | +5 dB |
+| sonora-delay-floor70 | office | +5 | – |
+| sonora-delay-floor70 | office | -5 | – |
+| sonora-delay-floor70 | office | -15 | -5 dB |
+| sonora-delay-floor70 | cafe | +5 | +5 dB |
+| sonora-delay-floor70 | cafe | -5 | +5 dB |
+| sonora-delay-floor70 | cafe | -15 | +5 dB |
+| sonora-delay-nearend-nf70 | office | +5 | -5 dB |
+| sonora-delay-nearend-nf70 | office | -5 | – |
+| sonora-delay-nearend-nf70 | office | -15 | – |
+| sonora-delay-nearend-nf70 | cafe | +5 | +5 dB |
+| sonora-delay-nearend-nf70 | cafe | -5 | +0 dB |
+| sonora-delay-nearend-nf70 | cafe | -15 | +5 dB |
+| sonora-delay-nearend-floor70 | office | +5 | -5 dB |
+| sonora-delay-nearend-floor70 | office | -5 | -5 dB |
+| sonora-delay-nearend-floor70 | office | -15 | -5 dB |
+| sonora-delay-nearend-floor70 | cafe | +5 | +0 dB |
+| sonora-delay-nearend-floor70 | cafe | -5 | +5 dB |
+| sonora-delay-nearend-floor70 | cafe | -15 | +5 dB |
 
 ## Other noise (SER −5)
 
@@ -726,19 +858,31 @@ The noise level at which my WER first passes 1.5 × its clean value + 5 points. 
 | sonora-long80-nearend | living | 10 | 42.9 | 1 |
 | sonora-long80-nearend | street | 0 | 34.3 | 0 |
 | sonora-long80-nearend | street | 10 | 22.7 | 0 |
-| sonora-delay-linear | living | 0 | 62.7 | 1 |
-| sonora-delay-linear | living | 10 | 15.8 | 0 |
-| sonora-delay-linear | street | 0 | 19.3 | 0 |
-| sonora-delay-linear | street | 10 | 11.0 | 0 |
-| sonora-delay-nearend | living | 0 | 32.2 | 0 |
-| sonora-delay-nearend | living | 10 | 16.9 | 0 |
-| sonora-delay-nearend | street | 0 | 17.7 | 0 |
-| sonora-delay-nearend | street | 10 | 16.0 | 0 |
-| sonora-delay-floor | living | 0 | 38.4 | 1 |
-| sonora-delay-floor | living | 10 | 14.1 | 0 |
-| sonora-delay-floor | street | 0 | 20.4 | 0 |
-| sonora-delay-floor | street | 10 | 12.7 | 0 |
-| sonora-delay-nearend-floor | living | 0 | 37.9 | 1 |
+| sonora-delay-linear | living | 0 | 56.5 | 0 |
+| sonora-delay-linear | living | 10 | 15.3 | 0 |
+| sonora-delay-linear | street | 0 | 17.7 | 0 |
+| sonora-delay-linear | street | 10 | 11.6 | 0 |
+| sonora-delay-nearend | living | 0 | 29.4 | 0 |
+| sonora-delay-nearend | living | 10 | 22.0 | 0 |
+| sonora-delay-nearend | street | 0 | 19.9 | 0 |
+| sonora-delay-nearend | street | 10 | 18.2 | 0 |
+| sonora-delay-floor | living | 0 | 26.0 | 1 |
+| sonora-delay-floor | living | 10 | 15.8 | 0 |
+| sonora-delay-floor | street | 0 | 18.2 | 0 |
+| sonora-delay-floor | street | 10 | 12.2 | 0 |
+| sonora-delay-nearend-floor | living | 0 | 29.4 | 0 |
 | sonora-delay-nearend-floor | living | 10 | 15.3 | 0 |
-| sonora-delay-nearend-floor | street | 0 | 19.9 | 0 |
-| sonora-delay-nearend-floor | street | 10 | 12.2 | 0 |
+| sonora-delay-nearend-floor | street | 0 | 16.6 | 0 |
+| sonora-delay-nearend-floor | street | 10 | 11.6 | 0 |
+| sonora-delay-floor70 | living | 0 | 25.4 | 0 |
+| sonora-delay-floor70 | living | 10 | 13.0 | 0 |
+| sonora-delay-floor70 | street | 0 | 21.0 | 0 |
+| sonora-delay-floor70 | street | 10 | 11.6 | 0 |
+| sonora-delay-nearend-nf70 | living | 0 | 25.4 | 0 |
+| sonora-delay-nearend-nf70 | living | 10 | 16.9 | 0 |
+| sonora-delay-nearend-nf70 | street | 0 | 16.6 | 0 |
+| sonora-delay-nearend-nf70 | street | 10 | 9.4 | 0 |
+| sonora-delay-nearend-floor70 | living | 0 | 23.2 | 1 |
+| sonora-delay-nearend-floor70 | living | 10 | 14.1 | 0 |
+| sonora-delay-nearend-floor70 | street | 0 | 21.5 | 0 |
+| sonora-delay-nearend-floor70 | street | 10 | 10.5 | 0 |
