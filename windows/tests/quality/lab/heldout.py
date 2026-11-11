@@ -212,6 +212,8 @@ def components(spec, audio=None):
     noise = np.zeros(len(near))
     if spec["snr"] is not None:
         source = load_noise(NOISES[spec["noise"]])
+        if len(source) <= len(near):                                  # DEMAND's rooms last five minutes; a long call loops them
+            source = np.tile(source, len(near) // len(source) + 2)
         offset = int(np.random.default_rng(spec["noise_seed"]).integers(0, len(source) - len(near)))
         noise = source[offset:offset + len(near)].copy()
         noise *= math.sqrt(p_near / np.mean(noise ** 2) * 10 ** (-spec["snr"] / 10))

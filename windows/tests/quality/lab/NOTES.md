@@ -126,3 +126,61 @@ then 8 s windows on the warped call track). Against the manifest's truth on 30 h
 calls it finds the latency within 0.02 ms and the drift within 0.1 ppm in the direct and
 mid rooms, lands on a reflection 4 ms late in two reverberant rooms, finds no echo in the
 headphone calls, and finds the device change in the calls tested except one (ho-18).
+
+Later changes to `solve.py`, each measured with `s1.py` (suite signal) and `hs.py`:
+
+- Frames of 4096 samples with a hop of 1024 (12 taps and 1 non-causal one) give the same
+  ERLE and double-talk gain as 1024/256 at a sixteenth of the cost; two rounds of weights
+  are as good as three. A hop of half a frame is clearly worse. About 8 s for a call of
+  160 s in Python on four threads.
+- The tracker's first form followed the delay point by point and made false sections
+  under strong drift in reverberant rooms. It now votes over slopes (-300 to 300 ppm) on
+  the coarse points, keeps a second line only when a run of five points and a tenth of
+  all points support it, drops a run that sits between two runs of one line, and puts
+  the border between two sections at the frame where the residual is least.
+- The call track is warped onto the mic's clock with a windowed sinc (32 taps) before the
+  fit, so a drift of 200 ppm costs nothing.
+- `solve.suppress` turns down what the linear stage left: the share of the echo estimate
+  that stays, per bin, measured in the far-only frames. It adds only about 1 dB of ERLE
+  (the residual is the speaker's distortion, which is not a fixed share per bin), but see
+  section 5 for what it does to the word errors in noise.
+- `aec-real` (40 devices joined) has a clear delay peak in 733 of 799 windows but no line
+  that explains them, where a call without echo has 2 to 4 such windows of about 65. The
+  tracker reports this as "many paths", and the pipeline then uses plain `sonora`, as the
+  delay-primed models do.
+
+Held-out signal scores of `solve` on the 44 short calls with echo, same columns as the
+table in section 3 (ERLE / double-talk SI-SDR gain, dB):
+
+| Remover | steady (16) | drift (22) | device change (6) | no noise |
+|---|---|---|---|---|
+| solve | 16.1 / 16.3 | 14.9 / 14.9 | 11.8 / 11.9 | 26.0 / 26.7 |
+| solve with suppressor, floor 0.15 | 17.1 / 17.0 | 16.1 / 15.5 | 12.5 / 12.3 | 28.6 / 28.0 |
+
+My voice level stays at 0.0 dB. The drift no longer costs anything; the limit in the
+noisy calls is the noise itself.
+
+## 5. First word errors: the baselines on the held-out set, the candidates on the suite
+
+Held-out, the app's own removers (`py -P ho.py <work> amanu:sonora-delay-floor,thorough`),
+52 calls: `thorough` 24.7 (no noise 24.3, 119 echo words, 2004 s of echo removal);
+`sonora-delay-floor` 31.1 (no noise 21.3, 203 echo words, 147 s). So the reference for
+the bar is `thorough` at 24.7, and a candidate must reach 22.7 or less.
+
+Suite, lab WER (`py -P sw.py <work> run:...`), 40 calls:
+
+| Remover | All 40 | No noise | SNR 20..5 | SNR 0 | SNR -5 | Echo words |
+|---|---|---|---|---|---|---|
+| sonora-delay-floor (suite run) | 23.6 | 11.4 | 15.3 | 30.6 | 54.4 | 5 |
+| solve | 25.6 | 10.1 | 13.2 | 39.8 | 63.8 | 1 |
+| solve, suppressor floor 0.15 | 21.0 | 10.2 | 12.6 | 24.8 | 54.7 | 4 |
+| solve, then DPDFNet baseline | 20.4 | 10.7 | 13.7 | 23.5 | 48.3 | 5 |
+| sonora-delay-floor copy, then DPDFNet | 24.5 | 13.4 | 16.7 | 31.8 | 51.7 | 3 |
+
+Conclusion: the closed-form canceller alone takes 1.3 points off the quiet calls and 2.1
+off the calls at SNR 20 to 5, close to the echo headroom of section 1, and lands on the
+"no echo, noise left in" row in loud noise, as it must. The suppressor then takes 15
+points off the calls at SNR 0, more than the oracle without echo has (38.7): it turns
+the noise down while the far end talks, and the engine then hears my speech in the other
+blocks better. Section 6 tests that. The denoiser after AEC3 gains nothing: AEC3's
+output is already damaged where the denoiser would work.

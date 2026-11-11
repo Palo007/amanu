@@ -36,10 +36,10 @@ def one(args):
 if __name__ == "__main__":
     import heldout
     work = sys.argv[1]
-    pattern = sys.argv[3] if len(sys.argv) > 3 else "^ho-\d"
+    pattern = sys.argv[3] if len(sys.argv) > 3 else r"^ho-\d"
     names = sorted(p.name for p in heldout.RECORDINGS.iterdir() if re.search(pattern, p.name))
     for v in sys.argv[2].split(","):
-        with ProcessPoolExecutor(5) as pool:
+        with ProcessPoolExecutor(int(os.environ.get("LAB_PROCS", "5"))) as pool:
             rows = [r for r in pool.map(one, [(work, v, n) for n in names]) if r["room"] != "none"]
         m = lambda k, sel=lambda r: True: np.mean([r[k] for r in rows if sel(r)] or [np.nan])
         groups = {"all": lambda r: True, "steady": lambda r: not r["drift"] and not r["change"], "drift": lambda r: r["drift"] and not r["change"],
