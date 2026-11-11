@@ -553,3 +553,195 @@ big gains are the loud-noise calls: ho-20 -14.2, ho-33 -12.5, ho-37 -11.0.
 Verdict: win on the held-out set, driven by SNR 0 and -5 (-5.5, the interval clear of zero);
 the quiet and mild-noise calls are flat within noise, with a few insertion-heavy losses.
 All engine runs of track N1 have ended (the last was the held-out `run:c`).
+
+## 13. The port of the region cutting (overnight)
+
+Status: built and unit-tested; not yet measured. The smoke test was skipped because six
+`transcribe-cli` processes of other tracks were running when it was due (20:59 on 2026-11-11).
+
+What was added (setting c of `n1.py`, `echo_model` = `solve-gate-cut`):
+
+- `Amanu.Core/Processing/SpeechRegions.cs`: open runs of the gate (gain above 0.5), merge under
+  1.5 s, pad 1.0 s each side and merge where the padding touches, cut at 25 s at the quietest
+  100 ms of the last 40 % (the same search as `n1.split_long`), gain to -20 dBFS RMS over the
+  open samples (at most +30 dB, peak under 0.97), and the gate file (`mic.gate.json`).
+- `EchoSolver` has a third field, `CutRegions`; `LocalVqeAssets.SolveGateCut` is solve-gate with it
+  on, processor `echo-solver-v1-floor15-gate-cut`, so a kept copy of solve-gate is never taken
+  for it. It is in `AppSettings.EchoModels` and the settings text. The default stays solve-floor.
+- `SpeechGate.Apply` has an overload that also returns the open runs. `OfflineEchoAudio.Prepare`
+  writes them to `mic.gate.json` beside the cleaned mic when the model cuts; `Keep` copies the file
+  into the kept folder; `RemoveAudio` deletes it. They are handed over as a file, not in memory,
+  because recognition may run in a later pass from the kept copy.
+- `TranscriptionServices.TranscribeFileCoreAsync`: for a parakeet engine and the mic track, if the
+  gate file sits beside the source and its frame count is that of the track, the track goes
+  through `TranscribeRegionsAsync` instead of SilenceSkip and the 60 s chunks. Without a file, with
+  a file for another length, or with no region, the usual path runs. The system track is unchanged.
+- `Amanu.exe --measure-transcription` needs no change: `AMANU_MEASURE_ECHO=solve-gate-cut` sets
+  `EchoModel`, and the coordinator then runs the same echo stage and transcription as the app.
+- Tests: `tests/Amanu.Core.Tests/SpeechRegionsTests.cs` (merge, pad, touching pads, cap and cut
+  place, offsets, level gain, gate file, model flags). Whole solution: 331 + 113 tests pass.
+
+Differences from `n1.py` setting c:
+
+1. One `transcribe-cli` process per region with `--timestamps word`, as the 60 s chunks run
+   today, not one `--batch --batch-jsonl` process. `--batch-jsonl` of v0.1.3 carries no word
+   times, and the transcript needs them in call time. The files and the model are the same, so
+   the text should match; the cost is a model load per region (the 60 s path pays that per
+   chunk already). Whether batch is still wanted for speed is a decision for after the numbers.
+2. The audio is the cleaned mic as the app writes it (float WAV, then 16-bit PCM when kept or
+   converted for the engine); the lab used float `g * e` written as 16-bit. No difference
+   beyond rounding is expected.
+3. Gate open runs are taken from the app's own gain (`SpeechGate.Gain`), which is the lab's
+   `speech_gate` re-implemented in C#; the notes already say the app and the lab agree within
+   0.2 points. The cut at the cap is exercised by unit tests only (as in the lab).
+4. Word times: each word is the region's start plus its time in the region; no word is dropped
+   by a window, because regions never overlap. The 60 s path's mid-point filter is not needed.
+5. SilenceSkip does not run on this path (the regions already leave the quiet out).
+
+Build: `windows\artifacts\overnight-cut` (335 MB; managed files published there, `local-runtime`
+and `live-runtime` copied from `artifacts\publish`, which was not touched).
+
+    AMANU_LAB_EXE=C:\Backup\CoDiNG\Amanu\amanu-windows\windows\artifacts\overnight-cut\Amanu.exe
+
+To confirm (engine runs; only when the engine slot is free):
+
+    set AMANU_LAB_EXE=C:\Backup\CoDiNG\Amanu\amanu-windows\windows\artifacts\overnight-cut\Amanu.exe
+    cd windows\tests\quality\lab
+    py -P ho.py "%USERPROFILE%\Amanu Quality Set\lab" amanu:solve-gate-cut
+    py -P ho.py "%USERPROFILE%\Amanu Quality Set\lab" show:solve-gate-cut,solve-gate solve-gate
+
+The suite's echo calls through the same build (rows go to tag `su/solve-gate-cut`; compare with the
+cached `su/solve-gate` rows):
+
+    py -P -c "import asr, lab; from concurrent.futures import ThreadPoolExecutor as P; W=r'%USERPROFILE%\Amanu Quality Set\lab'; ns=sorted(p.name for p in lab.Q.RECORDINGS.iterdir() if p.name.startswith('echo-')); list(P(3).map(lambda n: asr.amanu(W,'su/solve-gate-cut',n,lab.Q.RECORDINGS/n,'solve-gate-cut'), ns)); print(asr.summary(W,'su/solve-gate-cut'))"
+
+### 11.1 Results of the N2 screen (track N2, continues section 11)
+
+Screen: `py -P n2sw.py "%USERPROFILE%\Amanu Quality Set\lab" run:n2-w50,n2-w80,n2-w65-guard`
+(14 noisy calls, 3 transcriptions at once, about 12 minutes; log `...\overnight\N2\screen1.log`,
+rows `...\lab\wer2\su\n2-*`). Baseline: the cached `su/solve-gate` rows, not re-measured.
+My WER, lab:
+
+| Remover | 14 calls | SNR 0 | SNR -5 | Echo words | Against solve-gate |
+|---|---|---|---|---|---|
+| solve-gate | 29.6 | 19.6 | 42.8 | 4 | |
+| n2-w50 | 27.3 | 19.1 | 38.1 | 3 | -2.3 [-4.9, -0.2] |
+| n2-w80 | 28.0 | 19.8 | 39.0 | 3 | -1.6 [-3.9, +0.4] |
+| n2-w65-guard | 27.9 | 19.6 | 38.9 | 3 | -1.7 [-3.9, +0.1] |
+
+All three pass the 1.5-point bar; only `n2-w50` has an interval that excludes 0. The gain is
+at SNR -5 (4 to 5 points); at SNR 0 it is nil. Larger w_max is not better (0.5 beats 0.8),
+which fits the 1.4 to 3.3 dB of speech that DPDFNet takes off the cafe calls.
+
+Combined with n1's setting c (blend first, then cut; `n2c.py`, `py -P n2c.py
+"%USERPROFILE%\Amanu Quality Set\lab\overnight\N2" run:n2-w50`, log `screen2.log`, rows
+`...\N2\wer2\n2c\n2-w50`): WER 25.9 (SNR 0 17.9, SNR -5 36.5), echo words 6, against
+solve-gate -3.7 [-6.4, -1.3], against setting c alone (27.2) -1.3 [-3.4, +0.5]. The gains
+add only in part (-2.3 and -2.2 would give -4.5; got -3.7), and the interval against c
+includes 0. Echo words rise to 6 (c alone: check N1's table), which misses the bar of 2 by
+more. Verdict: unclear to weak win; not run on the held-out set or the quiet calls with
+the cut (the quiet guard keeps w = 0 there, so the cut alone decides).
+All engine runs of track N2 have ended.
+
+## 14. solve-gate-cut in the app's build (overnight)
+
+Run 1 plan (held-out, 52 calls, ho.py amanu:solve-gate-cut, 3 at once): about 20 minutes expected. Only solve-gate-cut is in it because it is the one echo model the overnight build adds and it has no cached row; solve-gate (11.8) is cached and is not re-measured, and the bootstrap reads its rows only.
+
+
+## 15. Pick and vote across versions (overnight, track E)
+
+No engine run. `lab/e1.py` reads cached rows only: solve-gate (`su/solve-gate`), n1 settings a, c, e, and n2-w50 cut (`n2c`). Output of the run: `%USERPROFILE%\Amanu Quality Set\lab\overnight\E\e1-results.json`. It reproduces 27.2 (n1-c), 25.9 (n2c-w50), 29.6 (solve-gate) and 27.3 (n1-e) on the 14 noisy calls.
+
+What the cache lacks: every row holds the joined text of the whole call, with no per-region text and no word times. So E1 (per-region picks by speaking rate, agreement or "prefer non-denoised") cannot be computed, and no per-region oracle either. n1-c and n2c do use the same regions (same region count on 14 of 14 calls). To get E1 the engine must be run again with per-region texts saved: n1-c 14 calls (about 200 s of engine, `run_batch` already receives the per-file texts and joins them), n2c-w50 the same (about 200 s), solve-gate cut into the same regions (about 200 s) as third version for rule (ii). About 10 to 12 minutes with 3 at a time, CPU for the cleaned audio included. Not run.
+
+What was done instead (whole-call, truth-free): word-level ROVER-style vote. Backbone = first system, the others aligned to it by edit distance, majority per slot, a tie goes to the backbone, an insertion is kept when more than half of all systems insert it. Agreement is a PROXY for correctness; it is not a confidence score, and versions that share an input share its errors. Rows are my WER %, 14 noisy calls; interval = paired bootstrap over calls against n1-c, 95 %:
+
+| Version | 14 noisy | SNR 0 | SNR -5 | Echo words | Against n1-c |
+|---|---|---|---|---|---|
+| n1-c | 27.2 | 17.6 | 40.0 | 5 | |
+| n2c-w50 | 25.9 | 17.9 | 36.5 | 6 | -1.3 [-3.4, +0.5] |
+| solve-gate | 29.6 | 19.6 | 42.8 | 4 | +2.4 |
+| vote c, n2c, solve-gate | 26.7 | 17.0 | 39.7 | 3 | -0.5 [-1.0, +0.0] |
+| vote c, n2c, e | 26.5 | 16.8 | 39.5 | 3 | -0.7 [-1.1, -0.3] |
+| vote c, e, a | 26.4 | 16.6 | 39.4 | 3 | -0.8 [-1.5, -0.2] |
+| vote c, n2c, e, solve-gate | 26.4 | 16.6 | 39.6 | 3 | -0.8 [-1.3, -0.4] |
+| vote n2c (backbone), c, solve-gate | 25.5 | 17.0 | 36.7 | 3 | -1.8 [-3.6, -0.2] |
+
+The last row only changes the backbone to n2c-w50; it was tried after the others, so it is one pick of five and not a pre-registered rule. Against n2c-w50 alone it is -0.4 [-1.0, +0.0]. No-noise calls (n2c not cached there; the blend has weight 0 on them): vote c, e, solve-gate 9.0 against n1-c 9.2 (20 calls: 26.6 against 27.2, -0.5 [-1.1, +0.1]).
+
+Ceilings (use the truth, so they are NOT a rule): per call, the better of c and n2c gives 25.3; per word (a reference word counts as right if either version has it right, insertions the smaller of the two) gives 24.1, i.e. 1.8 under 25.9. That is above the 1.5 stop line, but barely, and it is the limit for any picker or voter between these two; a real rule reaches a part of it.
+
+Verdict: unclear, small. A vote gains 0.5 to 0.8 over n1-c, with a clear interval, but is no better than n2c-w50 alone beyond 0.4, and the whole headroom between the two versions is 1.8. Echo words fall to 3. The gain comes mostly from fewer errors at SNR 0, where the vote beats both inputs (16.6 to 17.0 against 17.6 and 17.9).
+
+## 10. The gate in int8 (overnight, track S1)
+
+Hypothesis: a dynamically quantized int8 DPDFNet gives the same open/closed decisions as the
+float model at a fraction of the time. Verdict: **loss**, on both counts, for two attempts that
+each fail for a reason I understand. S2 (skip the model where the canceller is quiet) was not
+tried, because its condition (under 1 % of frames differ and time at most half) was not met.
+
+Code: `s1q.py` (`quant`, `cache`, `gate`, `time`). Models, caches and logs are under
+`%USERPROFILE%\Amanu Quality Set\lab\overnight\S1` (`models\int8.onnx`, `models\int8-gemm.onnx`,
+`cache\`, `gate.log` with the numbers per call, `time.log`). Needs `pip install onnxruntime onnx`.
+
+Commands (from `lab`): `py -P s1q.py quant`; `py -P s1q.py cache` (solve output of the 40 `echo-*`
+calls, 7 min); `py -P s1q.py gate float,int8,int8-gemm` (about 80 min on the busy machine);
+`py -P s1q.py time float,int8,int8-gemm`.
+
+Method: the model is the same file format, so sherpa-onnx runs it unchanged (the metadata is
+copied over) and the path is the app's: sherpa, 1 thread. The input is the `solve` output (no
+residual suppressor, as `solve-gate`), the gate is `pipeline.speech_gate` with its defaults,
+and a 10 ms frame is open when the mean gain over its 160 samples is above 0.5.
+The model is DPDFNet baseline, one frame of 10 ms at a time with a 38 256-value state fed
+back; it has 146 Gemm (the GRUs), 28 Conv and 2 MatMul.
+
+- `int8`: `quantize_dynamic(QInt8)`, defaults. 148 MatMulInteger and 28 ConvInteger, 2.7 MB.
+- `int8-gemm`: `op_types_to_quantize=["MatMul","Gemm"]`; the 28 convs stay float. 2.8 MB.
+
+Decisions against float, share of 10 ms frames that differ:
+
+| Model | All 40 calls | The 14 calls at SNR 0 and -5 |
+|---|---|---|
+| int8 | 4.71 % | 12.24 % |
+| int8-gemm | 5.71 % | 14.78 % |
+
+Worst calls (open share float / int8): cafe ser+5 snr-5 55.3 / 14.3 (46.6 % differ), cafe
+ser-5 snr-5 54.6 / 13.7 (46.1 %), cafe ser+5 snr+0 51.1 / 36.5 (14.7 %), cafe ser-5 snr+0 51.3 /
+36.4 (15.0 %), cafe ser-15 snr+0 46.3 / 33.6 (12.9 %). int8-gemm: cafe ser-15 snr-5 39.2 / 97.2
+(58.4 %, gate nearly always open). Office calls differ on 0.0 to 1.9 % of frames; clean and
+SNR 20 to 5 calls on 0.0 to 3 %. Per call numbers: `gate.log`.
+
+Time, the same 5 calls (812 s of audio: cafe ser+5 snr+0, cafe ser-15 snr+20, cafe ser-5
+snr-5, office ser+5 snr-5, office ser-5 snr+0), models run one after the other, twice, best of two,
+model alone (no gate arithmetic), machine busy (the absolute time is 5 times the 7 s per 156 s
+of the brief, so read the ratio):
+
+| Model | Rep 0 | Rep 1 | Ratio to float (best) |
+|---|---|---|---|
+| float | 190.9 s | 192.0 s | 1.00 |
+| int8 | 398.3 s | 324.0 s | 1.70 (slower) |
+| int8-gemm | 207.0 s | 175.8 s | 0.92 |
+
+Why it fails:
+1. Time. The model is a stream of one frame per call, so each GRU/Gemm multiplies a vector,
+   not a matrix. The multiplication is not the cost; the cost is the per-call overhead and the
+   activation quantization (a `DynamicQuantizeLinear` and a `Cast` before and after each of
+   148 matrix products). `ConvInteger` is slower than float `Conv` on this CPU (int8 1.70 x).
+   Quantizing only the matrix products gives 0.92 x: the quantize/dequantize steps eat the gain.
+2. Decisions. The gate threshold sits 25 dB below the output's 99th percentile, and in babble
+   the model's output is near that border (DPDFNet puts most of the noise 60 dB down, but a
+   small error in its mask moves the level by the 10 dB that matters). The state, 38 256 values,
+   is fed back every 10 ms, so a quantization error does not stay in its frame. The effect is
+   large where the noise is babble at 0 and -5 dB, and small in office noise.
+   This second reason is argued, not measured: I did not test it on the state alone.
+
+Not done: a static (calibrated) quantization, which would cut the `DynamicQuantizeLinear`
+steps but needs calibration data and would face reason 2 as well; S2; any WER run (I did not
+run an engine, as told). Do not spend more on int8 for this model. If the gate must get
+cheaper, the lever is the 30 s pieces and the 4 s of overlap (about 13 %) or a smaller
+detector, not weights in int8.
+
+If someone wants a WER check anyway, it needs the engine and a new gate model path in the lab;
+the cleanest form is the `int8-gemm` file put in `lab\models` and a `denoise.dpdf` variant that
+loads it, then `py -P sw.py <work dir> run:<that variant>` on the 14 calls at SNR 0 and -5.
+I do not expect it to pay: the gate opens in other places in the babble calls.
