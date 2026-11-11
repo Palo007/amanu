@@ -60,8 +60,37 @@ index 9ed1ba2..c0be1c9 100644
          // Remove the echo from the capture signal.
          if has_delay_estimator || self.render_buffer.has_received_buffer_delay() {
              let render_buffer = self.render_buffer.get_render_buffer();
+diff --git a/crates/sonora-aec3/src/config.rs b/crates/sonora-aec3/src/config.rs
+index 40624d1..1ab31fd 100644
+--- a/crates/sonora-aec3/src/config.rs
++++ b/crates/sonora-aec3/src/config.rs
+@@ -299,6 +299,7 @@ impl EchoCanceller3Config {
+         );
+ 
+         ok &= limit_f32(&mut self.suppressor.floor_first_increase, 0.0, 1_000_000.0);
++        ok &= limit_f32(&mut self.suppressor.amanu_gain_floor, 0.0, 1.0);
+ 
+         ok
+     }
+@@ -943,6 +944,8 @@ pub struct Suppressor {
+     pub floor_first_increase: f32,
+     /// Whether to apply conservative suppression in HF bands.
+     pub conservative_hf_suppression: bool,
++    /// Amanu: the lowest suppression gain any band gets, 0 to 1 (default: 0, no floor).
++    pub amanu_gain_floor: f32,
+ }
+ 
+ impl Default for Suppressor {
+@@ -989,6 +992,7 @@ impl Default for Suppressor {
+             high_frequency_suppression: HighFrequencySuppression::default(),
+             floor_first_increase: 0.00001,
+             conservative_hf_suppression: false,
++            amanu_gain_floor: 0.0,
+         }
+     }
+ }
 diff --git a/crates/sonora-aec3/src/echo_remover.rs b/crates/sonora-aec3/src/echo_remover.rs
-index c5ffbe2..011cfe8 100644
+index c5ffbe2..12d965d 100644
 --- a/crates/sonora-aec3/src/echo_remover.rs
 +++ b/crates/sonora-aec3/src/echo_remover.rs
 @@ -234,6 +234,11 @@ impl EchoRemover {
@@ -76,11 +105,28 @@ index c5ffbe2..011cfe8 100644
      /// Returns current echo removal metrics.
      pub(crate) fn get_metrics(&self) -> EchoRemoverMetricsOutput {
          EchoRemoverMetricsOutput {
+@@ -469,6 +474,16 @@ impl EchoRemover {
+                 &mut g,
+             );
+ 
++            // Amanu: no band is suppressed below the gain floor, so the near voice keeps
++            // at least that much of its level when AEC3 mistakes it for echo.
++            let floor = self.config.suppressor.amanu_gain_floor;
++            if floor > 0.0 {
++                for gain in g.iter_mut() {
++                    *gain = gain.max(floor);
++                }
++                high_bands_gain = high_bands_gain.max(floor);
++            }
++
+             self.suppression_filter.apply_gain(
+                 comfort_noise,
+                 high_band_comfort_noise,
 diff --git a/crates/sonora-ffi/src/functions.rs b/crates/sonora-ffi/src/functions.rs
-index 1018869..4aa7d62 100644
+index 1018869..94df027 100644
 --- a/crates/sonora-ffi/src/functions.rs
 +++ b/crates/sonora-ffi/src/functions.rs
-@@ -58,6 +58,259 @@ pub extern "C" fn wap_create_with_config(config: WapConfig) -> *mut WapAudioProc
+@@ -58,6 +58,260 @@ pub extern "C" fn wap_create_with_config(config: WapConfig) -> *mut WapAudioProc
      }
  }
  
@@ -205,6 +251,7 @@ index 1018869..4aa7d62 100644
 +        f32: suppressor.high_bands_suppression.max_gain_during_echo;
 +        f32: suppressor.floor_first_increase;
 +        bool: suppressor.conservative_hf_suppression;
++        f32: suppressor.amanu_gain_floor;
 +    }
 +    false
 +}
