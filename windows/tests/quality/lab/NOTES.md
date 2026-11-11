@@ -905,3 +905,118 @@ which were not run (the full run was not requested).
 
 All engine runs of this task have ended. No transcribe-cli process of mine is running. The other processes on the PC
 (s2q.py, n4.py) belong to other tracks and were left alone.
+
+### 14.4 Suite signal scores of solve-gate-cut (not started)
+
+quality.py can point at the test build: \--exe <Amanu.exe>\ (default: the published build). No code change is needed.
+Planned command (with the test build, never --keep-audio, no other model):
+
+    py -P quality.py run --name overnight-cut --only "^(echo-|aec-real)" --modes solve-gate-cut --yes --exe C:\Backup\CoDiNG\Amanu\amanu-windows\windows\artifacts\overnight-cut\Amanu.exe
+
+Not started. The disk check failed: C: had 5.07 GB free (the coordinator asked for over 6 GB). Nothing was deleted to make room.
+Engine at the check: zero transcribe-cli processes. Parallel jobs: quality.py has no option for them; the run would use the suite's own worker count, not set to 1 here.
+Estimate, before any start: 41 calls (40 echo-* and aec-real), one model, about 60 minutes by the run-2 pace; to be confirmed when it starts.
+
+## 13.1 Why the app is behind the lab
+
+No engine run. Held-out, the app's `solve-gate-cut` 1153 errors against 1090 for the lab's setting c (10 908 words): 10.6 against 10.0 %. The worst calls against c (errors app/lab): ho-00 35/19, ho-37 91/76, ho-35 101/90, ho-long-2 109/101, ho-long-0 53/45, ho-31 18/10. Inserted words over the 52 calls: 177 against 164, deleted 168 against 133, so the app both adds and loses words.
+
+Evidence for the cause. In ho-00 and ho-31 the app's text has English words at the end of the call that the lab's text does not ("mix of outdoor and indoor environments", "So the database startu to symbol ..."): babble from the noise, not my speech. I ran the app's echo stage on both calls (a throwaway test, `OfflineEchoAudio.Prepare` with the model, then read `mic.gate.json`, since removed) and the lab's gate for the same calls (`n1.gate_pieces` for setting c, and the same code on `solve-res15`):
+
+- App (solve + 0.15 residual suppressor + gate) opens the gate on 125.0-127.2 s in ho-31 and 98.3-99.2 s in ho-00, which the lab's setting c does not (ho-31: 13 open runs and 11 regions against 12 and 10, one extra region 124.0-127.5 s). The lab's `solve-res15` gate, run on the same recording, gives exactly the app's 13 runs and 11 regions for ho-31. So the gate code agrees, and the input differs.
+- The reason: `n1.py` gates the output of `pipeline.VARIANTS["solve"]`, the solver alone. The app's `solve-gate` (and so my `solve-gate-cut`) put the 0.15 residual suppressor first, as the lab's `solve-res15-gate`. The suppressor leaves leftovers of the far end and noise around them, the gate opens on them, and the engine hears the floored audio. That is a real difference between the port and setting c, and my section 13 did not name it.
+
+Fix: `LocalVqeAssets.SolveGateCut` is now `EchoSolver(SpeechGate: true, CutRegions: true)`, with no suppressor floor, processor `echo-solver-v1-gate-cut`. With that, ho-31 matches the lab: 12 open runs each, regions identical except one start 0.3 s earlier (28.7 against 29.0 s), and the extra 124 s region is gone. ho-00 matches better (17 open runs each, regions 9 against 8: the app still opens a short run at 98.3-99.2 s, which gives a region 97.3-100.2 s, and splits 36.8/37.7 and ends the 100.5 region at 124.3 s where the lab's goes to 120.8 s and 140.1 s). These residual differences come from the C# solver and gate numerics (float arithmetic, order of the denoiser pieces), not from the region logic: the app's regions equal what `n1.regions` makes from the app's own gate, in both calls except for the count in ho-00 (9 against the lab's 8 on a different gate). Not measured: the numbers of the six calls above with the new build. Level scaling and the cap were compared by reading and by the unit tests (same formulas: -20 dBFS over the open samples, +30 dB limit, peak 0.97; cap 25 s with the quietest 100 ms of the last 40 %); no region of these calls reached the cap, so the cap did not matter here. Likely not the cause: `--timestamps word` against `auto` (differences in case and punctuation only; the scorer normalizes them).
+
+Expected: the held-out set should come close to the lab's 10.0, but this is an inference from two calls. Confirm with the same command as section 13, with `AMANU_LAB_EXE` set to `windows\artifacts\overnight-cut2\Amanu.exe`, and a new tag (the old rows are for the floor version: move or delete nothing, use another work folder).
+
+Engine cost. Finished runs leave no logs (`asr.amanu` deletes the run folder), so the only log is the running suite's `su\solve-gate-cut\aec-real.run\transcribe.log`: the mic track took 44 engine runs for 262 s of audio in 116 s wall, side by side with the call track (17 runs, 1013 s, 96 s) and other suite jobs: 2.6 s per run, against 5.6 s per 60 s chunk run on the call track. The lab's batch run alone: 14 regions, 88.9 s of audio, 8.5 s in one process (0.6 s per region, `n1.py` plumb, section 12). So the per-region process costs about 2 s more per region than the batch (the model load; the run's own `load_ms` is only printed in jsonl mode), about 10 regions per call, about 20 s per held-out call of 150 s, under load. No exact figure without an engine run.
+
+One process for all regions with word times: not implemented. The binary's strings show the jsonl line as `{"file":..,"text":..,<segments>,"mel_ms":..,"encode_ms":..,"decode_ms":..}` with segments as `{"t0_ms","t1_ms","text"}` only, so jsonl has no word list (confirms `LocalCliWords`). The word lines (`  [%7.2f -> %7.2f] %s` and `words: %d`) belong to the plain output. Whether `--batch FILE --timestamps word` without `--batch-jsonl` prints them per file, and how the files are separated (the string `[%zu/%zu] %s` suggests a progress line before each file), can only be shown by one engine run on a two-file list; a parser for it would be about 30 lines. The alternative that needs no new engine behaviour: jsonl for the text and the segment times (segments are likely one per file, so words would be spread in the region), which loses word times. Proposal: one two-region batch run after the suite finishes.
+
+### 14.5 Run A and run B (overnight-cut2, fixed port)
+
+Run A (held-out, 52 calls, solve-gate-cut in overnight-cut2, 2 calls at once, one process per call through asr.amanu): about 60 minutes expected. Only solve-gate-cut because the port changed and its old rows (wer2\ho\old-cut1, moved aside, not deleted) no longer describe this build; solve-gate's 11.8 is cached and is not re-measured.
+
+
+## 10.1 The gate in parallel pieces (overnight, track S2)
+
+Float DPDFNet, no engine run. Code: `s2q.py` (`time`, `dec`), `s2cmp.py`, `s1q_lib.py` (functions of
+`s1q.py`). Logs and the int8 models: `%USERPROFILE%\Amanu Quality Set\lab\overnight\S1`
+(`dec.log`, `time2.log`). I deleted both signal caches (3.2 GB) on the coordinator's order after
+the decisions were summed, so `s2cmp.py` and `s2q.py dec` need `s1q.py cache` and a re-run
+(about 7 min and 20 min per configuration on 4 processes). C: had 7.8 GB free at the end.
+
+How the pieces are cut today (`SpeechGate.Denoise`): cores of 30 s, each run on its core plus 2 s
+of sound on both sides (so 13 % extra audio), fresh model state per piece, the context's output
+thrown away. `p<c>` below is that with c s of context; `s<c>` is the same and also skips the model
+on stretches of at least 1 s where the canceller's output (0.3 s mean power) is more than 30 dB
+under its 99th percentile; the skipped stretches count as silence (gate closed), and the model
+state restarts, with c s of the real sound as context, at the next stretch. Parallel runs use
+a pool of processes that each hold a model (started before the clock).
+
+Decisions (10 ms frames, gate as `solve-gate`). Reference for "today" is `p2`.
+
+| Config | vs whole-call run: all 40 / noisy 14 | vs p2: all 40 / noisy 14 | worst call vs p2 |
+|---|---|---|---|
+| p2 (today) | 0.161 % / 0.444 % | 0 | 0 |
+| p1 | 0.191 % / 0.530 % | 0.064 % / 0.182 % | 1.06 % |
+| p0.5 | 0.206 % / 0.571 % | 0.058 % / 0.164 % | 1.05 % |
+| s2 | 0.178 % / 0.444 % | 0.017 % / 0.000 % | 0.66 % |
+
+All under the 1 % bar except one call each for p1 and p0.5. Skipping removes only 5.6 % of the
+audio on average (up to 52 % in one call); in the cafe calls nothing is 30 dB under the speech
+level, because the canceller leaves noise there. The model ran on 112.2 % (p2), 106.1 % (p1),
+103.1 % (p0.5) and 111.0 % (s2) of the audio.
+
+Time, the same 5 calls (812 s of audio), one run of each configuration, back to back, the
+machine busy (other agents use all 16 threads; read the ratios, and the x4 rows are noisy):
+
+| Config | Seconds | Ratio to today's pieces in 1 process (p2 x1) | Ratio to one run over the whole call |
+|---|---|---|---|
+| whole call, one stream | 135.7 | 1.39 | 1.00 |
+| p2 x1 | 97.8 | 1.00 | 0.72 |
+| p2 x2 | 56.4 | 0.58 | 0.42 |
+| p2 x3 | 42.5 | 0.43 | 0.31 |
+| p2 x4 | 44.0 | 0.45 | 0.33 |
+| p1 x1 | 89.9 | 0.92 | 0.66 |
+| p0.5 x1 | 94.0 | 0.96 | 0.69 |
+| s2 x1 | 111.4 | 1.14 | 0.82 |
+| s2 x2 | 82.1 | 0.84 | 0.61 |
+| s2 x3 | 56.7 | 0.58 | 0.42 |
+| s2 x4 | 110.1 | 1.13 | 0.81 |
+
+Result: not a quarter. Processes give 0.58 (2), 0.43 (3), 0.45 (4) of the serial piece time, with
+decisions identical to `p2` by construction (same pieces; the processes only change who runs them).
+The 5 calls are 155 to 170 s each, so a call has 5 to 6 pieces and 4 processes cannot be full; a
+quarter needs more pieces than workers and free cores, and the box had none. A shorter overlap
+saves only the share of audio it removes (13 % to 3 %): 0.92 and 0.96, inside the noise of this
+machine, for 0.06 % more differing frames. The skip does not pay on these calls (mean 5.6 % of audio
+skipped, and the time got worse because the run then has uneven pieces; s2 x4 is contention).
+Why the x4 gain stops: cores shared with other jobs, and the pieces are uneven (the last one is short).
+
+Real on a 4-core call in the app: the app already runs `Parallel.For` over the pieces with
+`ProcessorCount / 2` threads in one process, and I measured no gain from threads (brief, §6), so
+the gain of 0.43 to 0.58 is the process gain, not the piece gain. Estimate for 4 cores: 2 workers,
+about 0.58 of today's time; 3 workers about 0.45 if nothing else runs. Not a quarter.
+
+The port would need: (1) a child process per worker (the app's own exe with a `--gate-piece`
+mode, or a small helper) that holds one `OfflineSpeechDenoiser` and reads a float piece from a
+pipe or a temp file and writes the denoised piece back; (2) `SpeechGate.Denoise` to send the 30 s
+pieces to a pool of 2 to 3 such processes, with the same 2 s context, so the decisions stay as
+today's. The first thing to check in C# is why threads do not help: if it is a lock inside
+sherpa-onnx (one `OfflineSpeechDenoiser` per thread already), a process pool is the fix; if it is
+ONNX Runtime's own thread pool (`NumThreads = 1` is set), look at that first.
+
+Stop: two attempts did not reach a quarter, both for a reason I understand (cores are
+shared and there are about 5 pieces per call; skipping and a shorter overlap save under 10 %
+of the audio). Verdict: partial win, 0.43 to 0.58 of today's time for the same decisions.
+
+Run A result (held-out, overnight-cut2): WER 10.2 (no noise 4.9, echo words 9, engine time 1115 s), against solve-gate 11.8 cached: -1.67 [-2.88, -0.33]. Old port 10.6, lab 10.0.
+
+Run B (suite, 41 calls: 40 echo-* and aec-real, solve-gate-cut only, overnight-cut2, quality.py --exe): about 60 minutes expected. Only solve-gate-cut is in it because its signal scores are the ones still missing for the fixed build; solve-gate's cached values are read, not re-run.
+
+
+Run B did not start. quality.py refused the model before any engine run: "unknown echo model: solve-gate-cut" (its list of known models in quality.py has solve-gate but not solve-gate-cut). Adding the name needs a code change in quality.py, which this task does not allow, so nothing was run and nothing was changed. The suite signal scores for overnight-cut2 are still missing.
+C: free GB at the end: 7.74. transcribe-cli processes: 0.
+

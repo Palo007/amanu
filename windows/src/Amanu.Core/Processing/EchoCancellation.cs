@@ -182,13 +182,15 @@ public static class LocalVqeAssets
         "echo-solver-v1-floor15-gate", Solver: new EchoSolver(0.15, SpeechGate: true));
 
     /// <summary>
-    /// <see cref="SolveGate"/>, and recognition hears the mic as the gate's speech regions, one
-    /// file each, instead of as 60 s chunks. On the held-out set 10.0 % of my words came out
-    /// wrong against 11.8 % for solve-gate. The cleaned audio is the same, so only the engine's
-    /// input differs; the processor name differs so that a kept copy carries the region file.
+    /// <see cref="Solve"/>, then the speech gate, and recognition hears the mic as the gate's
+    /// speech regions, one file each, instead of as 60 s chunks. On the held-out set 10.0 % of
+    /// my words came out wrong in the lab against 11.8 % for solve-gate. There is no residual
+    /// suppressor (unlike solve-gate): the lab's winner gated the solver's plain output, and
+    /// with the suppressor in front the gate opened on leftovers of the far end and the noise
+    /// around them (an English phrase in two held-out calls) and the app lost 0.6 points.
     /// </summary>
     public static readonly LocalVqeModel SolveGateCut = new("solve-gate-cut", SonoraBackend.LibraryName, SonoraSha256,
-        "echo-solver-v1-floor15-gate-cut", Solver: new EchoSolver(0.15, SpeechGate: true, CutRegions: true));
+        "echo-solver-v1-gate-cut", Solver: new EchoSolver(SpeechGate: true, CutRegions: true));
 
     /// <summary>The suppressor keeps at least half of every band.</summary>
     private const string GainFloor = ";suppressor.amanu_gain_floor=0.5";

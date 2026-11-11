@@ -48,8 +48,10 @@ def speech(max_mb=450):
             if row is None or row[0] in banned_ids or base in banned_files or row[3] in banned_text:
                 dropped += 1
                 continue
-            x, sr = sf.read(io.BytesIO(tar.extractfile(m).read()), dtype="int16")
+            x, sr = sf.read(io.BytesIO(tar.extractfile(m).read()), dtype="float32")   # FLEURS wavs are 32-bit float
             assert sr == 16000 and x.ndim == 1, (base, sr, x.shape)
+            assert np.abs(x).max() > 0.001, base
+            x = x * (0.5 / np.abs(x).max())                                      # peak 0.5 so 16-bit FLAC keeps the quiet files
             f = out / (base[:-4] + ".flac")
             sf.write(f, x, sr, format="FLAC", subtype="PCM_16")
             kept.append((base, row[0], row[6] if len(row) > 6 else "", len(x) / sr, hashlib.sha256(f.read_bytes()).hexdigest()))
