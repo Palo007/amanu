@@ -56,7 +56,7 @@ RECORDINGS = ROOT / "recordings"
 RUNS = ROOT / "runs"
 DEFAULT_EXE = HERE.parent.parent / "artifacts" / "publish" / "Amanu.exe"
 
-ECHO_MODES = ["off", "sonora", "fast", "thorough", "sonora-linear", "sonora-nearend", "sonora-gentle", "sonora-long", "sonora-long80", "sonora-long80-nearend"]
+ECHO_MODES = ["off", "sonora", "fast", "thorough", "sonora-linear", "sonora-nearend", "sonora-gentle", "sonora-long", "sonora-long80", "sonora-long80-nearend", "sonora-delay-linear", "sonora-delay-nearend", "sonora-delay-floor", "sonora-delay-nearend-floor"]
 SNRS = [None, 20, 10, 5, 0, -5]          # near-end speech against noise, dB; None = no noise
 SERS = [5, -5, -15]                      # near-end speech against echo, dB; lower = louder echo
 NOISES = {"office": "OOFFICE", "cafe": "PCAFETER", "street": "STRAFFIC", "living": "DLIVING"}

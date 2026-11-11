@@ -415,6 +415,63 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
         Assert.True(Math.Abs(nearBefore - nearAfter) < 1, $"near-end speech changed by {nearAfter - nearBefore:0.0} dB");
     }
 
+    [Theory]
+    [InlineData(new[] { 1152, -2, 1152, 1152, 1152 }, 1152)]      // a suite room: near-only windows are not confident
+    [InlineData(new[] { 1152, 0, 1152, 1152, 1152 }, 1152)]       // four of five agree
+    [InlineData(new[] { 1280, 1216, 1088, 1152 }, 1152)]          // within two blocks of the earlier median
+    [InlineData(new[] { 0, 2816, 2816, 256, 128, 768, 512, 0 }, null)] // devices change, as in aec-real
+    [InlineData(new[] { 1152, 0, 0, 1152 }, null)]
+    [InlineData(new[] { -2, -2 }, null)]                          // no window was confident
+    [InlineData(new int[0], null)]
+    public void Sonora_takes_the_primed_delay_only_when_the_windows_agree(int[] windows, int? expected) =>
+        Assert.Equal(expected, SonoraBackend.Agreed(windows));
+
+    /// <summary>A delay prime that answers each window from a script and records how much it was fed.</summary>
+    private sealed class ScriptedPrimer(Queue<int> answers, List<long> fed) : IEchoDelayPrimer, IDisposable
+    {
+        private long samples;
+        public bool Disposed { get; private set; }
+        public int BeginDelayPrime() { samples = 0; return 0; }
+        public int FeedDelayPrime(ReadOnlySpan<float> microphone, ReadOnlySpan<float> reference)
+        {
+            Assert.Equal(0, microphone.Length % DelayPrime.Block);
+            samples += microphone.Length;
+            return 0;
+        }
+        public int EndDelayPrime() { fed.Add(samples); return answers.Dequeue(); }
+        public void Dispose() => Disposed = true;
+    }
+
+    [Theory]
+    [InlineData(new[] { 1152, 1152, 1152 }, 72)]  // three windows agree: AEC3 is told 72 ms
+    [InlineData(new[] { 1152, 3000, 4000 }, null)] // two of three disagree: plain Sonora
+    public void Sonora_primes_in_30_second_windows_and_falls_back_when_they_disagree(int[] answers, int? expectedMs)
+    {
+        var library = Path.Combine(AppContext.BaseDirectory, LocalVqeAssets.RuntimeFolder, SonoraBackend.LibraryName);
+        if (!File.Exists(library)) return;
+        // 80 s: windows of 30, 30 and 20 s; the last is longer than half a window, so it counts.
+        const int frames = 80 * 16_000;
+        var fed = new List<long>();
+        var primers = new List<ScriptedPrimer>();
+        IEchoDelayPrimer Open()
+        {
+            var primer = new ScriptedPrimer(new Queue<int>(answers), fed);
+            primers.Add(primer);
+            return primer;
+        }
+        using var backend = new SonoraBackend(library, LocalVqeAssets.SonoraDelayLinear.SonoraTuning, new SonoraPrime(5), Open);
+        using var canceller = new EchoCanceller(backend);
+        var prime = canceller.PrimeDelay(new ArraySampleSource(new float[frames]), new ArraySampleSource(new float[frames]), frames);
+
+        Assert.Equal(new long[] { 30 * 16_000, 30 * 16_000, 20 * 16_000 }, fed);
+        var primer = Assert.Single(primers);
+        Assert.True(primer.Disposed);
+        Assert.Equal(expectedMs, backend.ExternalDelayMs);
+        Assert.Equal(expectedMs is null ? "not_confident" : "primed", prime.Status);
+        var hop = new float[256];
+        canceller.Process(hop, hop, hop);
+    }
+
     [Fact]
     public void Sonora_refuses_a_tuning_it_does_not_understand()
     {
@@ -433,12 +490,23 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
     [InlineData("sonora-long")]
     [InlineData("sonora-long80")]
     [InlineData("sonora-long80-nearend")]
+    [InlineData("sonora-delay-linear")]
+    [InlineData("sonora-delay-nearend")]
+    [InlineData("sonora-delay-floor")]
+    [InlineData("sonora-delay-nearend-floor")]
     public void Sonora_removes_far_end_echo_and_keeps_near_end_speech(string key)
     {
         var model = LocalVqeAssets.For(key);
         Assert.Equal(key, model.Key);
         var library = Path.Combine(AppContext.BaseDirectory, LocalVqeAssets.RuntimeFolder, SonoraBackend.LibraryName);
         if (!File.Exists(library)) return;
+        // A primed variant needs LocalVQE for its delay prime; without it there is nothing to test.
+        LocalVqeAssets.Paths? primer = null;
+        if (model.SonoraPrime is not null)
+        {
+            if (new LocalVqeFactAttribute().Skip is not null) return;
+            primer = LocalVqeAssets.Resolve(model: LocalVqeAssets.Fast);
+        }
         const int rate = 16_000;
         var frames = 14 * rate;
         var farEnd = Signal(99, frames);
@@ -456,8 +524,18 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
         }
 
         var timer = Stopwatch.StartNew();
-        var (cleaned, system) = Run(mic, reference, new SonoraBackend(library, model.SonoraTuning));
+        var backend = primer is null
+            ? new SonoraBackend(library, model.SonoraTuning)
+            : new SonoraBackend(library, model.SonoraTuning, model.SonoraPrime, () => new LocalVqeBackend(primer.Library, primer.Model, 1));
+        var (cleaned, system) = Run(mic, reference, backend, out var prime);
         timer.Stop();
+        if (primer is not null)
+        {
+            // The echo is 30 ms late; the prime lands up to a few blocks early, never late.
+            Assert.NotNull(backend.ExternalDelayMs);
+            Assert.InRange(backend.ExternalDelayMs!.Value, 8, 30);
+            output.WriteLine($"{key}: delay prime {prime?.Describe()}, AEC3 told {backend.ExternalDelayMs} ms");
+        }
 
         static double Db(float[] samples, int from, int to)
         {
