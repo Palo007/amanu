@@ -184,3 +184,64 @@ points off the calls at SNR 0, more than the oracle without echo has (38.7): it 
 the noise down while the far end talks, and the engine then hears my speech in the other
 blocks better. Section 6 tests that. The denoiser after AEC3 gains nothing: AEC3's
 output is already damaged where the denoiser would work.
+
+## 6. Why the engine fails in loud noise, and the speech gate (m1.py, g1.py)
+
+Hypothesis: the suppressor's gain in loud noise (section 5) comes from the noise it
+turns down while only the far end talks, not from the echo it removes.
+
+`m1.py` gives the engine my voice and the noise without any echo, with the noise turned
+down only in parts of the call. My WER, one call per noise at SER -5:
+
+| Input | cafe 0 | cafe -5 | living 0 | office 0 | office -5 | street 0 |
+|---|---|---|---|---|---|---|
+| noise left in | 72.9 | 97.2 | 44.6 | 10.5 | 26.0 | 17.1 |
+| noise at 0.15 in the far-only blocks | 27.1 | 74.6 | 19.2 | 9.4 | 8.3 | 13.3 |
+| noise at 0 in the far-only blocks | 31.6 | 77.4 | 19.8 | 8.8 | 8.8 | 12.7 |
+| noise at 0.15 everywhere outside my blocks | 29.4 | 76.3 | 19.8 | 8.8 | 8.8 | 11.0 |
+| ideal noise mask | 10.7 | 10.7 | 11.9 | 8.8 | 8.3 | 9.9 |
+| DPDFNet baseline (section 2) | 39.5 | 83.6 | 20.9 | 8.3 | 9.4 | 17.1 |
+
+Conclusion: confirmed, and stronger than expected. The noise over my own words is not
+what loses them: with my blocks untouched and only the far-only blocks turned down, cafe
+at 0 dB goes from 72.9 to 27.1. The engine (its voice detector and the normalization of
+each piece it cuts) needs quiet between my sentences. A denoiser's own output is worse
+than that (39.5): DPDFNet removes a quarter of my speech frames at cafe 0 dB.
+
+So the denoiser is used as a detector only. `g1.py`: DPDFNet's output outside my blocks
+is 60 to 70 dB under its 99th percentile in the median, with short bursts up to -14 dB
+(voices from the babble); inside my speech the median is -12 to -15 dB. GTCRN's output
+does not separate the two (its median outside is -13 to -19 dB), so it cannot steer a gate.
+
+`pipeline.speech_gate`: the level of DPDFNet's output over 0.3 s; open where it is within
+25 dB of its 99th percentile for at least 0.3 s, plus 0.3 s on both sides; 0.15 elsewhere;
+ramps of 30 ms. The signal that passes is the canceller's, not the denoiser's.
+
+Suite, lab WER, 40 calls:
+
+| Remover | All 40 | No noise | SNR 20..5 | SNR 0 | SNR -5 | Echo words |
+|---|---|---|---|---|---|---|
+| solve, suppressor 0.15 | 21.0 | 10.2 | 12.6 | 24.8 | 54.7 | 4 |
+| solve, suppressor, then DPDFNet's output | 21.2 | 10.7 | 13.7 | 26.0 | 50.1 | 5 |
+| solve, suppressor, gate | 18.6 | 10.2 | 12.5 | 20.5 | 44.7 | 3 |
+| solve, gate (no suppressor) | 18.1 | 10.4 | 12.3 | 19.6 | 42.8 | 4 |
+| solve, suppressor, gate, half the denoiser's output mixed in | 17.9 | 10.1 | 11.6 | 21.0 | 42.3 | 5 |
+
+Conclusion: the gate takes 2.4 points off the suppressor's result and 5 off today's best
+(23.6). The three gate variants are within each other's noise. The finalist is the
+suppressor with the gate and no denoiser sound in the output: it changes my speech least.
+The gate values (25 dB, 0.3 s, 0.15) were set once from `g1.py` and not tuned on WER.
+
+Long calls: `solve.cancel` fits each stretch in blocks of about 300 s, so the app holds one
+block's spectra at a time. `s3.py`, true echo removal on the four 12-minute held-out
+calls, one fit over the whole call against blocks: 28.8 / 29.6, 27.3 / 27.3, 27.7 / 26.9,
+27.9 / 27.4 dB. No loss.
+
+## 7. The app's port
+
+`OfflineEchoSolver.cs` (Amanu.Core) is `solve.py` in C#, `SpeechGate.cs` (Amanu.App) the
+gate, with sherpa-onnx's `OfflineSpeechDenoiser`, which the app already carries. Models:
+`solve` (canceller), `solve-floor` (with the suppressor; the lab's `solve-res15`),
+`solve-gate` (with the gate; the lab's `solve-res15-gate`). `p1.py` on one suite call
+(cafe, SER -5, SNR 0): the app's `solve-gate` output differs from the lab's by -39 dB;
+the solver takes 2.2 s for 156 s of audio.
