@@ -27,6 +27,12 @@ public static class OfflineEchoAudio
 
         public string Timings { get; init; } = "";
 
+        /// <summary>What the echo solver found, for the log; null when the model has no solver or there was no playback.</summary>
+        public string? Solver { get; init; }
+
+        /// <summary>The mic was cleaned by the echo solver, not by the model's stream.</summary>
+        public bool Solved { get; init; }
+
         /// <summary>
         /// Audio kept in <see cref="KeptFolder"/> for later passes. Nothing that
         /// cleans up after one pass removes it; only a re-transcription with
@@ -85,15 +91,29 @@ public static class OfflineEchoAudio
 
             Mark("scan");
             var result = new Result(work, Path.Combine(work, "mic.wav"), Path.Combine(work, "system.wav"), start, frames, active);
-            var workers = active ? Workers(frames) : 0;
+            float[]? cleaned = null;
+            if (active && model?.Solver is { } solver)
+            {
+                var solved = OfflineEchoSolver.Cancel(
+                    ReadAll(micSource, micLead, frames, cancellationToken), ReadAll(systemSource, systemLead, frames, cancellationToken), cancellationToken);
+                // A recording that joins many devices has no one echo path to solve: cleaned
+                // stays null, and the model's stream (plain Sonora) runs below.
+                if (!solved.ManyPaths)
+                    cleaned = solved.Sections.Count > 0 && solver.SuppressorFloor is { } floor
+                        ? OfflineEchoSolver.Suppress(solved.Cleaned, solved.Echo, floor)
+                        : solved.Cleaned;
+                result = result with { Solver = Describe(solved), Solved = cleaned is not null };
+                Mark("solve");
+            }
+            var streaming = active && cleaned is null;
+            var workers = streaming ? Workers(frames) : 0;
             var cancellers = new List<EchoCanceller>();
             try
             {
-                if (active)
+                if (streaming)
                     for (var index = 0; index < workers; index++)
                         cancellers.Add(new EchoCanceller(backendFactory(workers > 1 ? 1 : ModelThreads())));
-                float[]? cleaned = null;
-                if (active)
+                if (streaming)
                 {
                     cleaned = new float[frames];
                     // Each block: own model state, warmed up on the audio before it; the prime scans the whole aligned signal.
@@ -106,6 +126,15 @@ public static class OfflineEchoAudio
                     foreach (var canceller in cancellers) native += canceller.NativeTime;
                 }
                 Mark("model");
+                if (cleaned is not null && model?.Solver is { SpeechGate: true })
+                {
+                    if (SpeechGate.ModelPath() is { } gateModel)
+                    {
+                        var open = SpeechGate.Apply(cleaned, gateModel, cancellationToken: cancellationToken);
+                        Mark(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"speech gate open {open:P0},"));
+                    }
+                    else marks.Add($"speech gate left out: no {SpeechGate.ModelName}");
+                }
                 using (var mic = new WaveSource(micSource))
                 using (var reference = new WaveSource(systemSource))
                 using (var micOut = new WaveFileWriter(result.Microphone, WaveFormat.CreateIeeeFloatWaveFormat(EchoCanceller.SampleRate, 1)))
@@ -359,6 +388,31 @@ public static class OfflineEchoAudio
     }
 
     /// <summary>A track on the shared timeline: a wave file read after <paramref name="lead"/> samples of silence.</summary>
+    /// <summary>One track on the recording's timeline, whole, for the echo solver.</summary>
+    private static float[] ReadAll(string path, long lead, long frames, CancellationToken cancellationToken)
+    {
+        var all = new float[frames];
+        using var source = new LeadSource(path, lead);
+        var position = 0;
+        while (position < all.Length)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = source.Read(all.AsSpan(position, Math.Min(1 << 16, all.Length - position)));
+            if (read == 0) break;
+            position += read;
+        }
+        return all;
+    }
+
+    private static string Describe(OfflineEchoSolver.Result solved)
+    {
+        if (solved.ManyPaths) return "many echo paths";
+        if (solved.Sections.Count == 0) return "no echo found, mic kept exact";
+        var parts = solved.Sections.Select(section => string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"delay {section.Lag:0} samples, drift {section.Slope / OfflineEchoSolver.SampleRate * 1e6:0.0} ppm"));
+        return $"{solved.Sections.Count} echo path{(solved.Sections.Count == 1 ? "" : "s")}: {string.Join("; ", parts)}";
+    }
+
     private sealed class LeadSource : IMonoSampleSource, IDisposable
     {
         private readonly WaveSource wave;

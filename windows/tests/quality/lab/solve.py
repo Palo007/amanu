@@ -254,7 +254,7 @@ def track(mic, far, detail=False):
 LEAD = 192          # samples the echo lags the warped call track: room for a direct sound found late
 
 
-def cancel(mic, far, n=4096, hop=1024, tail_s=0.75, pre=1, iterations=2, ridge=1e-4, floor_db=-40.0, secs=None):
+def cancel(mic, far, n=4096, hop=1024, tail_s=0.75, pre=1, iterations=2, ridge=1e-4, floor_db=-40.0, secs=None, block_s=300.0):
     """The mic with the linear echo of `far` taken out. For each stretch of the call with one
     device and one clock drift (`track`), the call track is warped onto the mic's clock and
     the echo path is fitted over the stretch's frames. Between two stretches the change is
@@ -273,15 +273,27 @@ def cancel(mic, far, n=4096, hop=1024, tail_s=0.75, pre=1, iterations=2, ridge=1
     parts = []
     for a, b, i, s in secs:
         X = stft(warp(far, [(0.0, np.inf, i, s)], len(mic), LEAD), n, hop)
-        rows = (t >= a) & (t < b)
-        w = None
-        for _ in range(iterations):
-            G = fit(Y, X, taps, pre, w, ridge, rows=rows)
-            D = apply(X, G, pre)
-            lam = smooth(np.abs(Y - D) ** 2)
-            lam = np.maximum(lam, 10 ** (floor_db / 10) * lam[:, rows].mean(axis=1, keepdims=True))
-            w = (1.0 / lam).astype(np.float32)
-        parts.append(D)
+        inside = np.flatnonzero((t >= a) & (t < b))
+        # A long stretch is fitted in blocks of about `block_s`: the room changes over a long
+        # call, and the app then needs the spectra of one block at a time, not of two hours.
+        # The first and the last block's models also cover the frames outside the stretch,
+        # for the search of where two stretches meet.
+        blocks = np.array_split(inside, max(1, int(round(len(inside) * hop / RATE / block_s))))
+        whole = np.zeros_like(Y)
+        for j, index in enumerate(blocks):
+            rows = np.zeros(frames, bool)
+            rows[index] = True
+            w = None
+            for _ in range(iterations):
+                G = fit(Y, X, taps, pre, w, ridge, rows=rows)
+                D = apply(X, G, pre)
+                lam = smooth(np.abs(Y - D) ** 2)
+                lam = np.maximum(lam, 10 ** (floor_db / 10) * lam[:, rows].mean(axis=1, keepdims=True))
+                w = (1.0 / lam).astype(np.float32)
+            lo = 0 if j == 0 else index[0]
+            hi = frames if j == len(blocks) - 1 else index[-1] + 1
+            whole[:, lo:hi] = D[:, lo:hi]
+        parts.append(whole)
     D = parts[0].copy()
     for k in range(1, len(secs)):
         # The stretches meet where the sum of the earlier model's residual before the frame and

@@ -55,7 +55,7 @@ public sealed class AppSettings
     public string EchoModel { get; set; } = "sonora";
 
     /// <summary>The sonora-* variants are tunings of Sonora under measurement in the quality suite.</summary>
-    public static readonly IReadOnlyList<string> EchoModels = ["sonora", "fast", "thorough", "sonora-linear", "sonora-nearend", "sonora-gentle", "sonora-long", "sonora-long80", "sonora-long80-nearend", "sonora-delay-linear", "sonora-delay-nearend", "sonora-delay-floor", "sonora-delay-nearend-floor", "sonora-delay-floor70", "sonora-delay-nearend-nf70", "sonora-delay-nearend-floor70"];
+    public static readonly IReadOnlyList<string> EchoModels = ["sonora", "fast", "thorough", "sonora-linear", "sonora-nearend", "sonora-gentle", "sonora-long", "sonora-long80", "sonora-long80-nearend", "sonora-delay-linear", "sonora-delay-nearend", "sonora-delay-floor", "sonora-delay-nearend-floor", "sonora-delay-floor70", "sonora-delay-nearend-nf70", "sonora-delay-nearend-floor70", "solve", "solve-floor", "solve-gate"];
 
     /// <summary>
     /// Keeps the echo-cleaned mic and its aligned call track in the session, so

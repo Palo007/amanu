@@ -20,12 +20,26 @@ namespace Amanu.Core.Processing;
 /// <param name="SonoraPrime">
 /// For Sonora only: fix AEC3's echo delay with LocalVQE's delay prime first; null lets AEC3 estimate it.
 /// </param>
+/// <param name="Solver">
+/// Solve the echo path over the whole recording (<see cref="OfflineEchoSolver"/>) instead of
+/// following it sample by sample; null runs the model named by FileName as a stream.
+/// </param>
 public sealed record LocalVqeModel(string Key, string FileName, string Sha256, string ProcessorVersion, string? SonoraTuning = null,
-    SonoraPrime? SonoraPrime = null)
+    SonoraPrime? SonoraPrime = null, EchoSolver? Solver = null)
 {
     /// <summary>Sonora is not a LocalVQE model but shares this record, so the setting, the cache identity and the ledger treat them all alike.</summary>
     public bool IsSonora => FileName == SonoraBackend.LibraryName;
 }
+
+/// <param name="SuppressorFloor">
+/// After the linear filter, turn down what it left of the echo, in no band below this share
+/// of its level; null leaves the filter's output as it is.
+/// </param>
+/// <param name="SpeechGate">
+/// Last, turn the mic down by 16 dB where I do not talk, as a denoiser finds it (the app's
+/// SpeechGate); it needs dpdfnet_baseline.onnx in the echo runtime and is left out without it.
+/// </param>
+public sealed record EchoSolver(double? SuppressorFloor = null, bool SpeechGate = false);
 
 public static class LocalVqeAssets
 {
@@ -135,6 +149,34 @@ public static class LocalVqeAssets
     public static readonly LocalVqeModel SonoraDelayNearendFloor70 = new("sonora-delay-nearend-floor70", SonoraBackend.LibraryName, SonoraSha256,
         "sonora-aec3-1632d47-amanu-v5-delay-nearend-floor70", FilterBlocks(64) + ";" + NearendTuning + ";suppressor.amanu_gain_floor=0.7", new SonoraPrime(60));
 
+    /// <summary>
+    /// The echo path solved over the whole recording instead of followed sample by sample:
+    /// the echo's delay, the clock drift between the two devices and a change of device are
+    /// found first, then one filter per five minutes is fitted by least squares. In the
+    /// quality suite's double talk it cleaned my voice 8 to 10 dB better than AEC3's linear
+    /// filter without lowering it, and a drift of 200 ppm, which takes almost all of the
+    /// delay-primed filter's echo removal away, cost it nothing. A recording that joins many
+    /// devices runs as plain Sonora, so FileName is Sonora's.
+    /// </summary>
+    public static readonly LocalVqeModel Solve = new("solve", SonoraBackend.LibraryName, SonoraSha256,
+        "echo-solver-v1", Solver: new EchoSolver());
+
+    /// <summary>
+    /// <see cref="Solve"/>, then what the filter left of the echo turned down by at most 16 dB.
+    /// In loud noise this also turns the noise down while only the far end talks, and the
+    /// engine then loses far fewer of my words in the other parts of the call.
+    /// </summary>
+    public static readonly LocalVqeModel SolveFloor = new("solve-floor", SonoraBackend.LibraryName, SonoraSha256,
+        "echo-solver-v1-floor15", Solver: new EchoSolver(0.15));
+
+    /// <summary>
+    /// <see cref="SolveFloor"/>, then the mic turned down by 16 dB where I do not talk. On the
+    /// quality suite's calls at a speech-to-noise ratio of 0 and -5 dB it took a further 4 and
+    /// 10 points off my word error rate.
+    /// </summary>
+    public static readonly LocalVqeModel SolveGate = new("solve-gate", SonoraBackend.LibraryName, SonoraSha256,
+        "echo-solver-v1-floor15-gate", Solver: new EchoSolver(0.15, SpeechGate: true));
+
     /// <summary>The suppressor keeps at least half of every band.</summary>
     private const string GainFloor = ";suppressor.amanu_gain_floor=0.5";
 
@@ -160,7 +202,7 @@ public static class LocalVqeAssets
         "b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731",
         "localvqe-v1.4-aec-200k-f32-amanu-v4-delay-prime");
 
-    public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough, SonoraLinear, SonoraNearend, SonoraGentle, SonoraLong, SonoraLong80, SonoraLong80Nearend, SonoraDelayLinear, SonoraDelayNearend, SonoraDelayFloor, SonoraDelayNearendFloor, SonoraDelayFloor70, SonoraDelayNearendNf70, SonoraDelayNearendFloor70];
+    public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough, SonoraLinear, SonoraNearend, SonoraGentle, SonoraLong, SonoraLong80, SonoraLong80Nearend, SonoraDelayLinear, SonoraDelayNearend, SonoraDelayFloor, SonoraDelayNearendFloor, SonoraDelayFloor70, SonoraDelayNearendNf70, SonoraDelayNearendFloor70, Solve, SolveFloor, SolveGate];
 
     public static LocalVqeModel Default => Sonora;
 

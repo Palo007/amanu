@@ -784,7 +784,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo stages: {prepared.Timings}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var echoRecord = new EchoCancellationRecord(model.ProcessorVersion,
             prepared.ModelRan ? model.Sha256 : null, EchoCanceller.SampleRate, prepared.Frames,
-            Mode: !prepared.ModelRan ? "silent_reference_passthrough" : model.IsSonora ? "sonora" : "localvqe",
+            Mode: !prepared.ModelRan ? "silent_reference_passthrough" : prepared.Solved ? "echo_solver" : model.IsSonora ? "sonora" : "localvqe",
             DelayPrime: prepared.DelayPrime?.Describe());
         WriteLedger(directory, ReadLedger(directory) with { AudioEchoCancellation = echoRecord });
         if (keep)
@@ -802,7 +802,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         // Sonora; the record still names the variant, so the log says what really ran.
         if (model.SonoraPrime is not null && prepared.ModelRan && prepared.DelayPrime is { Applied: false } sonoraPrime)
             await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} echo delay prime found no delay for the whole recording ({sonoraPrime.Status}); plain Sonora ran instead of {model.Key}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
+        if (model.Solver is not null && prepared.ModelRan && !prepared.Solved)
+            await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} the echo solver found {prepared.Solver}; plain Sonora ran instead of {model.Key}{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
         var how = !prepared.ModelRan ? "no playback, mic kept exact"
+            : prepared.Solved ? $"echo solver, {prepared.Solver}"
             : model.IsSonora ? prepared.DelayPrime is { ShiftSamples: { } fixedShift } ? $"Sonora, echo delay fixed at {fixedShift} samples" : "Sonora"
             : prepared.DelayPrime is { ShiftSamples: { } shift } ? $"LocalVQE, echo delay primed at {shift} samples"
             : "LocalVQE";
