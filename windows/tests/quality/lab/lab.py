@@ -68,6 +68,7 @@ def build_scene(room: str = "A", ser: int = -5, snr=None, noise: str = "office",
     p_near = Q.active_power(near)
     echo *= math.sqrt(p_near / Q.active_power(echo) * 10 ** (-ser / 10))
     mic = near + echo
+    n = np.zeros(len(near))
     if snr is not None:
         source = Q.load_noise(Q.NOISES[noise])
         offset = int(np.random.default_rng(snr + 100).integers(0, len(source) - len(near)))
@@ -78,7 +79,7 @@ def build_scene(room: str = "A", ser: int = -5, snr=None, noise: str = "office",
     # The suite writes 16-bit files; quantize the same way.
     q = lambda x: np.round(np.clip(x, -1, 1) * 32767) / 32767
     return {"name": f"{room}-ser{ser}-snr{snr}-{rir}-dist{int(distortion)}", "mic": q(mic * scale), "far": q(far),
-            "near": q(near * scale), "echo": echo * scale, "h": h,
+            "near": q(near * scale), "echo": echo * scale, "noise": n * scale, "h": h,
             "truth": {"kind": "echo", "regions": regions, "room": room, "ser": ser, "snr": snr}}
 
 
