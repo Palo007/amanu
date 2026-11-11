@@ -33,6 +33,7 @@ RATE = 16000
 N, HOP, NF = 512, 128, 257
 NMEL = 64
 FLOOR = 0.3
+ASYM = 2.0                         # extra weight on a mask below its target (deleting speech); the second run uses 6
 POOL = 3                           # STFT frames per model frame (24 ms)
 CH = 1250                          # frames per window (10 s at 8 ms); training windows are this long
 HOME = Path(HOME_)
@@ -263,7 +264,7 @@ def targets(X, S, Z):
 
 def loss_fn(m, t, w):
     d = m - t
-    asym = torch.where(d < 0, 2.0, 1.0)                                      # deleting speech costs twice
+    asym = torch.where(d < 0, ASYM, 1.0)                                      # deleting speech costs twice
     return (w * asym * d ** 2).mean()
 
 
@@ -277,13 +278,16 @@ def proxy(m, ps, pz):
 
 # ---------------------------------------------------------------- training
 
-def train(total_s=6900.0, bsz=12, lr0=2e-3):
+def train(total_s=6900.0, bsz=12, lr0=2e-3, init=None, tag=""):
+    """tag != '': a fine-tune from ckpt/<init>.pt that writes ckpt/<tag>-*.pt (the one stated change of the stop rule)."""
     torch.set_num_threads(2)
     CKPT.mkdir(parents=True, exist_ok=True)
     model = Mask()
+    if init:
+        model.load_state_dict(torch.load(CKPT / f"{init}.pt", weights_only=False)["model"])
     opt = torch.optim.AdamW(model.parameters(), lr=lr0, weight_decay=1e-4)
     step, elapsed, best = 0, 0.0, 1e9
-    last = CKPT / "latest.pt"
+    last = CKPT / (tag + "latest.pt")
     if last.exists():
         ck = torch.load(last, weights_only=False)
         model.load_state_dict(ck["model"]); opt.load_state_dict(ck["opt"])
@@ -314,7 +318,7 @@ def train(total_s=6900.0, bsz=12, lr0=2e-3):
         if elapsed >= total_s:
             break
         frac = elapsed / total_s
-        lr = lr0 * min(1.0, (step + 1) / 100) * (0.03 + 0.97 * 0.5 * (1 + np.cos(np.pi * frac)))
+        lr = lr0 * min(1.0, (step + 1) / (20 if init else 100)) * (0.03 + 0.97 * 0.5 * (1 + np.cos(np.pi * frac)))
         for g in opt.param_groups:
             g["lr"] = lr
         X, S, Z = batch(tr, bsz)
@@ -335,7 +339,7 @@ def train(total_s=6900.0, bsz=12, lr0=2e-3):
             print(f"  VAL step {step} loss {vl:.5f} speech {sp:+.2f} dB snr gain {sg:+.2f} dB", flush=True)
             if vl < best:
                 best = vl
-                torch.save({"model": model.state_dict()}, CKPT / "best.pt")
+                torch.save({"model": model.state_dict()}, CKPT / (tag + "best.pt"))
         if elapsed - t_last_ck >= 600:
             t_last_ck = elapsed
             torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "step": step, "elapsed": elapsed, "best": best}, last)
@@ -343,7 +347,7 @@ def train(total_s=6900.0, bsz=12, lr0=2e-3):
     vl, sp, sg = validate()
     print(f"FINAL step {step} t {elapsed:.0f} s loss {vl:.5f} speech {sp:+.2f} dB snr gain {sg:+.2f} dB", flush=True)
     torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "step": step, "elapsed": elapsed, "best": best}, last)
-    torch.save({"model": model.state_dict()}, CKPT / "final.pt")
+    torch.save({"model": model.state_dict()}, CKPT / (tag + "final.pt"))
 
 
 # ---------------------------------------------------------------- applying the mask to a call
@@ -509,7 +513,11 @@ if __name__ == "__main__":
     if cmd == "data":
         data_report()
     elif cmd == "train":
-        train(float(sys.argv[2]) if len(sys.argv) > 2 else 6900.0)
+        if len(sys.argv) > 3:                                   # train <seconds> <asym> : fine-tune final.pt as "a6-"
+            ASYM = float(sys.argv[3])
+            train(float(sys.argv[2]), lr0=5e-4, init="final", tag="a6-")
+        else:
+            train(float(sys.argv[2]) if len(sys.argv) > 2 else 6900.0)
     elif cmd == "check":
         check(sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] != "-" else None, sys.argv[3] if len(sys.argv) > 3 else "final")
     elif cmd == "run":

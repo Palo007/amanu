@@ -1020,3 +1020,21 @@ Run B (suite, 41 calls: 40 echo-* and aec-real, solve-gate-cut only, overnight-c
 Run B did not start. quality.py refused the model before any engine run: "unknown echo model: solve-gate-cut" (its list of known models in quality.py has solve-gate but not solve-gate-cut). Adding the name needs a code change in quality.py, which this task does not allow, so nothing was run and nothing was changed. The suite signal scores for overnight-cut2 are still missing.
 C: free GB at the end: 7.74. transcribe-cli processes: 0.
 
+
+## 13.2 Which signal the engine gets (overnight)
+
+Code (variant cut3): `solve-gate-cut` now gates the solver's plain output (as overnight-cut2 did) but gives the engine the audio from behind the 0.15 residual suppressor (as solve-gate does). `SpeechGate.Apply` has an overload with a separate `detect` signal; `OfflineEchoAudio.Prepare` passes the plain solver output as `detect` when the model cuts regions. `LocalVqeAssets.SolveGateCut` is `EchoSolver(0.15, SpeechGate: true, CutRegions: true)`, processor `echo-solver-v1-floor15-gate-cut3`. `quality.py` lists `solve-gate-cut` among its known echo models. Unit tests: 331 + 113 pass. Build: `windows\artifacts\overnight-cut3` (cut2 stays in `overnight-cut2` as built; the superseded `overnight-cut` was deleted). Reason for the hypothesis: cut2 (plain output for gate and audio) had held-out WER 10.2 but 9 echo words; the old build (gate behind the suppressor) had 10.6 and 3.
+
+Run C (suite, 40 echo-* calls, overnight-cut2, tag su/solve-gate-cut2, one job at a time): 1 job (2 transcribe-cli), about 25 to 30 minutes, because the cut2 numbers on the suite's calls are needed beside cut3's and su/solve-gate-cut holds rows of an older build.
+
+Run C result (cut2, 26 minutes): my WER 15.9, no noise 9.0, SNR 0 17.6, SNR -5 38.8, echo words 4, echo time 471 s. solve-gate (cached): 18.1, 10.4, 19.6, 42.8, 4, 1300 s.
+
+Run D (same 40 calls, overnight-cut3, tag su/solve-gate-cut3, one job at a time): 1 job (2 transcribe-cli), about 26 minutes, because it is the same measurement for the cut3 build, to be read beside cut2's.
+
+Run D result (cut3, 27 minutes): my WER 15.9, no noise 8.8, SNR 0 17.9, SNR -5 39.1, echo words 6, echo time 508 s. Against cut2 (15.9, 9.0, 17.6, 38.8, 4, 471 s): the same WER within noise, and two more echo words, so the hypothesis did not hold on the suite: giving the engine the audio from behind the suppressor did not bring the echo words down below cut2's 4 (solve-gate also 4). Since cut2 is equal or better and simpler, I took the cut3 change out of the source again (`git checkout` of the three source files; the patch is kept in the session scratchpad as cut3.patch); the code is cut2's behaviour. `windows\artifacts\overnight-cut3` stays as built, for reference.
+
+Run E (quality.py, 41 calls, `--only "^(echo-|aec-real)" --modes solve-gate-cut`, overnight-cut2 build, one job at a time): 1 job, about 60 minutes, because cut2 is the better of the two and its signal scores (double-talk voice, ERLE on aec-real, echo time) are the ones missing.
+
+Run E result (quality.py, overnight-cut2 build, run folder `runs\overnight-cut`, 41 jobs, 27 minutes of jobs, report written with `report --run`): double-talk voice level -0.05 dB (mean of the 40 mixed calls; solve-gate from `runs\sonora-tuning`: -0.41), ERLE on aec-real 33.7 dB (solve-gate 33.7), echo removed on the 40 calls 28.7 dB (solve-gate 30.1), echo time for the 40 calls 448 s (solve-gate 427 s), my WER 15.9 (solve-gate 18.4 in that run), echo words 3 (solve-gate 3). aec-real time 68.8 s (solve-gate 53.6 s).
+
+Summary of 13.2: cut3 is not better than cut2 on the suite (same WER 15.9; echo words 6 against 4), so the source keeps cut2's behaviour (gate and audio both on the solver's plain output) and `windows\artifacts\overnight-cut2` is the build for a final held-out check. quality.py now knows `solve-gate-cut`. All engine runs of this task have ended; no transcribe-cli process of mine is running.

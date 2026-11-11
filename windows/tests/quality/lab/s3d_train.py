@@ -56,10 +56,14 @@ def tensors(item):
     return torch.from_numpy(f.astype(np.float32) / 30.0), torch.from_numpy(e), torch.from_numpy(k)
 
 
+HARD = False      # the one change after the first run: low-SNR mixes three times as likely, removed noise weighs three times as much
+
+
 def batch(data, bsz, rng):
     F, E, K = [], [], []
+    w = np.array([3.0 if (HARD and d[3] < 5) else 1.0 for d in data]); w /= w.sum()
     for _ in range(bsz):
-        f, e, k, _ = data[int(rng.integers(len(data)))]
+        f, e, k, _ = data[int(rng.choice(len(data), p=w))]
         a = int(rng.integers(0, len(e) - WIN))
         F.append(f[a:a + WIN]); E.append(e[a:a + WIN]); K.append(k[a:a + WIN])
     return (torch.from_numpy(np.stack(F).astype(np.float32) / 30.0), torch.from_numpy(np.stack(E)), torch.from_numpy(np.stack(K)))
@@ -68,6 +72,8 @@ def batch(data, bsz, rng):
 def loss_fn(pred, e, k):
     t = k.clamp(KMIN, KMAX)
     w = 1.0 + 2.0 * ((e + k) > -40.0).float()
+    if HARD:
+        w = w * (1.0 + 2.0 * (k < -20.0).float() * (e > -45.0).float())
     w = w * torch.where(e > -45.0, torch.ones_like(e), torch.full_like(e, 0.1))
     return (nn.functional.smooth_l1_loss(pred / 10.0, t / 10.0, reduction="none") * w).sum() / w.sum()
 
@@ -117,7 +123,9 @@ def ckpt_path(tag): return S3 / "ckpt" / f"{tag}.pt"
 
 
 def train(total_s, tag="a"):
+    global HARD
     torch.set_num_threads(2)
+    HARD = tag.startswith("b")
     data, vdata = load("train"), load("val")
     print(f"{len(data)} train mixes, {len(vdata)} validation mixes", flush=True)
     m = Gate()
@@ -129,6 +137,9 @@ def train(total_s, tag="a"):
         z = torch.load(cp, weights_only=False)
         m.load_state_dict(z["m"]); opt.load_state_dict(z["o"]); step, spent = z["step"], z["spent"]
         print("resumed at step", step, "after", spent, "s", flush=True)
+    elif HARD:
+        m.load_state_dict(torch.load(ckpt_path("a"), weights_only=False)["m"]); print("started from a", flush=True)
+    peak = 6e-4 if HARD else 2e-3
     cp.parent.mkdir(exist_ok=True)
     rng = np.random.default_rng(step + 1)
     last_ck, ema = time.time(), None
@@ -137,7 +148,7 @@ def train(total_s, tag="a"):
         spent = base + time.time() - t0
         if spent > total_s:
             break
-        lr = 1e-4 + (2e-3 - 1e-4) * 0.5 * (1 + np.cos(np.pi * min(1.0, spent / total_s)))
+        lr = 1e-4 + (peak - 1e-4) * 0.5 * (1 + np.cos(np.pi * min(1.0, spent / total_s)))
         for g in opt.param_groups: g["lr"] = lr
         m.train()
         f, e, k = batch(data, 12, rng)
