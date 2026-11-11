@@ -5,10 +5,10 @@ transcripts, or from calls this script mixes itself, so it knows every word that
 and every sample of echo and noise it added.
 
     py quality.py prepare            # download (about 1.2 GB) and build the test recordings
-    py quality.py run                # run them through Amanu.exe with every echo remover
+    py quality.py run --modes a,b    # run them through Amanu.exe with the named echo removers
     py quality.py report             # score the last run, write report.md and results.json
     py quality.py check              # compare the last run with baseline.json; exit 1 if worse
-    py quality.py all                # run + report + check
+    py quality.py all --modes all --yes   # run + report + check, every model (about 3 hours)
 
 Data lives in %USERPROFILE%\\Amanu Quality Set, never in the repository. Close Amanu first:
 a running Amanu shares the CPU and the timings would be wrong.
@@ -430,13 +430,53 @@ def prepare(args):
 
 # ---------------------------------------------------------------- run
 
-def plan_runs(only: str | None):
+def plan_runs(only: str | None, modes: list[str] | None = None):
     for folder in sorted(RECORDINGS.iterdir()):
         if only and not re.search(only, folder.name):
             continue
         kind = json.loads((folder / "truth.json").read_text(encoding="utf-8"))["kind"]
-        for mode in (["off"] if kind == "asr" else ECHO_MODES):
+        for mode in (["off"] if kind == "asr" else (modes or ECHO_MODES)):
             yield folder, mode
+
+
+def parse_modes(text: str | None) -> list[str] | None:
+    if text is None or text == "all":
+        return None
+    modes = [m.strip() for m in text.split(",") if m.strip()]
+    unknown = [m for m in modes if m not in ECHO_MODES]
+    if unknown:
+        sys.exit(f"unknown echo model: {', '.join(unknown)}. Known: {', '.join(ECHO_MODES)}")
+    return modes
+
+
+def seconds_per_job() -> float:
+    """The mean time of finished jobs in earlier runs, from their logs; 35 s when there are none."""
+    seen = []
+    for log in RUNS.glob("*/*__*/transcribe.log"):
+        m = re.search(r" timing total ([\d.]+) s", log.read_text(encoding="utf-8", errors="replace"))
+        if m:
+            seen.append(float(m.group(1)))
+        if len(seen) >= 300:
+            break
+    return float(np.mean(seen)) if seen else 35.0
+
+
+def check_plan(args, jobs: list, out_root: Path):
+    """Refuse a run whose models were not named, and one longer than an hour that was not
+    confirmed. Both have cost hours: a run without --only queued 754 clean-speech files
+    (about 7 hours), and a new run folder runs every one of the echo models, old ones too.
+    The plan is printed first, so the choice is made with the cost in view."""
+    todo = [(f, m) for f, m in jobs if not (out_root / f"{f.name}__{m}" / "transcript.json").exists()]
+    hours = len(todo) * seconds_per_job() / 3600
+    echo = sorted({m for f, m in todo if not f.name.startswith("asr-")})
+    say(f"plan: {len(todo)} jobs to run ({len(jobs) - len(todo)} done already), about {hours:.1f} h; "
+        f"recordings {len({f for f, _ in todo})}, echo models {', '.join(echo) or 'none'}")
+    has_echo = any(not f.name.startswith("asr-") for f, _ in jobs)
+    if has_echo and args.modes is None:
+        sys.exit("name the echo models to run: --modes a,b (or --modes all). "
+                 "Run only the models the question needs; earlier results stay in their run folders.")
+    if hours > 1 and not args.yes:
+        sys.exit("this plan takes more than an hour. Narrow it with --modes or --only, or pass --yes.")
 
 
 def run(args):
@@ -446,11 +486,12 @@ def run(args):
     if not args.force and "Amanu.exe" in subprocess.run(["tasklist"], capture_output=True, text=True).stdout:
         sys.exit("Amanu is running. Quit it first (or pass --force).")
     out_root = RUNS / (args.name or dt.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    jobs = list(plan_runs(args.only, parse_modes(args.modes)))
+    check_plan(args, jobs, out_root)
     out_root.mkdir(parents=True, exist_ok=True)
     (RUNS / "last.txt").write_text(out_root.name, encoding="utf-8")
     (out_root / "build.json").write_text(json.dumps({"exe": str(exe), "exe_time": exe.stat().st_mtime,
                                                      "started": dt.datetime.now().isoformat()}), encoding="utf-8")
-    jobs = list(plan_runs(args.only))
     for k, (folder, mode) in enumerate(jobs, 1):
         target = out_root / f"{folder.name}__{mode}"
         if (target / "transcript.json").exists():
@@ -467,6 +508,7 @@ def run(args):
         # them, and the kept call track, to keep a full run near 2 GB instead of 5.
         for copy in list(target.glob("*.wav")) + [target / ".echo-kept" / "system.wav"]:
             copy.unlink(missing_ok=True)
+        save_audio_metrics(target, folder, mode, args.keep_audio)
         if result.returncode != 0 and (target / "measure.error").exists():
             say("   " + (target / "measure.error").read_text(encoding="utf-8", errors="replace").splitlines()[0])
     say(f"run done: {out_root}")
@@ -565,28 +607,59 @@ def score_one(run_folder: Path, recording: Path, mode: str) -> dict:
             them = error_counts(truth["them"], transcript_text(run_folder, "them"))
             row["them"] = {k: v for k, v in them.items() if k != "inserted"}
         row["me"] = {k: v for k, v in me.items() if k != "inserted"}
-    if truth["kind"] in ("echo", "aec-real"):
-        raw = read_mono(recording / "mic.wav")
-        out = cleaned_mic(run_folder, recording, mode)
-        if out is not None:
-            regions = truth["regions"]
-            far = [r for r in regions if r["kind"] == "far"]
-            # ERLE: how much quieter the far-end-only parts got. Noise stays, so it is capped by the noise floor.
-            row["erle_db"] = float(np.mean([db(region_power(raw, r) / region_power(out, r)) for r in far]))
-            if truth["kind"] == "echo":
-                row["erle_settled_db"] = db(region_power(raw, far[-1], 2) / region_power(out, far[-1], 2))
-                near_truth = read_mono(recording / "near.wav")
-                near = [r for r in regions if r["kind"] == "near"]
-                double = [r for r in regions if r["kind"] == "double"]
-                # Near-end loss: how much of my own voice the remover took away where there was no echo.
-                row["near_loss_db"] = float(np.mean([db(region_power(raw, r) / region_power(out, r)) for r in near]))
-                cut = lambda x, r: x[r["start"]:r["end"]]
-                row["double_sisdr_in_db"] = float(np.mean([si_sdr(cut(raw, r), cut(near_truth, r)) for r in double]))
-                aligned = [cut_aligned(out, near_truth, r) for r in double]
-                row["double_sisdr_out_db"] = float(np.mean([si_sdr(o, t) for o, t in aligned]))
-                # How loud my voice still is while both talk: the part of the output that is my voice, against my voice.
-                row["double_near_gain_db"] = float(np.mean([near_gain(o, t) for o, t in aligned]))
+    row.update(audio_metrics(run_folder, recording, mode, truth))
     return row
+
+
+AUDIO_METRICS = "audio-metrics.json"
+
+
+def audio_metrics(run_folder: Path, recording: Path, mode: str, truth: dict) -> dict:
+    """The signal scores of one job. They come from the kept cleaned mic when it is there, and
+    otherwise from the numbers `run` saved before it deleted that copy (see `save_audio_metrics`)."""
+    if truth["kind"] not in ("echo", "aec-real"):
+        return {}
+    out = cleaned_mic(run_folder, recording, mode)
+    if out is None:
+        saved = run_folder / AUDIO_METRICS
+        return json.loads(saved.read_text(encoding="utf-8")) if saved.exists() else {}
+    m = {}
+    raw = read_mono(recording / "mic.wav")
+    regions = truth["regions"]
+    far = [r for r in regions if r["kind"] == "far"]
+    # ERLE: how much quieter the far-end-only parts got. Noise stays, so it is capped by the noise floor.
+    m["erle_db"] = float(np.mean([db(region_power(raw, r) / region_power(out, r)) for r in far]))
+    if truth["kind"] == "echo":
+        m["erle_settled_db"] = db(region_power(raw, far[-1], 2) / region_power(out, far[-1], 2))
+        near_truth = read_mono(recording / "near.wav")
+        near = [r for r in regions if r["kind"] == "near"]
+        double = [r for r in regions if r["kind"] == "double"]
+        # Near-end loss: how much of my own voice the remover took away where there was no echo.
+        m["near_loss_db"] = float(np.mean([db(region_power(raw, r) / region_power(out, r)) for r in near]))
+        cut = lambda x, r: x[r["start"]:r["end"]]
+        m["double_sisdr_in_db"] = float(np.mean([si_sdr(cut(raw, r), cut(near_truth, r)) for r in double]))
+        aligned = [cut_aligned(out, near_truth, r) for r in double]
+        m["double_sisdr_out_db"] = float(np.mean([si_sdr(o, t) for o, t in aligned]))
+        # How loud my voice still is while both talk: the part of the output that is my voice, against my voice.
+        m["double_near_gain_db"] = float(np.mean([near_gain(o, t) for o, t in aligned]))
+    return m
+
+
+def save_audio_metrics(target: Path, recording: Path, mode: str, keep_audio: bool):
+    """Score the cleaned mic as soon as a job ends, save the numbers, and delete the copy.
+    The copies were about 6 MB per call and model, so a tuning run grew by gigabytes and
+    filled the disk; a later cleanup that deleted them also made the run impossible to score
+    again. With the numbers saved, `report` needs no audio, and `--keep-audio` keeps the copy
+    for a study that reads it."""
+    truth = json.loads((recording / "truth.json").read_text(encoding="utf-8"))
+    kept = target / ".echo-kept" / "mic.wav"
+    if truth["kind"] not in ("echo", "aec-real") or not (target / "transcript.json").exists():
+        return
+    if mode != "off" and not kept.exists():
+        return
+    (target / AUDIO_METRICS).write_text(json.dumps(audio_metrics(target, recording, mode, truth)), encoding="utf-8")
+    if not keep_audio:
+        kept.unlink(missing_ok=True)
 
 
 def last_run() -> Path:
@@ -754,6 +827,10 @@ def main():
     parser.add_argument("--run", help="run folder to report or check (default: the last run)")
     parser.add_argument("--limit", type=int, help="prepare: use only the first N utterances of each clean set")
     parser.add_argument("--force", action="store_true", help="run even when Amanu is open")
+    parser.add_argument("--modes", help="run: comma-separated echo models, or 'all'; needed when echo calls are in the plan")
+    parser.add_argument("--yes", action="store_true", help="run: start a plan that takes more than an hour")
+    parser.add_argument("--keep-audio", action="store_true",
+                        help="run: keep each job's cleaned mic (.echo-kept/mic.wav, about 6 MB) after scoring it")
     parser.add_argument("--update-baseline", action="store_true", help="check: write this run as the new baseline")
     args = parser.parse_args()
     if args.command == "prepare":

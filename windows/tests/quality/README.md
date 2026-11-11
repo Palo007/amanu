@@ -7,7 +7,7 @@ and noise it added.
 
 ```
 py quality.py prepare     # once: downloads about 1.2 GB, builds 98 test recordings
-py quality.py all         # run + report + check; about 3 hours on a Ryzen 7 5800H
+py quality.py all --modes all --yes   # run + report + check; about 3 hours on a Ryzen 7 5800H
 ```
 
 Close Amanu first. The suite runs `artifacts\publish\Amanu.exe --measure-transcription`
@@ -18,6 +18,13 @@ filter. It needs Python 3 with `numpy`, `scipy`, `soundfile`, `pyarrow` and `rap
 Data and runs live in `%USERPROFILE%\Amanu Quality Set` (`AMANU_QUALITY_SET` moves it),
 never in the repository. A run resumes where it stopped: `py quality.py run --name <run>`.
 `--only <regex>` runs some recordings only.
+
+`run` prints its plan (jobs, hours, echo models) before it starts. It needs `--modes a,b`
+(or `--modes all`) whenever echo calls are in the plan, and `--yes` for a plan longer than an
+hour: both stopped runs that would have spent hours on models nobody needed. After each
+job, `run` saves the signal scores to `audio-metrics.json` and deletes the cleaned mic copy,
+so a run stays small and can be scored again after any cleanup; `--keep-audio` keeps the
+copies for a study that reads them.
 
 ## What it measures
 

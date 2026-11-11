@@ -47,6 +47,21 @@ Amanu build that knows the `sonora-delay-*` echo models (for `wer.py`) is
 | `s1.py`, `s2.py`, `s3.py`, `p1.py` | Signal scores of the solver on suite calls, the tracker against the manifest's truth, block-wise against whole-call fits on the long calls, and the app's output against the lab's. |
 | `NOTES.md` | The notebook of the work behind `../echo-solver-2026-11-11.md`. |
 
+## How to compare fast
+
+Time matters here: do not spend time that can be avoided, and the earlier a correct result
+is obtained, the better. The 2026-11-11 retro found about 25 % of two sessions' run time
+spent on models already known to lose.
+
+- Rank every variant in the lab first (seconds per call). Only the best two go on to the
+  suite or the held-out set, which take minutes per call; the losers stop at the lab.
+- Measure a reference (`thorough`, `fast`, `sonora-delay-floor`) once per build and model
+  version, and reuse its cached numbers; run it again only when its version changed.
+- Before any run over 30 minutes, write down the jobs, the hours and why each model is in
+  it. `quality.py run` prints this plan and wants `--modes` and, over an hour, `--yes`.
+- Put the deciding measurement first: the finalist on the held-out set as early as it
+  exists, and the full suite last, as confirmation.
+
 ## Scoring pitfall
 
 Each remover has a constant latency: AEC3 suppressed +128 samples, its linear output +64,
