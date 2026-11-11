@@ -12,7 +12,8 @@ from pathlib import Path
 import numpy as np
 import lab
 Q = lab.Q
-EXE = Path.home() / "Amanu Quality Set" / "measure-sonora-delay" / "Amanu.exe"
+# AMANU_LAB_EXE names another build, for the echo models that only a newer one has.
+EXE = Path(os.environ.get("AMANU_LAB_EXE") or Path.home() / "Amanu Quality Set" / "measure-sonora-delay" / "Amanu.exe")
 _gpu = threading.Semaphore(3)
 
 
