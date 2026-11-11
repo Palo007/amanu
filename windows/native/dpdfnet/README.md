@@ -12,16 +12,11 @@ already ships for the call's diarization, so there is no new native library.
   `debaf0e8893479fca91b8b4c1eae8db195aa8980ccc9012f5809fde2b738151a`.
 - License: Apache-2.0.
 
-**The model file is not in the repository yet.** It is the first file under Apache-2.0
-that the app would ship, so it waits for a decision. Until then:
-
-- Put the file here by hand to build with it: `Amanu.App.csproj` copies it into
-  `echo-runtime\` when it exists.
-- A build without it runs `solve-gate` as `solve-floor` and writes
-  `speech gate left out: no dpdfnet_baseline.onnx` in the `echo stages` log line.
-
-When it ships, add `windows/Licenses/DPDFNet.txt` with the Apache-2.0 text and the
-attribution to Ceva.
+The model file is in the repository, and its license text is `windows/Licenses/DPDFNet.txt`
+(Apache-2.0, Ceva), which the build copies beside the other licenses. `Amanu.App.csproj`
+copies the model into `echo-runtime\`. If the file is ever missing at run time,
+`solve-gate` runs as `solve-floor` and writes `speech gate left out: no dpdfnet_baseline.onnx`
+in the `echo stages` log line.
 
 ## Why a gate and not the denoiser's own output
 
