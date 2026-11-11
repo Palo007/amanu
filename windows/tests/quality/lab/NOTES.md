@@ -285,3 +285,271 @@ Conclusion: the bar is reached on the held-out set with a wide margin and on the
 except for the echo-word count. The headroom left on the suite (18.4 against 9.7) is
 noise over my words at SNR 0 and -5; it needs a denoiser the engine likes or the engine
 in the loop (family E), which were not tried.
+
+## 9. Real calls 1000 and 1021 (overnight, track R)
+
+Verdict: not found. No transcriptions were run, so there is no WER per model on real calls.
+Nothing in this track changes the echo-model ranking.
+
+What the search covered (about 15 minutes, read-only):
+
+- `%USERPROFILE%\Amanu Quality Set\recordings` (98 entries). The only mic/system pairs there
+  are the suite's synthetic scenes and `aec-real` (997 s, 40 regions, no reference words in
+  `truth.json`). Neither is a real call with a reference transcript.
+- The app's default recordings folder, `%USERPROFILE%\Amanu Recordings` (from
+  `AppSettings.DefaultRecordingsDirectory`, `windows/src/Amanu.Core/Configuration/AppSettings.cs`).
+  It has 29 call folders. Folders named `*-1000` and `*-1021` are timestamps, and none has
+  a 14 or 16 minute mic/system pair. `2026.11.06-1021` holds `audio.m4a` and Gemini's
+  `me.m4a` and `them.m4a`, not separate tracks, and a test comment calls it a one-person call.
+- The four `.echo-kept` folders (`2026.11.09-1502`, `2026.11.10-1001`, `2026.11.10-1100`,
+  `2026.11.11-1000`) have `mic.wav` and `system.wav`, but they run 3291, 2820, 1348 and 1215 s.
+  None has a reference transcript, only the app's own `transcript.json`.
+- `%LOCALAPPDATA%\Amanu Data` (config, people.txt, models): no transcripts.
+- Greps for `1000`, `1021`, `489` and `467` in `windows/tests/quality`, `windows/native/sonora`
+  and the recordings `*.json`/`*.md`: the only hits are the README's own table
+  (`windows/native/sonora/README.md`, lines 71-72), the brief's mention of the two calls, and
+  unrelated numbers in the code. No reference transcript exists in the repository.
+- `git log` for `windows/native/sonora/README.md` (commit `5ae0f87`): the table was added with
+  the Sonora commit, and the commit does not name the source folders.
+
+What would unblock it: a copy of the two calls' `mic.wav` and `system.wav`, plus a reference
+transcript with 489 and 467 words. Once they exist, run the lab's Amanu mode (`asr.py`, `amanu()`)
+for `thorough`, `sonora`, `solve-floor` and `solve-gate` on each call, and score with `wer.py`
+or `Q.error_counts`.
+
+Disk: C: had 12 GB free before and after the search (5 GB floor). Nothing was written, deleted or
+transcribed.
+
+Next step: find the two calls' tracks and references (the sonora README's 489 and 467 counts
+suggest a hand-corrected transcript, which may sit outside this PC). Failing that, record a
+new real call with a known script so that the reference is known.
+
+## 12. Our own segmentation (overnight, track N1)
+
+Status: signal path built and checked, plumbing proved with one transcription. Screening is
+prepared and not run (the engine slot belongs to another track). `lab/n1.py` is the script.
+
+What the engine does (binary strings, `TranscriptionServices.cs`, the model file):
+
+- `transcribe-cli` has no voice-activity detector and no gain normalization. The model's
+  GGUF header has `stt.frontend.normalize = per_feature`. In NeMo's frontend that is the mean
+  and variance of each mel bin over the time axis of the one utterance it is given. So it is
+  per input file, and with the app's 60 s chunks it is per chunk. I read this from the
+  header and the NeMo definition; I did not test it by experiment (that needs engine runs).
+- The app's parakeet path (`TranscriptionServices.cs` 348-380): `SilenceSkip` (drops quiet
+  runs of 5 s or more), then 60 s chunks with 1 s context, and **one `transcribe-cli` process
+  per chunk**: `--backend vulkan -m <model> --threads N -q --timestamps word [--language]
+  <chunk.wav>`. N is 8 shared over the tracks being transcribed (4 for the mic when mic and
+  system run together). The batch form (`--batch <list> --batch-jsonl --timestamps auto`) is
+  only used for GigaAM and Whisper. It works for parakeet too (proved below): one process,
+  the model loaded once, the files one after the other (`--batch-size` 0/1).
+- `level_normalization` is `off` by default, so the app does not normalize the level either.
+- `Amanu.exe --measure-transcription ... auto` uses `local_engine` of `config.json`, which is
+  `parakeet-sk` (the Slovak fine-tune) on this PC, with `language: sk`. `MeetingLanguages`
+  makes that [sk, en] and pins nothing, so no `--language` is passed. The suite's speech is
+  Slovak. `n1.py` reads the same `local_engine` for `-m`. This also means every WER in this
+  notebook is the Slovak model's.
+
+Design of `n1.py` (mic and far only; the truth is read for scoring and for nothing else; no
+per-call settings):
+
+1. `solve-gate` pieces per call: the solver's output `e` and the speech gate's gain `g`
+   (`pipeline.VARIANTS["solve"]`, `denoise.dpdf`, `pipeline.speech_gate`), cached as
+   `cache/<call>.npz` under the work directory. The gate's output is `g * e`. The engine is
+   fed `g * e`, so a padding stretch where the gate is closed is at 0.15, as in solve-gate.
+2. Regions: runs where `g > 0.5`; merged across gaps under `merge_s`; padded by `pad_s`
+   each side and merged again where the padding touches; cut at 25 s at the quietest 100 ms
+   of the last 40 % of the allowed length (none was needed on the suite: the longest region
+   is 24.8 s with setting c on one call, 18.4 s or less otherwise; the cut code is untested).
+3. Each region is scaled so that the RMS over its open samples is -20 dBFS (the app's own
+   `SpeechLevels.TargetDb`), gain limited to +30 dB, peak kept under 0.97.
+4. One WAV per region, one `--batch` process per call, texts joined in time order, scored
+   with `Q.error_counts(truth["me"], ...)` exactly as `asr.py` does. Rows go to
+   `<work>/wer2/n1/<setting>/<call>.json` in the same shape as `asr.py`'s, so `asr.rows`,
+   `asr.wer` and `asr.bootstrap` read them.
+
+Three fixed settings:
+
+| Setting | Merge gap | Padding | Cap | Packaging |
+|---|---|---|---|---|
+| a | 0.6 s | 0.3 s | 25 s | one WAV per region, each at -20 dBFS RMS, through `--batch` |
+| b | 0.6 s | 0.3 s | 25 s | the regions of a stay in the one file at their own level; the gaps become pink-ish noise at -60 dBFS (30 ms crossfades); the app's normal path (`asr.transcribe` through `Amanu.exe`, echo off). `SilenceSkip` still runs there. |
+| c | 1.5 s | 1.0 s | 25 s | as a |
+
+Signal check, 14 noisy calls (`py -P n1.py <work> check`): the share of the gate's open
+samples that lie inside a region is 100.0 % for a and for c on every call (the padding only
+adds). Setting a: 168 regions, 12 per call (10 to 18), mean 5.4 to 9.2 s, longest 15.6 s;
+1245 s of the 2295 s go to the engine (54 %). Setting c: 139 regions, 8 to 15 per call, mean
+7.9 to 11.8 s, longest 24.8 s (living 0 dB; 18.4 s elsewhere); 1448 s go to the engine
+(63 %). The office and street calls come out identical across SER (the gate sees the same
+speech), and have 10 regions (a) or 9 (c).
+
+Plumbing proof, one transcription, `echo-cafe-ser-5-snr+0` (cafe 0 dB), setting a: 14
+regions, 88.9 s of audio, 8.5 s of engine time in one `--batch` process; my WER 29.9 % (53
+errors of 177 words) against 31.1 % cached for solve-gate on the same call. One call says
+nothing about the setting; it proves the chain. No other transcription was run.
+
+Screening command (not run), 14 noisy calls plus the 6 no-noise calls, baseline = the
+cached `su/solve-gate` rows of the lab folder, never re-measured (the table prints them
+beside each setting with a paired bootstrap):
+
+    cd windows\tests\quality\lab
+    py -P n1.py "%USERPROFILE%\Amanu Quality Set\lab\overnight\N1" run:a,c,b
+    py -P n1.py "%USERPROFILE%\Amanu Quality Set\lab\overnight\N1" show:a,b,c
+
+`run:` takes the calls with SNR 0, -5 or none (20), three at a time (`asr._gpu`), settings in
+the order given, and caches every row, so a restart skips what is done. a and c use one
+`transcribe-cli` process per call (so at most 3 engine processes); b uses `Amanu.exe`,
+which starts one process per 60 s chunk and per track (mic and system side by side), so up
+to 6 at once from 3 transcriptions. Estimate: a and c about 8.5 s of engine per call, 20
+calls three at a time, about 1.5 to 2.5 min each; b about 25 s per call, about 3 to 4 min;
+about 8 to 10 minutes for the three, plus start-up. The gate pieces for all 20 calls are
+cached (11 min of CPU, 400 MB in `...\N1\cache`). `AMANU_LAB_EXE` names the Amanu build for b.
+
+Not done: any screening; any check that per_feature is per chunk by experiment. An
+experiment that would show it: transcribe one region alone, and again with 30 s of
+loud noise appended in the same file; if only the per-file statistics move, the words of
+the region change.
+
+### 12.1 Screening result (N1)
+
+My WER, % (errors / reference words over the calls), against the cached `su/solve-gate` rows
+(lab WER, same calls). Engine = transcribe-cli time only; solve-gate's cached `secs` is echo
+time, not engine time, so no like-for-like engine figure exists for it.
+
+| Setting | SNR 0 (7) | SNR -5 (7) | 14 noisy | no noise (6) | All 20 against solve-gate (95 % CI) | Engine s (20 calls) |
+|---|---|---|---|---|---|---|
+| solve-gate | 19.6 | 42.8 | 29.6 | 10.4 | | |
+| a (merge 0.6, pad 0.3, per region, -20 dBFS) | 18.3 | 41.8 | 28.4 | 8.9 | -1.3 [-1.9, -0.8] | 281 |
+| b (comfort noise -60 dBFS, app path) | 19.6 | 43.6 | 29.9 | 10.0 | +0.1 [-0.4, +0.5] | n/a (Amanu.exe) |
+| c (merge 1.5, pad 1.0, per region) | 17.6 | 40.0 | 27.2 | 9.2 | -2.0 [-2.9, -1.3] | 287 |
+| d (c's regions in one file, 0.3 s zeros between) | 19.4 | 48.0 | 31.6 | 9.7 | +1.2 [-0.4, +3.2] | 483 |
+| e (merge 2.5, pad 1.5, per region) | 17.3 | 40.6 | 27.3 | 9.0 | -2.0 [-2.7, -1.4] | 308 |
+
+Guard (no noise within 0.5 points of solve-gate): a, c, d, e pass (all better than 10.4);
+b passes. Verdict: a small win. c takes 2.4 points off the 14 noisy calls (29.6 to 27.2) and
+1.9 off the 20 together; e is the same within noise. Not close to the ideal (about 10): the
+-5 dB half is still at 40.
+
+What it says:
+- b (silence replaced by comfort noise in the normal path) changes nothing. So the app's
+  quiet-stretch handling is not the lever; the engine already copes with digital near-silence.
+- Cutting regions into separate files helps (a, c, e); more context at the edges helps a bit
+  (a to c); beyond that it saturates (e = c).
+- d (the same speech joined into one file) is worse than c, mostly at -5 dB (48.0 against
+  40.0). If per-feature statistics from speech only were the whole cause, d would equal c.
+  It does not, so per-utterance isolation (short files, each with its own statistics and its
+  own decoding start) matters more than which frames enter the statistics. Caveat: d is a
+  100 s single file, which the engine may treat differently (engine time 483 s against 287),
+  so d does not cleanly separate the two causes.
+- No per-call tuning; settings fixed before the run. Rows: `...\N1\wer2\n1\{a,b,c,d,e}`.
+
+All engine runs of this track have ended (the last was `run:d,e`).
+
+### 12.2 Held-out set, setting c
+
+Plan (written before the run): 52 held-out calls (158 min of mic audio, four of them 12 min),
+setting c only, frozen (merge 1.5 s, pad 1.0 s, -20 dBFS, `--batch`), 3 calls at a time. The
+cleaned audio of solve-gate is not cached for the held-out set (only its rows), so each call
+recomputes solve and the gate (about 0.2 x real time on this PC, in the workers), then one
+`transcribe-cli` process. Expected 35 to 45 minutes. Why: the deciding test of N1 before the
+app port. Baseline: the cached `ho/solve-gate` rows (11.8), not re-measured. Run with
+`N1_SET=ho py -P n1.py "%USERPROFILE%\Amanu Quality Set\lab\overnight\N1\ho" run:c`.
+
+## 11. Adaptive blend (overnight, track N2)
+
+Hypothesis: mix DPDFNet's output into solve's output by local SNR (0 where quiet, up to
+`w_max` in babble), with solve-gate's gate on top. Step 1, CPU only; no transcription has
+been run yet.
+
+Files: `n2.py` (the variants, `cache`, `check`), `n2sw.py` (screening driver, see below).
+Caches: `%USERPROFILE%\Amanu Quality Set\lab\overnight\N2\cache\*.npz` (solver output `e`
+and DPDFNet output `c` per call, float32, keyed by a hash of mic and far; 40 calls, about
+330 MB), `...\N2\check.txt` (the first full signal check, before the last guard change).
+
+Output: `speech_gate(e, c) * ((1 - w) * e + w * c)`, with `e = solve(mic, far)` and `c =
+dpdf(e)`, exactly solve-gate's pieces; `w = 0` gives solve-gate bit for bit. Only mic and far
+are used, no per-call setting.
+
+The weight `w` (`n2.weight_curve`):
+- SNR estimate per 16 ms frame over a 0.5 s window: `10 log10(Sc / (Se - Sc))`, where Se and
+  Sc are the energies of `e` and `c`. DPDFNet keeps speech and removes noise, so the energy it
+  removes is the noise. On the truth: at true SNR 0 the median estimate over my speech is -3
+  (cafe, living) to +3 (office); 10 gives 6 to 13; 20 gives 14 to 18; no noise 17 to 19.
+- Trapezoid: 0 at 10 dB and above, `w_max` from -5 dB down to -17 dB, back to 0 at -27 dB.
+  Under -17 dB DPDFNet kept almost nothing: silence, or speech it removed, and mixing it in would
+  only turn my words down; the gate decides there.
+- Quiet-call guard: `w` is also scaled by the noise floor, the 10th percentile of the removed
+  level over +-6 s, ramping from 0 at -50 dBFS to 1 at -44. Babble never goes quiet; the far
+  end's residual in a quiet call comes in bursts. Without it, the three SER -15 and -5 calls
+  without noise got weight in 82 to 246 windows (double talk and far-only), a plain 
+  absolute level cannot tell them from SNR 20. With it the six no-noise calls have `w` = 0
+  in every window.
+- Smoothing: the frame weights are interpolated to samples and averaged over 0.5 s.
+
+Settings (fixed for all calls):
+
+| Tag | w_max | Curve |
+|---|---|---|
+| `n2-w50` | 0.5 | 10 / -5 dB, dead zone -17 to -27 |
+| `n2-w80` | 0.8 | the same |
+| `n2-w65-guard` | 0.65 | the same up-ramp; dead zone -8 to -16, so it stays out of windows where DPDFNet removed most of the signal (my choice of curve) |
+
+Signal check (`py -P n2.py check <work> [call regex]`), against solve-gate's own signal,
+speech gain = projection of the output on near.wav over my speech frames, noise = the
+rest, dB:
+- Six no-noise calls and the SNR 20 calls of cafe SER -15 / office: weight 0, output
+  identical (differences 240 dB under the peak, i.e. zero). Other SNR 20 calls: max weight
+  0.35 in a few windows, speech -0.01 dB, noise +0.0 dB.
+- Noisy calls, `w50` / `w80` (first pass of `w65-guard`, dead zone -10 to -20 in brackets):
+  speech gain at SNR 0: cafe -0.8 / -1.3 to -1.5 (guard -1.0), living -0.3 / -0.5, office
+  -0.0, street -0.1 / -0.2; at SNR -5: cafe -1.9 / -3.3 (guard -1.8), office -0.03 / -0.07.
+  Noise (everything that is not my speech) lower by 3.3 to 4.0 dB (`w50`) and 5.3 to 7.0 dB
+  (`w80`) at SNR 0 and -5; 2 dB at SNR 5; 0.7 dB at SNR 10.
+- With the final guard (dead zone -8 to -16): cafe SNR -5 speech -1.4 dB, noise -1.8 dB; cafe 0
+  -0.9 / -3.3; living 0 -0.35 / -4.1; office -5 -0.05 / -4.0; street 0 -0.1 / -4.6.
+- Verdict: the speech level is within 1 dB on 11 of the 14 calls for `w50` and everywhere
+  except cafe for `w80`; the cafe SNR -5 calls (3 of the 14) lose 1.4 to 1.9 dB in every
+  setting and the cafe SNR 0 calls 0.8 to 1.5. It is where DPDFNet itself removes speech
+  (sections 2 and 6), not broken code. No code error was found; the first version's
+  absolute noise floor (see above) was the only fault, and is fixed.
+
+Screening, to run when the engine is free (14 calls at SNR 0 and -5; 3 settings x 14 = 42
+transcriptions, 3 at once, about 10 s each, so 5 to 8 minutes in all; the variants are cheap
+because `e` and `c` are cached). The baseline is the cached `su/solve-gate` rows (lab WER
+19.6 at SNR 0, 42.8 at -5, 29.6 over the 14; the app's numbers 20.7 and 43.3 are a few
+points apart on the same calls), never measured again:
+
+    py -P n2sw.py "%USERPROFILE%\Amanu Quality Set\lab" run:n2-w50,n2-w80,n2-w65-guard
+
+Work directory is the lab's own, so rows land in `...\lab\wer2\su\n2-*` (small JSON); `show:`
+instead of `run:` prints the table again with paired bootstrap against solve-gate.
+Bar for the next step (held-out, no-noise check): at least 1 point better than solve-gate
+on these 14 calls with an interval that excludes 0, and no more echo words than 4.
+
+Result (52 calls, setting c frozen, no tuning; rows in `...\N1\ho\wer2\n1\c`; baseline the
+cached `ho/solve-gate` rows, not re-run). My WER %, paired bootstrap over calls, 95 %:
+
+| Calls | n | c | solve-gate | c minus solve-gate |
+|---|---|---|---|---|
+| all | 52 | 10.0 | 11.8 | -1.8 [-3.0, -0.6] |
+| SNR 0, -5 | 10 | 21.7 | 27.2 | -5.5 [-8.5, -2.8] |
+| SNR 20..5 | 31 | 9.1 | 10.3 | -1.2 [-2.7, +0.6] |
+| no noise | 11 | 5.0 | 6.3 | -1.3 [-2.3, +0.3] |
+| steady / drift / change / no echo / long | 16 / 22 / 6 / 4 / 4 | 7.9 / 12.6 / 17.9 / 6.1 / 7.2 | 10.0 / 13.4 / 21.4 / 6.8 / 9.7 | -2.1 / -0.8 / -3.4 / -0.6 / -2.5 |
+
+Engine time, 52 calls: 571 s of transcribe-cli (the four 12-minute calls included), one
+process per call. The cleaned audio is recomputed per call (not cached for the held-out set;
+cache off for it to save 1.2 GB), so the whole run took about 20 minutes of wall time.
+
+Calls where c is worse than solve-gate by more than 5 points: ho-27 (+13.2, SNR 10 meeting
+noise: 27 inserted words against 2), ho-32 (+9.6, SNR 20: 16 insertions against 2), ho-13
+(+5.6, no noise: 8 insertions against 0), ho-30 (+5.5, SNR 20: 11 insertions against 1).
+They are insertions, not echo words (leak 0 on ho-27 and ho-32). A plausible reason, not
+tested: with 1.0 s padding the engine hears background talkers (meeting babble) at the edge
+of a region and writes them down, where solve-gate's long chunks kept them as noise. The
+big gains are the loud-noise calls: ho-20 -14.2, ho-33 -12.5, ho-37 -11.0.
+
+Verdict: win on the held-out set, driven by SNR 0 and -5 (-5.5, the interval clear of zero);
+the quiet and mild-noise calls are flat within noise, with a few insertion-heavy losses.
+All engine runs of track N1 have ended (the last was the held-out `run:c`).
