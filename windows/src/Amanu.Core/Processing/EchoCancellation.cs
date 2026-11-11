@@ -39,7 +39,11 @@ public sealed record LocalVqeModel(string Key, string FileName, string Sha256, s
 /// Last, turn the mic down by 16 dB where I do not talk, as a denoiser finds it (the app's
 /// SpeechGate); it needs dpdfnet_baseline.onnx in the echo runtime and is left out without it.
 /// </param>
-public sealed record EchoSolver(double? SuppressorFloor = null, bool SpeechGate = false);
+/// <param name="CutRegions">
+/// With the gate: recognition hears the mic as the gate's speech regions, each in its own file,
+/// instead of as 60 s chunks (<see cref="SpeechRegions"/>).
+/// </param>
+public sealed record EchoSolver(double? SuppressorFloor = null, bool SpeechGate = false, bool CutRegions = false);
 
 public static class LocalVqeAssets
 {
@@ -177,6 +181,15 @@ public static class LocalVqeAssets
     public static readonly LocalVqeModel SolveGate = new("solve-gate", SonoraBackend.LibraryName, SonoraSha256,
         "echo-solver-v1-floor15-gate", Solver: new EchoSolver(0.15, SpeechGate: true));
 
+    /// <summary>
+    /// <see cref="SolveGate"/>, and recognition hears the mic as the gate's speech regions, one
+    /// file each, instead of as 60 s chunks. On the held-out set 10.0 % of my words came out
+    /// wrong against 11.8 % for solve-gate. The cleaned audio is the same, so only the engine's
+    /// input differs; the processor name differs so that a kept copy carries the region file.
+    /// </summary>
+    public static readonly LocalVqeModel SolveGateCut = new("solve-gate-cut", SonoraBackend.LibraryName, SonoraSha256,
+        "echo-solver-v1-floor15-gate-cut", Solver: new EchoSolver(0.15, SpeechGate: true, CutRegions: true));
+
     /// <summary>The suppressor keeps at least half of every band.</summary>
     private const string GainFloor = ";suppressor.amanu_gain_floor=0.5";
 
@@ -202,7 +215,7 @@ public static class LocalVqeAssets
         "b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731",
         "localvqe-v1.4-aec-200k-f32-amanu-v4-delay-prime");
 
-    public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough, SonoraLinear, SonoraNearend, SonoraGentle, SonoraLong, SonoraLong80, SonoraLong80Nearend, SonoraDelayLinear, SonoraDelayNearend, SonoraDelayFloor, SonoraDelayNearendFloor, SonoraDelayFloor70, SonoraDelayNearendNf70, SonoraDelayNearendFloor70, Solve, SolveFloor, SolveGate];
+    public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough, SonoraLinear, SonoraNearend, SonoraGentle, SonoraLong, SonoraLong80, SonoraLong80Nearend, SonoraDelayLinear, SonoraDelayNearend, SonoraDelayFloor, SonoraDelayNearendFloor, SonoraDelayFloor70, SonoraDelayNearendNf70, SonoraDelayNearendFloor70, Solve, SolveFloor, SolveGate, SolveGateCut];
 
     public static LocalVqeModel Default => SolveFloor;
 

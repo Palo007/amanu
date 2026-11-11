@@ -20,6 +20,12 @@ public static class OfflineEchoAudio
 {
     public const string FolderPrefix = ".echo-";
 
+    /// <summary>
+    /// Where the speech gate stood open in the cleaned mic, for the models that hand recognition
+    /// the speech regions. It sits beside mic.wav, so it follows the track into the kept folder.
+    /// </summary>
+    public const string GateFile = "mic.gate.json";
+
     public sealed record Result(string Directory, string Microphone, string System, int OffsetMs, long Frames, bool ModelRan)
     {
         /// <summary>Null when the model did not run (no playback in the whole recording).</summary>
@@ -130,7 +136,10 @@ public static class OfflineEchoAudio
                 {
                     if (SpeechGate.ModelPath() is { } gateModel)
                     {
-                        var open = SpeechGate.Apply(cleaned, gateModel, cancellationToken: cancellationToken);
+                        var open = SpeechGate.Apply(cleaned, gateModel, out var openRuns, cancellationToken: cancellationToken);
+                        // The gate's decisions go beside the mic so that recognition cuts the track at them.
+                        if (model.Solver.CutRegions)
+                            SpeechRegions.Gate.From(openRuns, frames).Save(Path.Combine(work, GateFile));
                         Mark(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"speech gate open {open:P0},"));
                     }
                     else marks.Add($"speech gate left out: no {SpeechGate.ModelName}");
@@ -269,6 +278,8 @@ public static class OfflineEchoAudio
         {
             ToPcm16(prepared.Microphone, Path.Combine(partial, "mic.wav"), cancellationToken);
             ToPcm16(prepared.System, Path.Combine(partial, "system.wav"), cancellationToken);
+            var gate = Path.Combine(prepared.Directory, GateFile);
+            if (File.Exists(gate)) File.Copy(gate, Path.Combine(partial, GateFile));
             File.WriteAllText(Path.Combine(partial, KeptManifest),
                 JsonSerializer.Serialize(new KeptManifestData(prepared.OffsetMs, prepared.Frames, prepared.ModelRan, echo)));
             if (IODirectory.Exists(kept)) IODirectory.Delete(kept, recursive: true);
@@ -338,7 +349,7 @@ public static class OfflineEchoAudio
 
     private static void RemoveAudio(string work)
     {
-        foreach (var name in new[] { "mic.wav", "system.wav", ".decoded-mic.wav", ".decoded-system.wav" })
+        foreach (var name in new[] { "mic.wav", "system.wav", GateFile, ".decoded-mic.wav", ".decoded-system.wav" })
         {
             try { File.Delete(Path.Combine(work, name)); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }

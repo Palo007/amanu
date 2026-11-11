@@ -745,3 +745,163 @@ If someone wants a WER check anyway, it needs the engine and a new gate model pa
 the cleanest form is the `int8-gemm` file put in `lab\models` and a `denoise.dpdf` variant that
 loads it, then `py -P sw.py <work dir> run:<that variant>` on the 14 calls at SNR 0 and -5.
 I do not expect it to pay: the gate opens in other places in the babble calls.
+
+
+## 16. A larger DPDFNet where the noise is loud (overnight, track N3)
+
+Hypothesis: `dpdfnet2` or `dpdfnet4` keep more of my speech in babble than the baseline, so
+blending one in (n2's scheme) and then cutting (n1 setting c) beats 27.2 by 1.5 points. Step 1,
+CPU only; no transcription was run.
+
+Models: the same release as the shipped baseline (k2-fsa/sherpa-onnx, tag
+`speech-enhancement-models`), Ceva DPDFNet, Apache-2.0 (the repo ceva-ip/DPDFNet reports
+Apache-2.0). `dpdfnet2.onnx` 10,249,356 bytes (SHA-256 `ce35d602...487a9`), `dpdfnet4.onnx`
+11,707,436 bytes (`71b588bc...d4420`); also in the release: `dpdfnet8` (14.6 MB) and
+`dpdfnet2_48khz_hr` (not used). Copies in `%USERPROFILE%\Amanu Quality Set\lab\overnight\N3`;
+the files in `lab\models` have the same hashes.
+
+Files: `n3.py` (`cache`, `speed`, `check`, `run`, `show`), `...\N3\cache\*.npy` (the larger
+models' output on N2's cached solver output, 40 files, 400 MB, 14 noisy and 6 no-noise calls),
+`...\N3\chk-*.log` (the check output).
+
+Speed (`n3.py speed`, 3 calls, 7.8 min of audio, 2 threads, CPU shared with the engine
+agent, so the ratio matters more than the figure): baseline 17.4 s per minute of audio,
+dpdfnet2 25.9 (1.5x), dpdfnet4 43.1 (2.5x). Not usable in the app's live path at that speed
+on this PC; only an offline step could carry it.
+
+Signal check (`n3.py check`; truth only places the scores). Raw model output against the solver
+output `e`, speech level = projection on near.wav over my speech frames (mean over calls),
+and share of my speech frames that end under half the level:
+
+| SNR | baseline | dpdfnet2 | dpdfnet4 |
+|---|---|---|---|
+| -5 (cafe x3, office x3) | -6.71 dB | -8.59 dB | -7.51 dB |
+| 0 (cafe x3) | -2.35 | -2.27 | -1.92 |
+| 0 (living, street) | -0.56 | -0.53 | -0.54 |
+| no noise | -0.26 | -0.30 | -0.27 |
+
+Cafe SNR -5: frames under -6 dB 72 to 80 % (baseline), 82 to 83 % (d2), 75 to 78 % (d4). So
+the larger models remove as much speech as the baseline at SNR -5, and more (d2 by 1.9 dB,
+d4 by 0.8 dB). At SNR 0 only d4 is better, by 0.4 dB.
+
+Blended settings (weight curve and gate from the baseline's output, only the blended sound
+differs; against solve-gate, speech dB / noise dB), cafe SNR -5: w50 baseline -2.2..-2.6 / -3.1..-3.4,
+d2 w50 about the same speech (-2.0..-2.3, 0.3 dB better) / same noise; d4 w50 -3.5..-4.0 / -4.8..-5.4,
+i.e. 1.3 dB more speech lost for 2 dB more noise removed. Cafe SNR 0: d2 -0.7, d4 -1.1 against
+-0.8 baseline. Office, living, street: speech within 0.4 dB everywhere, noise 2 to 7 dB lower.
+No-noise calls: weight 0, output identical (240 dB under the peak) for all settings.
+
+Verdict (stop rule): the larger models do not keep more speech at SNR -5 (within 0.5 dB, in fact
+worse). Screening is not worth engine time. The only visible difference is noise removal: d4 takes
+2 dB more noise out for the same or a larger loss of speech, which is the trade the engine has
+already shown it does not like (section 2).
+
+Settings prepared (fixed for all calls, not run): `n3-d2-w50`, `n3-d4-w50`, `n3-d4-w80`, each
+through setting c's cutting. If run anyway (42 transcriptions, 3 at once, about 10 to 15 minutes
+with cutting; baselines from the cached `su/solve-gate` and `N1\n1\c` rows, never measured again):
+
+    for s in n3-d2-w50 n3-d4-w50 n3-d4-w80; do py -P n3.py run "%USERPROFILE%\Amanu Quality Set\lab" $s; done
+
+(from `windows/tests/quality/lab`; rows land in `...\lab\wer2\n3\<setting>`, `n3.py show <work> <setting>`
+prints the table with the paired bootstrap against solve-gate and against n1 setting c.)
+Bar: 1.5 points under 27.2 with an interval that excludes 0.
+
+The track was dropped on the coordinator's decision: the larger models remove as much speech as the baseline at SNR -5 (more, in fact), so no screening was run; the N3 cache was deleted and n3.py stays only to reproduce the check.
+Run 2 plan (suite echo calls, 40 echo-* plus aec-real = 41, solve-gate-cut only, one worker because the build ran two transcribe-cli per job in run 1): about 60 minutes expected. solve-gate's cached rows are read, not re-run.
+
+
+## 17. Gain floors by band (overnight, track N4)
+
+Hypothesis: a classic Wiener gain per bin and frame with a floor, the noise spectrum taken from the gate's closed
+stretches only, takes noise out of the cleaned track without the speech loss of a neural denoiser; then n1 setting c's
+cutting. Step 1, CPU only; no transcription was run. `n4.py` is the script (`check`, `noise`, and the prepared `run`, `show`).
+
+Design: input is N1's cached solver output `e` and gate `g` (no echo removal recomputed). STFT 512/128, sqrt-Hann. Noise
+power per bin = mean power of the frames inside closed stretches (0.15 s guard), Gaussian-weighted in time (sigma 4 s) around
+each frame, smoothed over 5 bins; a frame with almost no closed stretch within reach falls back to the call's mean closed
+spectrum. Gain = xi/(1+xi) with xi = max(P/N - 1, 0), P smoothed 3x3, then floored, smoothed 3x3 again, floored again.
+Output = g * filtered(e), then setting c's regions. Only mic and far (through `e` and `g`).
+
+Settings: `f6` flat floor -6 dB, `f12` flat -12 dB, `bd` -15 dB outside 250..4000 Hz and inside it -15 dB (noise not like speech)
+to -6 dB (babble), by the share of closed-stretch noise energy in 300..3000 Hz (0.45 -> 0, 0.75 -> 1). The share is a weak
+measure: cafe 0.66-0.69, office 0.34-0.42 but 0.75 in one office call whose closed stretches hold far-end residual.
+
+Signal check (`py -P n4.py check`; truth only measures. The gain chosen from the mixture is applied to my speech part and to
+the rest separately). Mean per noise, SNR -5 / 0 / no noise; speech = level change over my speech frames (dB), SNR gain =
+inside setting c's regions (dB):
+
+| Call set | f6 speech / SNR gain | f12 | bd |
+|---|---|---|---|
+| cafe -5 (x3) | -3.18 / +1.09 | -3.86 / +1.89 | -3.77 / +1.95 |
+| office -5 (x3) | -0.21 / +1.79 | -0.25 / +2.11 | -0.26 / +2.17 |
+| cafe 0 (x3) | -1.70 / +2.29 | -1.86 / +3.33 | -1.83 / +3.28 |
+| living 0 | -1.33 / +2.69 | -1.47 / +3.91 | -1.49 / +4.13 |
+| office 0 (x3) | -0.11 / +0.81 | -0.13 / +0.97 | -0.13 / +0.99 |
+| street 0 | -0.54 / +3.23 | -0.58 / +4.10 | -0.59 / +4.25 |
+| no noise (6) | -0.05..-0.00 / +0.25..+0.54 | same | same |
+
+No-noise calls change by under 0.1 dB in speech level (bar 0.5). Living and street exist only at SNR 0.
+
+Verdict (stop rule): at SNR -5 no setting gains 2 dB of SNR while keeping speech within 1 dB on every noise. Office meets it
+(f12 +2.1, bd +2.2 at -0.25 dB) but office -5 already stands at about 8-9 % WER with the gate (ideal 8-10), so there is nothing
+to win there. Cafe, where the 40-60 point errors are, loses 3.2 to 3.9 dB of speech for 1.1 to 2.0 dB of SNR: the gain cannot tell
+babble from speech in the same bins, so every dB of noise it takes out costs about 2 dB of speech, the same trade as the
+neural denoisers. Not worth engine time. Run time of `check`: 17 min for 20 calls and 3 settings on a shared CPU.
+
+Prepared, not run (do not run: stop rule): 20 calls per setting, 3 at once, about 4 min per setting (n1 c's 20 rows took 287 s of
+engine time, plus about 1 min of filtering), baselines from the cached rows:
+
+    cd windows/tests/quality/lab && for s in f6 f12 bd; do py -P n4.py run "%USERPROFILE%\Amanu Quality Set\lab\overnight\N4" $s; done
+
+Nothing was written under `overnight\N4` (the filter is fast enough not to cache).
+
+### 14.1 Run 1: held-out set (52 calls)
+
+Commands (AMANU_LAB_EXE set to overnight-cut\Amanu.exe), from windows\tests\quality\lab:
+
+    py -P ho.py "%USERPROFILE%\Amanu Quality Set\lab" amanu:solve-gate-cut
+    py -P ho.py "%USERPROFILE%\Amanu Quality Set\lab" show:solve-gate-cut,solve-gate solve-gate
+    py -P hg.py "%USERPROFILE%\Amanu Quality Set\lab" solve-gate-cut,solve-gate solve-gate-cut solve-gate
+
+Output (log: overnight\run1-ho.log). solve-gate's row is its cached one, not re-measured.
+
+| Remover | WER | No noise | Echo words | Echo time |
+|---|---|---|---|---|
+| solve-gate-cut | 10.6 | 4.7 | 3 | 1458 s |
+| solve-gate (cached) | 11.8 | 6.3 | 1 | 1320 s |
+
+Paired difference, solve-gate-cut minus solve-gate: -1.3 [-2.4, -0.0]. By kind: steady -1.9 [-3.4, -0.5]; drift -0.1 [-2.6, +2.3];
+change -1.8 [-4.7, +0.9]; SNR 0 and -5 -3.9 [-7.9, -0.9]. The lab's setting c was 10.0.
+Wall time about 50 minutes for the run, from the first job to the last (not printed by the tools).
+
+Concurrency note: during run 1 the three Amanu.exe jobs each had two transcribe-cli children at once (six in total),
+so the build exceeded the three-engine cap. Nothing was killed. Run 2 used one worker for that reason.
+
+### 14.2 Run 2: suite echo calls (solve-gate-cut only)
+
+Command (one worker, lab folder on sys.path, log overnight\run2-su.log):
+
+    py -P -c "import sys; sys.path.insert(0, r'<lab>'); import asr, lab; ... P(1).map(asr.amanu(W,'su/solve-gate-cut',n,...,'solve-gate-cut'), ns) ..."
+
+ns = the 40 echo-* recordings. The first attempt (a script in TEMP) failed on the import path, and the retry above ran.
+The 40 rows are in wer2\su\solve-gate-cut.
+
+Results over the 40 mixed calls (paired with the cached su/solve-gate rows):
+
+| Remover | WER | No noise | Echo words |
+|---|---|---|---|
+| solve-gate-cut | 16.0 | 8.9 | 5 |
+| solve-gate (cached) | 18.1 | 10.4 | 4 |
+
+Paired difference: -2.05 [-2.49, -1.68]. Echo time for the 40 calls: 532 s (solve-gate-cut; the cached solve-gate
+echo time is not printed here).
+
+aec-real was not run. The one-liner uses echo-* only and the aec-real truth.json has no transcript ("me") key,
+so it fails in asr.amanu at Q.error_counts. aec-real is not scored by this method.
+Double-talk voice dB and ERLE on aec-real are not printed by these tools; they need quality.py's signal scores,
+which were not run (the full run was not requested).
+
+### 14.3 Status
+
+All engine runs of this task have ended. No transcribe-cli process of mine is running. The other processes on the PC
+(s2q.py, n4.py) belong to other tracks and were left alone.

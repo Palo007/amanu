@@ -26,10 +26,18 @@ public static class SpeechGate
     }
 
     /// <summary>Applies the gate to <paramref name="audio"/> in place and returns the share of the time it stayed open.</summary>
-    public static double Apply(float[] audio, string modelPath, double floor = 0.15, CancellationToken cancellationToken = default)
+    public static double Apply(float[] audio, string modelPath, double floor = 0.15, CancellationToken cancellationToken = default) =>
+        Apply(audio, modelPath, out _, floor, cancellationToken);
+
+    /// <summary>
+    /// As above, and also hands back the runs where the gate stood open, so that recognition can
+    /// cut the track into them without deciding again where I talk.
+    /// </summary>
+    public static double Apply(float[] audio, string modelPath, out IReadOnlyList<SpeechRegions.Region> openRuns, double floor = 0.15, CancellationToken cancellationToken = default)
     {
         var gain = Gain(Denoise(audio, modelPath, cancellationToken), floor, out var open);
         for (var i = 0; i < audio.Length; i++) audio[i] *= gain[i];
+        openRuns = SpeechRegions.OpenRuns(gain);
         return open;
     }
 
