@@ -35,7 +35,7 @@ public static class SpeechGate
     /// </summary>
     public static double Apply(float[] audio, string modelPath, out IReadOnlyList<SpeechRegions.Region> openRuns, double floor = 0.15, CancellationToken cancellationToken = default)
     {
-        var gain = Gain(Denoise(audio, modelPath, cancellationToken), floor, out var open);
+        var gain = Gain(Denoise(audio, modelPath, cancellationToken), floor, out var open, inPlace: true);
         for (var i = 0; i < audio.Length; i++) audio[i] *= gain[i];
         openRuns = SpeechRegions.OpenRuns(gain);
         return open;
@@ -48,20 +48,16 @@ public static class SpeechGate
     /// </summary>
     public static float[] Denoise(float[] audio, string modelPath, CancellationToken cancellationToken = default)
     {
-        const int core = 30 * SampleRate, context = 2 * SampleRate;
         var clean = new float[audio.Length];
-        var pieces = (audio.Length + core - 1) / core;
+        var pieces = Pieces(audio.Length);
         var options = new ParallelOptions
         {
-            MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, Math.Max(1, pieces)),
+            MaxDegreeOfParallelism = Workers(pieces.Count, Environment.ProcessorCount),
             CancellationToken = cancellationToken,
         };
-        Parallel.For(0, pieces, options, () => Open(modelPath), (piece, _, denoiser) =>
+        Parallel.For(0, pieces.Count, options, () => Open(modelPath), (index, _, denoiser) =>
         {
-            var start = piece * core;
-            var end = Math.Min(audio.Length, start + core);
-            var from = Math.Max(0, start - context);
-            var to = Math.Min(audio.Length, end + context);
+            var (start, end, from, to) = pieces[index];
             var output = denoiser.Run(audio[from..to], SampleRate).Samples;
             var count = Math.Min(end - start, output.Length - (start - from));
             if (count > 0) Array.Copy(output, start - from, clean, start, count);
@@ -69,6 +65,27 @@ public static class SpeechGate
         }, denoiser => denoiser.Dispose());
         return clean;
     }
+
+    /// <summary>
+    /// How the track is cut: cores of 30 s that tile it, each with 2 s of sound on both sides
+    /// (as far as the track reaches) for the model to settle on. Measured in this process, one
+    /// worker takes 107 s for a 760 s call, two 64 s, three 50 s and eight 43 s, so threads are
+    /// the speed-up, and the decisions do not depend on how many there are.
+    /// </summary>
+    internal static List<(int Start, int End, int From, int To)> Pieces(int length)
+    {
+        const int core = 30 * SampleRate, context = 2 * SampleRate;
+        var pieces = new List<(int, int, int, int)>();
+        for (var start = 0; start < length; start += core)
+        {
+            var end = Math.Min(length, start + core);
+            pieces.Add((start, end, Math.Max(0, start - context), Math.Min(length, end + context)));
+        }
+        return pieces;
+    }
+
+    /// <summary>Half the cores, because the engine and the model's own threads share the machine; never more than the pieces.</summary>
+    internal static int Workers(int pieces, int processors) => Math.Clamp(processors / 2, 1, Math.Max(1, pieces));
 
     private static OfflineSpeechDenoiser Open(string modelPath)
     {
@@ -83,13 +100,15 @@ public static class SpeechGate
     /// The gain per sample: 1 where the denoiser's output, averaged over 0.3 s, is within 25 dB
     /// of its 99th percentile for at least 0.3 s, kept open 0.3 s on both sides; the floor
     /// elsewhere, with ramps of 30 ms. A short burst is a voice from the noise that the
-    /// denoiser let through, not me.
+    /// denoiser let through, not me. With <paramref name="inPlace"/> the gain is written over
+    /// <paramref name="clean"/>, which nothing reads once the frame powers are made: on two hours
+    /// that is two arrays of 460 MB fewer at the gate's peak.
     /// </summary>
-    public static float[] Gain(float[] clean, double floor, out double open)
+    public static float[] Gain(float[] clean, double floor, out double open, bool inPlace = false)
     {
         const int n = 512, hop = 256;
         const double belowDb = 25, smoothSeconds = 0.3, leastSeconds = 0.3, hangSeconds = 0.3;
-        var gain = new float[clean.Length];
+        var gain = inPlace ? clean : new float[clean.Length];
         open = 1;
         var frames = clean.Length < n ? 0 : 1 + (clean.Length - n) / hop;
         if (frames == 0)
@@ -146,23 +165,23 @@ public static class SpeechGate
         open = wide.Count(value => value) / (double)frames;
 
         // Straight lines between the frames' centres, then a mean over 30 ms.
-        var steps = new float[clean.Length];
-        for (var i = 0; i < steps.Length; i++)
+        float Step(int i)
         {
             var position = (i - n / 2.0) / hop;
             var before = Math.Clamp((int)Math.Floor(position), 0, frames - 1);
             var after = Math.Min(frames - 1, before + 1);
             var share = Math.Clamp(position - before, 0, 1);
             double a = wide[before] ? 1 : floor, b = wide[after] ? 1 : floor;
-            steps[i] = (float)(a + (b - a) * share);
+            return (float)(a + (b - a) * share);
         }
+        var length = gain.Length;
         const int ramp = 480;
         double window = 0;
-        for (var j = 0; j < ramp; j++) window += steps[Math.Clamp(j - ramp / 2, 0, steps.Length - 1)];
-        for (var i = 0; i < gain.Length; i++)
+        for (var j = 0; j < ramp; j++) window += Step(Math.Clamp(j - ramp / 2, 0, length - 1));
+        for (var i = 0; i < length; i++)
         {
             gain[i] = (float)(window / ramp);
-            window += steps[Math.Clamp(i + ramp / 2, 0, steps.Length - 1)] - steps[Math.Clamp(i - ramp / 2, 0, steps.Length - 1)];
+            window += Step(Math.Clamp(i + ramp / 2, 0, length - 1)) - Step(Math.Clamp(i - ramp / 2, 0, length - 1));
         }
         return gain;
     }

@@ -1021,6 +1021,29 @@ Run B did not start. quality.py refused the model before any engine run: "unknow
 C: free GB at the end: 7.74. transcribe-cli processes: 0.
 
 
+### 10.2 Parallel gate pieces in the app (overnight, track P)
+
+Verdict: no speed-up to port, because the app already runs the gate pieces on threads; the section 21 memory fix is done. Decisions and cleaned mic are bit-identical.
+
+Threads do speed up in one process. `SpeechGate.Denoise` already cuts the track into 30 s cores with 2 s of context and runs them with `Parallel.For`, one `OfflineSpeechDenoiser` per task, `NumThreads = 1`, `ProcessorCount / 2` tasks. The "no gain from threads" of 10.1 is therefore not what this code does today. Gate alone (`SpeechGate.Apply` on the 760 s of ho-long-3, `DOTNET_PROCESSOR_COUNT` set to 2, 4, 6, 16, busy machine): 107 s and 134 s with 1 worker, 64 s with 2 (0.60), 50 s with 3 (0.46), 43 s and 46 s with 8 workers, the default on 16 threads (0.41). That is the lab's 0.43 for 3 processes; 8 threads in one process are as good, so a process pool would add nothing, and I did not build one. A 4-core PC gets 2 workers, about 0.6 of one worker. N = min(3, cores/2) would be slower than the 8 workers this PC has; the existing `cores/2` stays.
+
+Changed (`SpeechGate.cs`, no default and no decision changed): `Pieces(length)` and `Workers(pieces, processors)` are now small internal functions, so that the arithmetic can be tested; `Gain(..., inPlace)` writes the gain over the denoiser's array (`Apply` uses it) and the 30 ms ramp reads the step function directly instead of a full-length `steps` array. At the gate's peak a call holds the audio and the denoiser's array, two arrays, where it held four. New test file `SpeechGatePiecesTests.cs` (pieces tile the track once with 2 s context, workers, in-place gain equals gain of a copy). Tests: 332 + 125 pass (`dotnet test Amanu.Windows.slnx`). Build: `windows\artifacts\overnight-par`.
+
+Echo stage alone, `OfflineEchoAudio.Prepare` with `solve-gate-cut`, no transcription (the exe has no mode for it; a harness `GateHarness` in `overnight\P\harness`, compiled against the DLLs of overnight-cut2 and run next to each build). Old = overnight-cut2, new = overnight-par; old, new, old, new back to back, machine busy.
+
+| Call | Frames differing (10 ms) | Region shift | Cleaned mic old - new | Gate s old (2 runs) | Gate s new (2 runs) |
+|---|---|---|---|---|---|
+| echo-cafe-ser-5-snr+0 (156 s) | 0 of 15637 | 0 ms | identical | 7.2, 7.5 | 7.6, 7.5 |
+| echo-office-ser-15-snr+0 | 0 of 17149 | 0 ms | identical | 7.7, 7.6 | 7.8, 7.8 |
+| echo-street-ser-5-snr+10 | 0 of 17149 | 0 ms | identical | 8.6, 15.0 | 9.4, 13.7 |
+| echo-living-ser-5-snr+0 | 0 of 15637 | 0 ms | identical | 12.0, 12.2 | 9.9, 12.6 |
+| 51 min (ho-long-0..3 joined, 241 regions) | 0 of 292175 | 0 ms | identical | 159.1, 150.5 | 171.0, 144.4 |
+
+Gate time is unchanged, as it must be: the parallel pieces were already there. Peak working set of the whole Prepare on the 51 min call: old 1587 and 4674 MB, new 831 and 1317 MB (two runs each; the working set follows the collector, so the spread is large). This mixes two changes, the section 21 solver fix, which the cut2 build lacks, and the gate's arrays; I did not run the gate change against the section 21 build alone. The gate's own arrays on two hours: 4 x 460 MB before, 2 x 460 MB after, by the array count, not measured at 2 h (disk; the longest input here is 51 min, no 2 h input is left).
+
+Win bar (< 0.5 % frames, gate <= 0.6x): frames met (0 %); the time bar is not met because there is nothing left to cut by this route. Work files in `overnight\P` deleted.
+
+
 ## 13.2 Which signal the engine gets (overnight)
 
 Code (variant cut3): `solve-gate-cut` now gates the solver's plain output (as overnight-cut2 did) but gives the engine the audio from behind the 0.15 residual suppressor (as solve-gate does). `SpeechGate.Apply` has an overload with a separate `detect` signal; `OfflineEchoAudio.Prepare` passes the plain solver output as `detect` when the model cuts regions. `LocalVqeAssets.SolveGateCut` is `EchoSolver(0.15, SpeechGate: true, CutRegions: true)`, processor `echo-solver-v1-floor15-gate-cut3`. `quality.py` lists `solve-gate-cut` among its known echo models. Unit tests: 331 + 113 pass. Build: `windows\artifacts\overnight-cut3` (cut2 stays in `overnight-cut2` as built; the superseded `overnight-cut` was deleted). Reason for the hypothesis: cut2 (plain output for gate and audio) had held-out WER 10.2 but 9 echo words; the old build (gate behind the suppressor) had 10.6 and 3.
@@ -1277,3 +1300,62 @@ Left over. (1) The speech gate is outside the solver and still holds three array
 near 1.4 GB on two hours at that step; making `Gain` write into the denoiser's array would take it to 0.92 GB. (2) The one stage that still holds a whole-call array is the cleaned mic (460 MB), because the gate, the cutter
 and the writer want it; the rest of the solver is under 0.45 GB over it. (3) With several echo paths the block that waits for the next path's fit (`pending`, 77 MB) is the difference between 0.87 and 1.06 GB.
 (4) Prepare itself writes 2 x 460 MB of decoded wave files and the same again for the output on two hours, so it was not run at 2 h here (disk); the solver stage numbers above are what it adds.
+
+## 22. Stress set (overnight, track G)
+
+Report-only set of 12 new calls for three cases the held-out set has too few of. Nothing may be tuned on it. Step 1 (CPU) is done; the transcription is pending and has not been run.
+Script `stress.py` (new; `heldout.py` is untouched and its mixer is imported: `lay_out`, `response`, `load_noise`, `NOISES`, `PATTERNS`). Data in `%USERPROFILE%\Amanu Quality Set\lab\overnight\G\stress`
+(`manifest.json` = the frozen recipe, `recordings\<name>` in the suite's format, `work\cache` = solver output `e` and gate `g` per call, `cpu_stats.json`, `cpu.log`). 162 MB of audio (mic, system, near per call), 214 MB of cache.
+
+Material. Speech: FLEURS Slovak *test* sentences that none of the suite's 40 echo calls uses (the tuning set) and that are not in the held-out set (FLEURS dev; all 283 usable dev
+files are already in the held-out manifest, so dev could not be disjoint). Noise: the held-out set's four DEMAND rooms (not the suite's), new offsets. Master seed 20261112;
+room and noise seeds are in `manifest.json`. Calls are 112 to 140 s (drift, dev4) and 180 s (one); two drift/dev4 calls are a little under 2 minutes because the sentences drawn were short.
+
+| Group | Calls | What is new |
+|---|---|---|
+| drift | `st-drift-0..3` | the call track runs against the mic's clock at a ppm that changes during the call: sine +-40 ppm (70 s), sine 20 +-40 ppm (45 s), steps 40/-40/15/-30/40 every 28 s, bounded random walk (peak 40); all ramped over 2 s; one room each (rev, direct, mid, rev), SER -5 to 0 to -10 dB, SNR 20, none, 10, 5 |
+| dev4 | `st-dev-0..3` | four devices: echo path (kind, reverberation, latency 35/80/130/190 ms in shuffled order) changes three times, in the pauses between blocks nearest 1/4, 1/2, 3/4 of the call; SER -5, 0, -10, -5; SNR 10, 20, none, 0 |
+| one | `st-one-0..3` | I say one sentence (8 words, 2.6 to 3.2 s of speech, picked among the 24 shortest-speech sentences) in 180 s, 1.4 to 1.8 % of the time; the far track talks all the rest (about 260 words), my sentence is over far speech in 0 and 2 and in an 8 s far pause in 1 and 3; SER -5, -10, 0, -10; SNR 5, 0, 10, 0 |
+
+All have speaker drive 1.5 (tanh) as the held-out set's default. `truth.json` carries the group, `true_speech_s` (my speech by a 25 dB-below-peak frame detector, gaps under 0.3 s closed), the change points and the drift range.
+Reference sanity check (not part of the set): `st-drift-2` rebuilt without drift gives ERLE 24.9 dB and with a constant 150 ppm 23.4 dB, so the low ERLE below comes from the wandering drift, not from the mixer.
+
+CPU numbers (`py -P stress.py cpu`; solver = `solve.cancel`, plain Sonora if it reports many paths, which it did for none of the 12; gate = `pipeline.speech_gate` on DPDFNet, i.e. solve-gate = g * e; 26 to 45 s per call).
+ERLE = echo power over (solver output - my voice - noise) power, on the stretches without my speech (1 s margin), power-weighted over the group:
+
+| Group | ERLE of the solver | echo to the gated output | mic to solver output (noise included) |
+|---|---|---|---|
+| drift (4) | 6.6 dB (6.8, 9.5, 1.3, 5.4) | 6.4 dB | 6.0 dB |
+| dev4 (4) | 21.2 dB (23.5, 21.9, 24.4, 17.5) | 7.8 dB | 8.0 dB |
+| one (4) | 26.2 dB (24.6, 29.5, 24.4, 25.8) | 17.7 dB | 8.7 dB |
+
+The solver loses 15 to 25 dB of echo cancellation to a drift that wanders (held-out constant drifts of 50 to 200 ppm are not like this; the section tracker fits one drift per section). Four devices cost it little (17.5 dB in the call with the 35 ms direct device last).
+The last two columns include the noise floor (and in the dev4 group the noise-free call is the only one where the gated output can fall far under the echo), so they are not ERLE.
+
+Setting c's regions in the 1 % calls (the gate, merge 1.5 s, pad 1.0 s, as `n1.py check`), seconds sent to the engine against my true speech seconds:
+
+| Call | c regions | c seconds | a seconds | gate open | my speech | my speech inside c |
+|---|---|---|---|---|---|---|
+| st-one-0 | 3 | 12.4 | 8.2 | 6.4 | 2.6 | 94 % |
+| st-one-1 | 4 | 22.5 | 16.5 | 13.5 | 3.0 | 87 % |
+| st-one-2 | 10 | 166.8 | 157.2 | 145.0 | 2.8 | 100 % |
+| st-one-3 | 4 | 17.6 | 12.7 | 10.5 | 3.2 | 100 % |
+| total | 21 | 219 | 195 | 175 | 11.6 | |
+
+So in three calls c sends 4 to 7 times my speech (12 to 23 s for 3 s), in `st-one-2` (direct room, SER 0, SNR 10) the gate is open 145 s of 180 and c sends 167 s: the far end's leftovers open it, which is the case where echo words would be expected. In the 8 other calls c sends 832 s of 1038 s (my speech 434 s). In `st-one-1` 13 % of my sentence falls outside c's regions (the gate clipped it).
+
+Pending, engine (do not run while another job holds the engine): one command, solve-gate through the app's path (`Amanu.exe --measure-transcription`, echo removal off, on g * e from the cache; `asr.run_jobs`, 3 at a time)
+and then setting c through `transcribe-cli --batch` (`n1.transcribe_regions` with the stress recordings and cache patched in), then the table per group with echo words:
+
+    cd C:\Backup\CoDiNG\Amanu\amanu-windows\windows\tests\quality\lab
+    py -P stress.py engine
+
+Rows land in `...\G\stress\work\wer2\stress\solve-gate` and `...\n1\c` (cached, so a stop can be resumed by running the same command; `py -P stress.py show` prints the table again).
+Expected time: audio is 1756 s of calls; the held-out runs cost 0.12 s of engine per second of call for c (1115 s on 9 500 s) and 0.14 for solve-gate, so about 4 min for solve-gate and about 4 min for c plus model loads: 8 to 12 minutes in all on this PC when the engine is free.
+Not run yet; no WER exists for this set.
+
+### 22.1 Engine result
+
+Stopped, incomplete: free space on C: fell to 5.4 GB (floor 5.5; the stress folder holds only 0.4 GB, the rest was other writers), so the engine run was ended after 5 of 12 solve-gate rows and no setting c row.
+Build used: `AMANU_LAB_EXE` = `windows\artifacts\overnight-cut2\Amanu.exe`; `stress.py engine` now runs one Amanu.exe at a time (workers=1). Rows so far (my WER %, echo words), solve-gate: st-dev-0 7.1/0, st-dev-1 7.9/0, st-dev-2 10.7/1, st-dev-3 49.7/0, st-drift-0 9.9/0.
+No per-group comparison exists. Resume with the same command (`py -P stress.py engine`, cached rows are skipped) once C: has room; the cache (214 MB) is kept for that and is deleted after the run.
