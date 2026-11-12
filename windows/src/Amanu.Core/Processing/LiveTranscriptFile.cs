@@ -27,7 +27,7 @@ public static class LiveTranscriptFile
         lock (Sync)
         {
             if (!File.Exists(path))
-                File.WriteAllText(path, $"# Live transcript\n\nCaptions shown during the meeting by {engine}. The final transcript is made separately after the meeting.\n\n");
+                File.WriteAllText(path, $"# Live transcript\n\nCaptions shown during the meeting by {engine}. The final transcript is made separately after the meeting. The me / them labels only say which input a line came through, not who spoke: the microphone also hears the call through the speakers.\n\n");
             File.AppendAllText(path, $"[{stamp}] **{speaker}:** {text}\n\n");
         }
     }

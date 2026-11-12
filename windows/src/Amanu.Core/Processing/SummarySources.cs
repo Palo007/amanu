@@ -17,10 +17,22 @@ public static partial class SummarySources
     public const string BothInstructions = """
         You are given two transcripts of the same meeting, made from the same audio by two different speech engines.
         "Final transcript" was made from the recording after the meeting. Its speaker labels and names are the more reliable ones.
-        "Live transcript" was captioned while the meeting was going on. It often hears words, names and numbers better, but it only knows "me" and "them" as speakers, and it may miss or split lines.
+        "Live transcript" was captioned while the meeting was going on. It often hears words, names and numbers better, but it may miss or split lines.
+        The "me" and "them" labels in the live transcript are not speakers. They only say whether the audio came in through the microphone or from the call, and the microphone also hears the other people on the call through the speakers. Ignore those labels completely: never decide who said something from them.
         Both count time from the start of the recording, so lines with similar timestamps are the same moment.
-        Treat them as two witnesses to one meeting: where they disagree, take the reading that makes sense in context; take names, numbers and technical terms from whichever transcript has them clearly; take who said what from the final transcript.
+        Treat them as two witnesses to one meeting: where they disagree, take the reading that makes sense in context; take names, numbers and technical terms from whichever transcript has them clearly; take who said what only from the final transcript.
         Write one note about the meeting. Do not repeat anything because it appears in both, and do not mention that there were two transcripts.
+        """;
+
+    /// <summary>
+    /// Added to the summary instructions when only the live captions are sent.
+    /// The live engine labels each line by the input it came from, and an open
+    /// microphone hears the call through the speakers, so a muted user's
+    /// microphone still produces "me" lines spoken by other people.
+    /// </summary>
+    public const string LiveOnlyInstructions = """
+        This transcript was captioned live while the meeting was going on. Its "me" and "them" labels are not speakers. They only say whether the audio came in through the microphone or from the call, and the microphone also hears the other people on the call through the speakers, so a line marked "me" may have been said by someone else.
+        Ignore those labels completely. Say who said something only when the words themselves make it clear, for example when someone is addressed or introduces themselves by name; otherwise do not say who said it.
         """;
 
     /// <returns>
