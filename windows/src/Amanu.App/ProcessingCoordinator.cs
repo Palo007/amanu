@@ -435,9 +435,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         var current = settings();
         Publish(directory, "transcribing", T("Reading the audio…", "Читаю звук…"), true, PassProgress.Start);
         var total = Stopwatch.StartNew();
+        var stages = new List<TranscriptStage>();
         var decode = Stopwatch.StartNew();
         var audio = await LoadAudioAsync(directory, cancellationToken).ConfigureAwait(false);
-        LogTiming(directory, "decode", decode.Elapsed);
+        LogTiming(directory, TranscriptStage.Decode, decode.Elapsed, stages: stages);
         if (!audio.HasAudio)
         {
             await GiveUpAsync(directory, T("No track in this recording has any audio.", "Ни на одной дорожке записи нет звука."), cancellationToken).ConfigureAwait(false);
@@ -459,13 +460,13 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         var echoing = current.OfflineEchoCancellation && audio.BothSides;
         var leveling = string.Equals(current.Transcription.LevelNormalization, "auto", StringComparison.OrdinalIgnoreCase);
         if (echoing) Publish(directory, "transcribing", T("Removing echo…", "Убираю эхо…"), true, PassProgress.Echo);
-        var (echoed, cleaned) = await HearAsync(directory, audio, current, overlap, current.KeepEchoCleanedAudio, cancellationToken).ConfigureAwait(false);
+        var (echoed, cleaned) = await HearAsync(directory, audio, current, overlap, current.KeepEchoCleanedAudio, stages, cancellationToken).ConfigureAwait(false);
         LevelAudio.Result? leveled = null;
 
         try
         {
             if (leveling) Publish(directory, "transcribing", T("Evening out speech levels…", "Выравниваю громкость…"), true, PassProgress.Levels);
-            (var heard, leveled) = await LevelAsync(directory, echoed, current, cancellationToken).ConfigureAwait(false);
+            (var heard, leveled) = await LevelAsync(directory, echoed, current, stages, cancellationToken).ConfigureAwait(false);
             var recognition = Stopwatch.StartNew();
             var start = PassProgress.RecognitionStart(echoing, leveling);
             // No number until the engine reports one: a cloud engine or a one-call
@@ -480,7 +481,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
                 },
                 // A cloud engine's news replaces the line but keeps the bar where it was.
                 news => PublishProgress(directory, "transcribing", news, reached ?? start)).ConfigureAwait(false);
-            LogTiming(directory, "asr", recognition.Elapsed);
+            LogTiming(directory, TranscriptStage.Recognition, recognition.Elapsed, stages: stages);
             transcript = ApplyCustomWords(directory, transcript, current);
             cleaned?.Delete();
             cleaned = null;
@@ -489,7 +490,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
             transcript = transcript with { Echo = DescribeEcho(current, audio, ReadLedger(directory).AudioEchoCancellation) };
-            transcript = await DiarizeCallAsync(directory, audio, transcript, current, cancellationToken).ConfigureAwait(false);
+            transcript = await DiarizeCallAsync(directory, audio, transcript, current, stages, cancellationToken).ConfigureAwait(false);
             if (transcript.Segments.All(segment => string.IsNullOrWhiteSpace(segment.Text)))
             {
                 await GiveUpAsync(directory, T("No speech was heard in this recording.", "В записи не слышно речи."), cancellationToken).ConfigureAwait(false);
@@ -503,8 +504,11 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             await TranscriptVersions.ArchiveCurrentAsync(directory, cancellationToken).ConfigureAwait(false);
             if (replacing && Has(directory, "summary.md"))
                 await AtomicFiles.WriteTextAsync(Path.Combine(directory, "summary.stale"), "retranscribed", cancellationToken).ConfigureAwait(false);
+            // The total is taken just before writing, so the transcript can carry it.
+            var took = total.Elapsed;
+            transcript = (transcript with { Stages = stages }).WithStage(TranscriptStage.Total, took);
             await TranscriptWriter.WriteAsync(directory, title, transcript, names, cancellationToken).ConfigureAwait(false);
-            LogTiming(directory, "total", total.Elapsed, $"{CountWords(transcript)} words");
+            LogTiming(directory, TranscriptStage.Total, took, $"{CountWords(transcript)} words");
             if (replacing)
             {
                 if (names.Count == 0) File.Delete(Path.Combine(directory, "speakers.json"));
@@ -576,7 +580,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// failure leaves the tracks as they were, and processing.json says why.
     /// </summary>
     private async Task<(SessionAudio Heard, LevelAudio.Result? Leveled)> LevelAsync(
-        string directory, SessionAudio heard, AppSettings current, CancellationToken cancellationToken)
+        string directory, SessionAudio heard, AppSettings current, List<TranscriptStage> stages, CancellationToken cancellationToken)
     {
         if (!string.Equals(current.Transcription.LevelNormalization, "auto", StringComparison.OrdinalIgnoreCase))
         {
@@ -604,7 +608,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             ? FormattableString.Invariant($"{track.Side} speech {track.SpeechDb:0.0} dBFS left as is ({why})")
             : FormattableString.Invariant($"{track.Side} speech {track.SpeechDb:0.0} -> {track.SpeechDbAfter:0.0} dBFS, gain {track.MinGainDb:+0.0;-0.0}..{track.MaxGainDb:+0.0;-0.0} dB")));
         await File.AppendAllTextAsync(log, $"{DateTimeOffset.UtcNow:O} level normalization: {tracks}; original tracks kept{Environment.NewLine}", cancellationToken).ConfigureAwait(false);
-        LogTiming(directory, "levels", timer.Elapsed, result.Changed ? null : "no change");
+        LogTiming(directory, TranscriptStage.Levels, timer.Elapsed, result.Changed ? null : "no change", stages);
         if (!result.Changed)
         {
             result.Delete();
@@ -618,7 +622,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// one, the tracks as recorded otherwise. `audio` itself is never changed.
     /// </summary>
     private async Task<(SessionAudio Heard, OfflineEchoAudio.Result? Cleaned)> HearAsync(
-        string directory, SessionAudio audio, AppSettings current, SystemOverlap? overlap, bool keep, CancellationToken cancellationToken)
+        string directory, SessionAudio audio, AppSettings current, SystemOverlap? overlap, bool keep, List<TranscriptStage> stages, CancellationToken cancellationToken)
     {
         if (!current.OfflineEchoCancellation || !audio.BothSides)
         {
@@ -627,7 +631,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         }
         var echo = Stopwatch.StartNew();
         var cleaned = await CancelEchoAsync(directory, audio, LocalVqeAssets.For(current.EchoModel), overlap, keep, cancellationToken).ConfigureAwait(false);
-        LogTiming(directory, "echo", echo.Elapsed, cleaned is null ? "skipped" : null);
+        LogTiming(directory, TranscriptStage.Echo, echo.Elapsed, cleaned is null ? "skipped" : null, stages);
         if (cleaned is null) return (audio, null);
         return (audio with
         {
@@ -658,9 +662,10 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         }
         var current = settings();
         var total = Stopwatch.StartNew();
+        var stages = new List<TranscriptStage>();
         var decode = Stopwatch.StartNew();
         var audio = await LoadAudioAsync(output, cancellationToken).ConfigureAwait(false);
-        LogTiming(output, "decode", decode.Elapsed);
+        LogTiming(output, TranscriptStage.Decode, decode.Elapsed, stages: stages);
         if (!audio.HasAudio) throw new InvalidOperationException("No track in this recording has any audio.");
         engine ??= ReadText(output, "transcribe.engine") ?? current.Transcription.Engine;
         var namedCloud = TranscriptionSettings.CloudEngines.Contains(engine);
@@ -674,20 +679,22 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         // suite asks it to keep one in the fresh output folder, because it scores the cleaned
         // mic against the clean speech it mixed in.
         var keepCleaned = Environment.GetEnvironmentVariable("AMANU_MEASURE_KEEP_ECHO") == "1";
-        var (echoed, cleaned) = await HearAsync(output, audio, current, overlap, keep: keepCleaned, cancellationToken).ConfigureAwait(false);
+        var (echoed, cleaned) = await HearAsync(output, audio, current, overlap, keep: keepCleaned, stages, cancellationToken).ConfigureAwait(false);
         LevelAudio.Result? leveled = null;
         try
         {
-            (var heard, leveled) = await LevelAsync(output, echoed, current, cancellationToken).ConfigureAwait(false);
+            (var heard, leveled) = await LevelAsync(output, echoed, current, stages, cancellationToken).ConfigureAwait(false);
             var recognition = Stopwatch.StartNew();
             var transcript = await RunPlanAsync(measurePlan, heard, output, current, cancellationToken, cleaned is null ? null : overlap?.Result).ConfigureAwait(false);
-            LogTiming(output, "asr", recognition.Elapsed);
+            LogTiming(output, TranscriptStage.Recognition, recognition.Elapsed, stages: stages);
             transcript = ApplyCustomWords(output, transcript, current);
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
             transcript = transcript with { Echo = DescribeEcho(current, audio, ReadLedger(output).AudioEchoCancellation) };
+            var took = total.Elapsed;
+            transcript = (transcript with { Stages = stages }).WithStage(TranscriptStage.Total, took);
             await TranscriptWriter.WriteAsync(output, audio.Title, transcript, null, cancellationToken).ConfigureAwait(false);
-            LogTiming(output, "total", total.Elapsed, $"{CountWords(transcript)} words");
+            LogTiming(output, TranscriptStage.Total, took, $"{CountWords(transcript)} words");
             return transcript;
         }
         finally
@@ -723,9 +730,12 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// <summary>
     /// One "timing" line in transcribe.log, with a dot for decimals whatever the
     /// culture, so Measure-Transcription.ps1 can read it back.
+    /// `stages`, when given, also gets the time, for the transcript to carry.
     /// </summary>
-    internal static void LogTiming(string directory, string stage, TimeSpan elapsed, string? detail = null)
+    internal static void LogTiming(string directory, string stage, TimeSpan elapsed, string? detail = null, List<TranscriptStage>? stages = null)
     {
+        stages?.RemoveAll(existing => existing.Stage == stage);
+        stages?.Add(new TranscriptStage(stage, Math.Round(elapsed.TotalSeconds, 1)));
         try
         {
             File.AppendAllText(Path.Combine(directory, "transcribe.log"), string.Create(CultureInfo.InvariantCulture,
@@ -923,7 +933,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
     /// "them", and the reason is in transcribe.log.
     /// </summary>
     private async Task<TranscriptDocument> DiarizeCallAsync(
-        string directory, SessionAudio audio, TranscriptDocument transcript, AppSettings current, CancellationToken cancellationToken)
+        string directory, SessionAudio audio, TranscriptDocument transcript, AppSettings current, List<TranscriptStage> stages, CancellationToken cancellationToken)
     {
         if (!string.Equals(current.Transcription.Diarization, "auto", StringComparison.OrdinalIgnoreCase)) return transcript;
         if (!TranscriptionSettings.LocalEngines.Contains(transcript.Engine, StringComparer.OrdinalIgnoreCase)) return transcript;
@@ -936,13 +946,13 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             var turns = await CallDiarizer.RunAsync(models, audio.System, audio.SystemOffsetMs, threshold, cancellationToken).ConfigureAwait(false);
             var result = CallDiarization.Apply(transcript.Segments, turns);
             LogTiming(directory, "diarization", clock.Elapsed,
-                string.Create(CultureInfo.InvariantCulture, $"{result.Speakers} speakers, threshold {threshold}"));
+                string.Create(CultureInfo.InvariantCulture, $"{result.Speakers} speakers, threshold {threshold}"), stages);
             WriteLedger(directory, ReadLedger(directory) with { CallSpeakers = result.Speakers });
             return transcript with { Segments = result.Segments };
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            LogTiming(directory, "diarization", clock.Elapsed, $"failed: {exception.Message}");
+            LogTiming(directory, TranscriptStage.Diarization, clock.Elapsed, $"failed: {exception.Message}", stages);
             return transcript;
         }
     }
@@ -1019,7 +1029,14 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
         Publish(directory, "speakers", T("Working out who spoke…", "Определяю участников…"), true, PassProgress.SpeakerNames);
         try
         {
+            var naming = Stopwatch.StartNew();
             var result = await new SpeakerNamingService(languageModels, settings).ResolveAsync(directory, transcript, cancellationToken).ConfigureAwait(false);
+            // Only a pass that asked a model is worth a time; the rest only read speakers.json.
+            if (result.AskedModel)
+            {
+                LogTiming(directory, TranscriptStage.SpeakerNames, naming.Elapsed);
+                transcript = transcript.WithStage(TranscriptStage.SpeakerNames, naming.Elapsed);
+            }
             await TranscriptWriter.WriteAsync(directory, title, transcript, result.Names, cancellationToken).ConfigureAwait(false);
             File.Delete(Path.Combine(directory, "speakers.deferred"));
             if (result.AskedModel) WriteLedger(directory, ReadLedger(directory) with { NamesAsked = true });

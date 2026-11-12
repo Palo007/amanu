@@ -36,7 +36,12 @@ public sealed class ProcessingContractTests
         using var temp = new TemporaryDirectory();
         var transcript = new TranscriptDocument("local", "parakeet", DateTimeOffset.Parse("2026-11-12T12:00:00Z"),
             [new TranscriptSegment(0, 1_000, "Hello", "me")],
-            new TranscriptEcho("solve-gate-cut", true, Processor: "echo-solver-v1", TranscriptFilter: true));
+            new TranscriptEcho("solve-gate-cut", true, Processor: "echo-solver-v1", TranscriptFilter: true),
+            [new TranscriptStage(TranscriptStage.Decode, 1.24), new TranscriptStage(TranscriptStage.Echo, 70),
+             new TranscriptStage(TranscriptStage.Recognition, 3_725), new TranscriptStage(TranscriptStage.Total, 3_800)]);
+        // A later pass replaces its own stage and leaves the others where they are.
+        transcript = transcript.WithStage(TranscriptStage.SpeakerNames, TimeSpan.FromSeconds(9))
+            .WithStage(TranscriptStage.SpeakerNames, TimeSpan.FromSeconds(4.56));
 
         await TranscriptWriter.WriteAsync(temp.Path, "Call", transcript);
 
@@ -51,11 +56,13 @@ public sealed class ProcessingContractTests
             "| Engine | local · parakeet |",
             "| Echo removal (audio) | solve-gate-cut |",
             "| Echo filter (text) | on |",
+            "| Time taken | reading the audio 1.2 s · echo removal 1:10 · recognition 1:02:05 · in all 1:03:20 · speaker names 4.6 s |",
             "",
             "**[0:00] me:** Hello"), markdown.ReplaceLineEndings("\n"));
         var json = await File.ReadAllTextAsync(Path.Combine(temp.Path, "transcript.json"));
         var read = JsonSerializer.Deserialize<TranscriptDocument>(json)!;
         Assert.Equal(transcript.Echo, read.Echo);
+        Assert.Equal(transcript.Stages, read.Stages);
         using var parsed = JsonDocument.Parse(json);
         Assert.Equal("solve-gate-cut", parsed.RootElement.GetProperty("echo").GetProperty("model").GetString());
     }

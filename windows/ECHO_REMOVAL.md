@@ -47,6 +47,7 @@ models on the same recording: set `echo_model`, transcribe again, and keep both 
   | Engine | local · parakeet |
   | Echo removal (audio) | solve-gate-cut |
   | Echo filter (text) | on |
+  | Time taken | reading the audio 1.2 s · echo removal 1:10 · recognition 4:12 · call voices 31.0 s · in all 6:05 · speaker names 4.6 s |
   | Speakers | me → Alice, them → Bob |
   ```
 
@@ -58,13 +59,19 @@ models on the same recording: set `echo_model`, transcribe again, and keep both 
     engine runs, it drops a line of yours that repeats the far end's words at the same
     time. The two are separate settings, and both change which words are left, so compare
     only transcripts that have the same filter value.
+  - **Time taken** lists only the stages that ran, in the order they ran. **in all** is
+    the whole transcript, from reading the audio to writing the file. **speaker names**
+    comes after it and is not part of it, and shows only when a model was asked for names.
+    Transcripts made before this was recorded have no such row.
   - **Speakers** shows only when speakers have names.
   - The recordings window shows the table without its empty header row.
 - `transcript.json` has an `echo` object: `model` (the `echo_model` name, or `off`),
   `ran` (true only if the mic that the engine heard was changed), `note`, `processor`
   (the revision of the audio path; it changes when the code of a model changes), and
   `transcript_filter` (the text filter `transcript_echo_filter` also ran). The time is
-  `created_at`, in UTC.
+  `created_at`, in UTC. `stages` is a list of `{stage, seconds}`, with the same stage
+  names as the `timing` lines of `transcribe.log` (`decode`, `echo`, `levels`, `asr`,
+  `diarization`, `total`, `speaker_names`).
 - The **Echo removal (audio)** row tells what really happened, not only the setting:
   - `off` — the setting **Remove echo before transcribing** was off.
   - `solve-gate-cut, not run (only one track was recorded)` — no call track.

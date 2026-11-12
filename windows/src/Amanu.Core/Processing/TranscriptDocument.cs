@@ -17,7 +17,56 @@ public sealed record TranscriptDocument(
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("segments")] IReadOnlyList<TranscriptSegment> Segments,
     // Null in transcripts made before this was recorded, and in tests that do not care.
-    [property: JsonPropertyName("echo"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TranscriptEcho? Echo = null);
+    [property: JsonPropertyName("echo"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TranscriptEcho? Echo = null,
+    // In the order they ran; null in transcripts made before this was recorded.
+    [property: JsonPropertyName("stages"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<TranscriptStage>? Stages = null)
+{
+    /// <summary>This transcript with `stage` timed at `elapsed`, in place of an earlier time for the same stage.</summary>
+    public TranscriptDocument WithStage(string stage, TimeSpan elapsed) => this with
+    {
+        Stages = [.. (Stages ?? []).Where(existing => existing.Stage != stage), new TranscriptStage(stage, Math.Round(elapsed.TotalSeconds, 1))],
+    };
+}
+
+/// <summary>
+/// How long one stage of making the transcript took, so two transcripts of one
+/// recording can be compared on cost as well as on words.
+/// </summary>
+/// <param name="Stage">decode, echo, levels, asr, diarization, total or speaker_names, as in the timing lines of transcribe.log.</param>
+public sealed record TranscriptStage(
+    [property: JsonPropertyName("stage")] string Stage,
+    [property: JsonPropertyName("seconds")] double Seconds)
+{
+    public const string Decode = "decode";
+    public const string Echo = "echo";
+    public const string Levels = "levels";
+    public const string Recognition = "asr";
+    public const string Diarization = "diarization";
+    public const string Total = "total";
+    public const string SpeakerNames = "speaker_names";
+
+    public string Label => Stage switch
+    {
+        Decode => "reading the audio",
+        Echo => "echo removal",
+        Levels => "speech levels",
+        Recognition => "recognition",
+        Diarization => "call voices",
+        Total => "in all",
+        SpeakerNames => "speaker names",
+        _ => Stage,
+    };
+
+    /// <summary>Tenths of a second under a minute, where most stages are; minutes and seconds above it.</summary>
+    public string Duration()
+    {
+        if (Seconds < 60) return Seconds.ToString("0.0", CultureInfo.InvariantCulture) + " s";
+        var time = TimeSpan.FromSeconds(Math.Round(Seconds));
+        return time.TotalHours >= 1
+            ? time.ToString("h\\:mm\\:ss", CultureInfo.InvariantCulture)
+            : time.ToString("m\\:ss", CultureInfo.InvariantCulture);
+    }
+}
 
 /// <summary>
 /// Which echo removal the engine heard the mic through, so transcripts of one
@@ -92,6 +141,9 @@ public static class TranscriptWriter
             Row("Echo removal (audio)", echo.Describe());
             Row("Echo filter (text)", echo.TranscriptFilter ? "on" : "off");
         }
+        // Speaker names are timed after the total, which covers only the transcript itself.
+        if (transcript.Stages is { Count: > 0 } stages)
+            Row("Time taken", string.Join(" · ", stages.Select(stage => $"{stage.Label} {stage.Duration()}")));
         if (speakerNames is { Count: > 0 })
             Row("Speakers", string.Join(", ", speakerNames.Select(pair => $"{pair.Key} → {pair.Value}")));
         result.AppendLine();
