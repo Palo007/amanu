@@ -1356,6 +1356,14 @@ Not run yet; no WER exists for this set.
 
 ### 22.1 Engine result
 
-Stopped, incomplete: free space on C: fell to 5.4 GB (floor 5.5; the stress folder holds only 0.4 GB, the rest was other writers), so the engine run was ended after 5 of 12 solve-gate rows and no setting c row.
-Build used: `AMANU_LAB_EXE` = `windows\artifacts\overnight-cut2\Amanu.exe`; `stress.py engine` now runs one Amanu.exe at a time (workers=1). Rows so far (my WER %, echo words), solve-gate: st-dev-0 7.1/0, st-dev-1 7.9/0, st-dev-2 10.7/1, st-dev-3 49.7/0, st-drift-0 9.9/0.
-No per-group comparison exists. Resume with the same command (`py -P stress.py engine`, cached rows are skipped) once C: has room; the cache (214 MB) is kept for that and is deleted after the run.
+Run finished (overnight-cut2 `Amanu.exe` for solve-gate, one at a time; `transcribe-cli --batch` for setting c; the first attempt was cut by low disk and resumed). My WER %, echo words; report only.
+
+| Group | words | solve-gate WER | echo words | c WER | echo words |
+|---|---|---|---|---|---|
+| drift (4) | 585 | 27.7 | 18 | 47.2 | 105 |
+| dev4 (4) | 564 | 19.3 | 1 | 11.9 | 0 |
+| one (4) | 32 | 96.9 | 0 | 243.8 | 3 |
+| all (12) | 1181 | 25.6 | 19 | 35.6 | 108 |
+
+Per call (solve-gate / c): dev-0 7.1/6.3, dev-1 7.9/3.6, dev-2 10.7/4.0, dev-3 49.7/32.7, drift-0 9.9/38.0 (35 echo words in c), drift-1 51.9/68.2, drift-2 15.8/26.0, drift-3 31.5/55.2, one-0 25.0/50.0, one-1 0/0, one-2 275/850, one-3 87.5/75.0.
+Reading: with four devices c is better; with wandering drift (solver ERLE 7 dB) c is much worse and passes the far end's words (105 against 18) because cutting hands the engine the echo leftovers the gate let through; in the 1 % calls the numbers rest on 32 words (insertions dominate; st-one-2, where the gate was open 145 s, gives 275 and 850 %). Cache deleted after the run.
