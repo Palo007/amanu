@@ -1,8 +1,8 @@
 # Sonora echo canceller
 
 `sonora_ffi.dll` is the echo remover behind `echo_model: sonora` and the delay-primed `sonora-delay-*`
-models, and the fallback of the `solve*` models, which are the default since 2026-11-11 (`solve-floor`;
-see `tests/quality/echo-solver-2026-11-11.md`). Sonora is a
+models, and the fallback of the `solve*` models, which are the default since 2026-11-11 (`solve-floor`, and `solve-gate-cut` since 2026-11-12;
+see `tests/quality/echo-solver-2026-11-11.md` and `tests/quality/overnight-2026-11-12.md`). Sonora is a
 Rust port of WebRTC's AEC3 echo canceller, used here through its C API (`wap_*`).
 
 - Source: https://github.com/dignifiedquire/sonora, commit `1632d47c1e77d0857f9145bd175134b348541e11`

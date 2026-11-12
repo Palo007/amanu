@@ -125,6 +125,24 @@ public sealed class OfflineEchoSolverTests
     }
 
     [Fact]
+    public void Solving_from_tracks_in_place_gives_what_cancelling_and_suppressing_arrays_gives()
+    {
+        // 70 s with blocks of 30 s: the suppressor's blocks overlap, which the in-place version must allow for.
+        var length = 70 * Rate;
+        var far = Bursts(length, 11, 0, length);
+        var mic = Echo(far, 640).Zip(Bursts(length, 12, 30 * Rate, length), (a, b) => a + b).ToArray();
+
+        var arrays = OfflineEchoSolver.Cancel(mic, far, blockSeconds: 30);
+        var expected = OfflineEchoSolver.Suppress(arrays.Cleaned, arrays.Echo, 0.15, 2.0, 30);
+        var solved = OfflineEchoSolver.Solve(new OfflineEchoSolver.ArrayTrack(mic, length), new OfflineEchoSolver.ArrayTrack(far, length), 0.15, blockSeconds: 30);
+
+        Assert.Equal(arrays.Sections, solved.Sections);
+        Assert.Equal(expected.Length, solved.Cleaned.Length);
+        // The echo the suppressor needs is mic minus cleaned here, which differs from the echo itself by float rounding.
+        Assert.True(Db(Difference(solved.Cleaned, expected), expected, 0, length) < -100);
+    }
+
+    [Fact]
     public void A_long_call_solved_in_blocks_is_as_clean_as_one_solved_whole()
     {
         var length = 90 * Rate;

@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Amanu.Core.Processing;
+using NAudio.Wave;
 using static Amanu.Core.Localization.Localized;
 
 namespace Amanu.App;
@@ -321,6 +322,10 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
             cancellationToken.ThrowIfCancellationRequested();
             if (ModelCatalog.IsParakeet(model))
             {
+                // The solve-gate-cut echo model leaves the gate's decisions beside the cleaned mic:
+                // the engine then hears my speech regions, each on its own, instead of 60 s chunks.
+                if (side == SpeakerLabels.Me && PlanSpeechRegions(source, wave) is { } cut)
+                    return await TranscribeRegionsAsync(cli, modelPath, threadArgument, cut, temp, side, offsetMs, timing, cancellationToken).ConfigureAwait(false);
                 // Step 6: long noise-only stretches are left out of each chunk; chunk times map back below.
                 IReadOnlyList<(int From, int To)>? keep = null;
                 IReadOnlyList<int>? cuts = null;
@@ -421,6 +426,94 @@ public sealed class LocalTranscriptionEngine(ModelManager models, string model, 
         {
             if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true);
         }
+    }
+
+    /// <summary>The cleaned mic's samples and the regions the gate's decisions cut them into.</summary>
+    private sealed record RegionPlan(float[] Audio, IReadOnlyList<SpeechRegions.Region> Open, IReadOnlyList<SpeechRegions.Region> Regions);
+
+    /// <summary>
+    /// The regions of <paramref name="wave"/> (the 16 kHz copy of <paramref name="source"/>) when
+    /// the echo stage left a gate file beside the source and it fits this track; null otherwise,
+    /// also when the gate found no speech, and then the track goes the usual way.
+    /// </summary>
+    private static RegionPlan? PlanSpeechRegions(string source, string wave)
+    {
+        var gateFile = Path.Combine(Path.GetDirectoryName(source) ?? "", OfflineEchoAudio.GateFile);
+        if (!File.Exists(gateFile)) return null;
+        try
+        {
+            using var reader = new WaveFileReader(wave);
+            if (reader.WaveFormat.SampleRate != SpeechRegions.SampleRate || reader.WaveFormat.Channels != 1) return null;
+            if (SpeechRegions.Gate.TryLoad(gateFile, reader.SampleCount) is not { } gate || gate.Open.Length == 0) return null;
+            var audio = new float[reader.SampleCount];
+            var samples = reader.ToSampleProvider();
+            for (var read = 0; read < audio.Length;)
+            {
+                var count = samples.Read(audio.AsSpan(read));
+                if (count == 0) return null;
+                read += count;
+            }
+            var regions = SpeechRegions.Plan(gate.Runs, audio.Length, audio);
+            return regions.Count == 0 ? null : new RegionPlan(audio, gate.Runs, regions);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or FormatException) { return null; }
+    }
+
+    /// <summary>
+    /// One engine run per region, each on a file scaled to the speech level, with the words
+    /// moved to where the region lies in the call. The lab fed the same files through one
+    /// --batch process; the batch form leaves out word times (see <see cref="LocalCliWords"/>),
+    /// and the segments, the calls' minutes and the speaker order downstream need them.
+    /// </summary>
+    private async Task<IReadOnlyList<TranscriptSegment>> TranscribeRegionsAsync(
+        string cli, string modelPath, string threadArgument, RegionPlan plan, string temp, string side, int offsetMs,
+        TrackTiming timing, CancellationToken cancellationToken)
+    {
+        timing.AudioSeconds = plan.Regions.Sum(region => region.Length / (double)SpeechRegions.SampleRate);
+        var words = new List<TimedWord>();
+        var fallback = new List<TranscriptSegment>();
+        var format = new WaveFormat(SpeechRegions.SampleRate, 16, 1);
+        for (var index = 0; index < plan.Regions.Count; index++)
+        {
+            if (index > 0) timing.Progress?.Invoke((double)index / plan.Regions.Count);
+            cancellationToken.ThrowIfCancellationRequested();
+            var region = plan.Regions[index];
+            var path = Path.Combine(temp, $"region-{index:0000}.wav");
+            var gain = SpeechRegions.Gain(plan.Audio, region, plan.Open);
+            using (var writer = new WaveFileWriter(path, format))
+            {
+                var block = new short[SpeechRegions.SampleRate];
+                for (var position = region.Start; position < region.End;)
+                {
+                    var count = (int)Math.Min(block.Length, region.End - position);
+                    for (var i = 0; i < count; i++)
+                        block[i] = (short)Math.Round(Math.Clamp(plan.Audio[position + i] * gain, -1f, 1f) * short.MaxValue);
+                    writer.WriteSamples(block, 0, count);
+                    position += count;
+                }
+            }
+            var args = new List<string> { "-m", modelPath, "--threads", threadArgument, "-q", "--timestamps", "word" };
+            if (!string.IsNullOrWhiteSpace(languagePin)) args.AddRange(["--language", languagePin]);
+            args.Add(path);
+            timing.Runs++;
+            var answer = await RunAsrAsync(cli, args, timing, cancellationToken).ConfigureAwait(false);
+            var parsed = LocalCliWords.Parse(answer);
+            words.AddRange(parsed.Select(word => word with
+            {
+                StartMs = SpeechRegions.ToTrackMs(region, word.StartMs),
+                EndMs = SpeechRegions.ToTrackMs(region, word.EndMs),
+            }));
+            if (parsed.Count == 0 && LocalCliWords.FullText(answer) is { Length: > 0 } text)
+                fallback.Add(new TranscriptSegment(SpeechRegions.ToTrackMs(region, 0) + offsetMs,
+                    region.End * 1000 / SpeechRegions.SampleRate + offsetMs, text, SpeakerLabels.Raw(side, "")));
+            File.Delete(path);
+        }
+        return LocalCliWords.Segments(words.OrderBy(word => word.StartMs).ToArray()).Select(item => item with
+        {
+            StartMs = item.StartMs + offsetMs,
+            EndMs = item.EndMs + offsetMs,
+            Speaker = SpeakerLabels.Raw(side, ""),
+        }).Concat(fallback).OrderBy(segment => segment.StartMs).ToArray();
     }
 
     private static async Task<string> RunCliAsync(string cli, IEnumerable<string> arguments, CancellationToken cancellationToken, Action<string>? stderr = null)

@@ -47,15 +47,18 @@ public sealed class AppSettings
     public bool OfflineEchoCancellation { get; set; } = true;
 
     /// <summary>
-    /// <c>sonora</c>: WebRTC's AEC3 echo canceller, the default and by far the fastest.
+    /// <c>solve-gate-cut</c>, the default since 2026-11-12: the offline echo solver, the speech
+    /// gate, and recognition on the gate's speech regions; on the held-out set it left 10.2 % of
+    /// my words wrong against 11.8 % for solve-gate and 13.0 % for solve-floor.
+    /// <c>sonora</c>: WebRTC's AEC3 echo canceller, by far the fastest.
     /// <c>fast</c>: LocalVQE's adaptive filter alone. <c>thorough</c>: the filter and a
     /// neural mask, for rooms whose echo is heavily reverberant.
     /// </summary>
     [JsonPropertyName("echo_model")]
-    public string EchoModel { get; set; } = "solve-floor";
+    public string EchoModel { get; set; } = "solve-gate-cut";
 
     /// <summary>The sonora-* variants are tunings of Sonora under measurement in the quality suite.</summary>
-    public static readonly IReadOnlyList<string> EchoModels = ["sonora", "fast", "thorough", "sonora-linear", "sonora-nearend", "sonora-gentle", "sonora-long", "sonora-long80", "sonora-long80-nearend", "sonora-delay-linear", "sonora-delay-nearend", "sonora-delay-floor", "sonora-delay-nearend-floor", "sonora-delay-floor70", "sonora-delay-nearend-nf70", "sonora-delay-nearend-floor70", "solve", "solve-floor", "solve-gate"];
+    public static readonly IReadOnlyList<string> EchoModels = ["sonora", "fast", "thorough", "sonora-linear", "sonora-nearend", "sonora-gentle", "sonora-long", "sonora-long80", "sonora-long80-nearend", "sonora-delay-linear", "sonora-delay-nearend", "sonora-delay-floor", "sonora-delay-nearend-floor", "sonora-delay-floor70", "sonora-delay-nearend-nf70", "sonora-delay-nearend-floor70", "solve", "solve-floor", "solve-gate", "solve-gate-cut"];
 
     /// <summary>
     /// Keeps the echo-cleaned mic and its aligned call track in the session, so
