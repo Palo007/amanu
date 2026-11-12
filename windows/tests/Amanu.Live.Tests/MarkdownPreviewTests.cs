@@ -22,7 +22,10 @@ public sealed class MarkdownPreviewTests
         Assert.Equal("Встреча", new TextRange(paragraphs[0].ContentStart, paragraphs[0].ContentEnd).Text.Trim());
         Assert.Equal(FontWeights.SemiBold, paragraphs[0].FontWeight);
         Assert.True(paragraphs[0].FontSize > preview.Document.FontSize);
-        var label = Assert.IsType<Span>(paragraphs[2].Inlines.FirstInline);
+        // The provenance table is not a paragraph, and its empty header row is left out.
+        var table = Assert.Single(preview.Document.Blocks.OfType<Table>());
+        Assert.Equal(3, table.RowGroups[0].Rows.Count); // Transcribed, Engine, Speakers
+        var label = Assert.IsType<Span>(paragraphs[1].Inlines.FirstInline);
         Assert.Equal(FontWeights.Bold, label.FontWeight);
         Assert.Equal("[0:03] Алиса:", new TextRange(label.ContentStart, label.ContentEnd).Text);
         Assert.Equal("Segoe UI", label.Inlines.FirstInline.FontFamily.Source);

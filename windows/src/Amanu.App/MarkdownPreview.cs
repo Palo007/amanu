@@ -208,6 +208,9 @@ internal sealed class MarkdownPreview : RichTextBox
         result.RowGroups.Add(rows);
         foreach (var row in table.OfType<Markdig.Extensions.Tables.TableRow>())
         {
+            // A header with nothing in it is how transcript.md writes a table of label and
+            // value; drawn, it would be an empty bordered row above them.
+            if (row.IsHeader && row.OfType<Markdig.Extensions.Tables.TableCell>().All(IsEmpty)) continue;
             var renderedRow = new TableRow();
             rows.Rows.Add(renderedRow);
             var columnIndex = 0;
@@ -231,4 +234,7 @@ internal sealed class MarkdownPreview : RichTextBox
         }
         return result;
     }
+
+    private static bool IsEmpty(Markdig.Extensions.Tables.TableCell cell) =>
+        cell.All(block => block is ParagraphBlock { Inline: null or { FirstChild: null } });
 }

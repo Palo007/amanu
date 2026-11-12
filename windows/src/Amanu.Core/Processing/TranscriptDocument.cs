@@ -40,14 +40,11 @@ public sealed record TranscriptEcho(
     /// <summary>The few words a tab has room for.</summary>
     public string ShortName => Ran ? Model : Model == Off ? "echo off" : "no echo removal";
 
-    /// <summary>The line under the engine in transcript.md.</summary>
-    public string Describe()
-    {
-        var text = Model == Off ? Off
+    /// <summary>The audio echo removal's row in transcript.md; the text filter has a row of its own.</summary>
+    public string Describe() =>
+        Model == Off ? Off
             : Ran ? Model + (Note is null ? "" : $" ({Note})")
             : $"{Model}, not run" + (Note is null ? "" : $" ({Note})");
-        return TranscriptFilter ? text + "; transcript echo filter on" : text;
-    }
 }
 
 public static class TranscriptWriter
@@ -80,15 +77,23 @@ public static class TranscriptWriter
         TranscriptDocument transcript,
         IReadOnlyDictionary<string, string>? speakerNames = null)
     {
+        // A table with an empty header, which the preview leaves out, so that the
+        // provenance reads as label and value rather than as one run-on line.
         var result = new StringBuilder()
             .Append("# ").AppendLine(title)
             .AppendLine()
-            .Append("engine: ").Append(transcript.Engine).Append(" (").Append(transcript.Model).AppendLine(")");
-        if (transcript.Echo is { } echo) result.Append("echo removal: ").AppendLine(echo.Describe());
-        if (speakerNames is { Count: > 0 })
+            .AppendLine("| | |")
+            .AppendLine("|---|---|");
+        void Row(string label, string value) => result.Append("| ").Append(label).Append(" | ").Append(Cell(value)).AppendLine(" |");
+        Row("Transcribed", FormatTime(transcript.CreatedAt.ToLocalTime()));
+        Row("Engine", $"{transcript.Engine} · {transcript.Model}");
+        if (transcript.Echo is { } echo)
         {
-            result.Append("speakers: ").AppendLine(string.Join(", ", speakerNames.Select(pair => $"{pair.Key} → {pair.Value}")));
+            Row("Echo removal (audio)", echo.Describe());
+            Row("Echo filter (text)", echo.TranscriptFilter ? "on" : "off");
         }
+        if (speakerNames is { Count: > 0 })
+            Row("Speakers", string.Join(", ", speakerNames.Select(pair => $"{pair.Key} → {pair.Value}")));
         result.AppendLine();
         foreach (var segment in transcript.Segments)
         {
@@ -104,6 +109,21 @@ public static class TranscriptWriter
         }
         return result.ToString();
     }
+
+    /// <summary>
+    /// The time in the offset it is given, with that offset written out, so the
+    /// time still reads right after a move to another time zone.
+    /// </summary>
+    public static string FormatTime(DateTimeOffset time)
+    {
+        var offset = time.Offset;
+        var sign = offset < TimeSpan.Zero ? "-" : "+";
+        return time.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)
+            + $" (UTC{sign}{offset.Duration().ToString("hh\\:mm", CultureInfo.InvariantCulture)})";
+    }
+
+    // A note can hold an exception's message, and a name anything a person typed.
+    private static string Cell(string value) => value.ReplaceLineEndings(" ").Replace("|", "\\|", StringComparison.Ordinal);
 
     private static async Task WriteAtomicallyAsync(string path, string contents, CancellationToken cancellationToken)
     {

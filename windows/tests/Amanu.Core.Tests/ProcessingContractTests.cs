@@ -21,8 +21,8 @@ public sealed class ProcessingContractTests
 
         var markdown = await File.ReadAllTextAsync(Path.Combine(temp.Path, "transcript.md"));
         Assert.Contains("# Разговор", markdown);
-        Assert.Contains("engine: assemblyai (universal-3-pro)", markdown);
-        Assert.Contains("them → Анна", markdown);
+        Assert.Contains("| Engine | assemblyai · universal-3-pro |", markdown);
+        Assert.Contains("| Speakers | them → Анна |", markdown);
         Assert.Contains("**[0:01] Анна:** Привет, мир", markdown);
 
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp.Path, "transcript.json")));
@@ -31,7 +31,7 @@ public sealed class ProcessingContractTests
     }
 
     [Fact]
-    public async Task The_transcript_names_the_echo_removal_beside_the_engine_and_keeps_it_through_a_rewrite()
+    public async Task The_transcript_opens_with_a_table_of_when_and_how_it_was_made_and_keeps_the_echo_through_a_rewrite()
     {
         using var temp = new TemporaryDirectory();
         var transcript = new TranscriptDocument("local", "parakeet", DateTimeOffset.Parse("2026-11-12T12:00:00Z"),
@@ -41,7 +41,18 @@ public sealed class ProcessingContractTests
         await TranscriptWriter.WriteAsync(temp.Path, "Call", transcript);
 
         var markdown = await File.ReadAllTextAsync(Path.Combine(temp.Path, "transcript.md"));
-        Assert.Contains("engine: local (parakeet)\necho removal: solve-gate-cut; transcript echo filter on\n", markdown.ReplaceLineEndings("\n"));
+        var time = TranscriptWriter.FormatTime(transcript.CreatedAt.ToLocalTime());
+        Assert.StartsWith(string.Join("\n",
+            "# Call",
+            "",
+            "| | |",
+            "|---|---|",
+            $"| Transcribed | {time} |",
+            "| Engine | local · parakeet |",
+            "| Echo removal (audio) | solve-gate-cut |",
+            "| Echo filter (text) | on |",
+            "",
+            "**[0:00] me:** Hello"), markdown.ReplaceLineEndings("\n"));
         var json = await File.ReadAllTextAsync(Path.Combine(temp.Path, "transcript.json"));
         var read = JsonSerializer.Deserialize<TranscriptDocument>(json)!;
         Assert.Equal(transcript.Echo, read.Echo);
@@ -50,19 +61,36 @@ public sealed class ProcessingContractTests
     }
 
     [Theory]
-    [InlineData("off", false, null, false, "off")]
-    [InlineData("sonora", true, null, false, "sonora")]
-    [InlineData("solve-gate", true, "many devices on the call, ran as plain sonora", true, "solve-gate (many devices on the call, ran as plain sonora); transcript echo filter on")]
-    [InlineData("solve-gate-cut", false, "skipped: no DLL", false, "solve-gate-cut, not run (skipped: no DLL)")]
-    public void Echo_removal_is_described_as_it_ran(string model, bool ran, string? note, bool filter, string expected) =>
-        Assert.Equal(expected, new TranscriptEcho(model, ran, note, TranscriptFilter: filter).Describe());
+    [InlineData("off", false, null, "off")]
+    [InlineData("sonora", true, null, "sonora")]
+    [InlineData("solve-gate", true, "many devices on the call, ran as plain sonora", "solve-gate (many devices on the call, ran as plain sonora)")]
+    [InlineData("solve-gate-cut", false, "skipped: no DLL", "solve-gate-cut, not run (skipped: no DLL)")]
+    public void Echo_removal_is_described_as_it_ran(string model, bool ran, string? note, string expected) =>
+        Assert.Equal(expected, new TranscriptEcho(model, ran, note).Describe());
+
+    [Theory]
+    [InlineData("2026-11-12T14:32:00+01:00", "2026-11-12 14:32 (UTC+01:00)")]
+    [InlineData("2026-11-12T09:05:00-05:30", "2026-11-12 09:05 (UTC-05:30)")]
+    [InlineData("2026-11-12T00:00:00Z", "2026-11-12 00:00 (UTC+00:00)")]
+    public void The_transcription_time_carries_its_offset(string time, string expected) =>
+        Assert.Equal(expected, TranscriptWriter.FormatTime(DateTimeOffset.Parse(time, System.Globalization.CultureInfo.InvariantCulture)));
+
+    [Fact]
+    public void A_pipe_or_a_line_break_in_a_value_does_not_break_the_table()
+    {
+        var transcript = new TranscriptDocument("local", "parakeet", DateTimeOffset.UtcNow, [],
+            new TranscriptEcho("sonora", false, "skipped: bad | thing\nhappened"));
+        Assert.Contains(@"| Echo removal (audio) | sonora, not run (skipped: bad \| thing happened) |", TranscriptWriter.RenderMarkdown("t", transcript));
+    }
 
     [Fact]
     public void A_transcript_from_before_echo_was_recorded_has_no_echo_line()
     {
         var read = JsonSerializer.Deserialize<TranscriptDocument>("""{"engine":"local","model":"parakeet","created_at":"2026-11-01T00:00:00Z","segments":[]}""")!;
         Assert.Null(read.Echo);
-        Assert.DoesNotContain("echo removal", TranscriptWriter.RenderMarkdown("Old", read));
+        var markdown = TranscriptWriter.RenderMarkdown("Old", read);
+        Assert.DoesNotContain("Echo", markdown);
+        Assert.Contains("| Engine | local · parakeet |", markdown);
     }
 
     [Theory]

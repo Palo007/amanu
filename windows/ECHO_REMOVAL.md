@@ -32,13 +32,34 @@ Echo removal runs after the call, before transcription. It is a setting:
 Each new transcript records the echo removal that the engine heard. You can compare two
 models on the same recording: set `echo_model`, transcribe again, and keep both versions.
 
-- `transcript.md` has a line below the `engine:` line, for example
-  `echo removal: solve-gate-cut; transcript echo filter on`.
+- `transcript.md` starts with a table below the title:
+
+  ```markdown
+  | | |
+  |---|---|
+  | Transcribed | 2026-11-12 14:32 (UTC+01:00) |
+  | Engine | local · parakeet |
+  | Echo removal (audio) | solve-gate-cut |
+  | Echo filter (text) | on |
+  | Speakers | me → Alice, them → Bob |
+  ```
+
+  - **Transcribed** is when the transcript was made, in local time with its UTC offset.
+    It is not when the call was recorded.
+  - **Echo removal (audio)** is `offline_echo_cancellation` with `echo_model`. It cleans
+    the mic audio before the engine runs.
+  - **Echo filter (text)** is `transcript_echo_filter` (**Drop echoed speech**). After the
+    engine runs, it drops a line of yours that repeats the far end's words at the same
+    time. The two are separate settings, and both change which words are left, so compare
+    only transcripts that have the same filter value.
+  - **Speakers** shows only when speakers have names.
+  - The recordings window shows the table without its empty header row.
 - `transcript.json` has an `echo` object: `model` (the `echo_model` name, or `off`),
   `ran` (true only if the mic that the engine heard was changed), `note`, `processor`
   (the revision of the audio path; it changes when the code of a model changes), and
-  `transcript_filter` (the text filter `transcript_echo_filter` also ran).
-- The line tells what really happened, not only the setting:
+  `transcript_filter` (the text filter `transcript_echo_filter` also ran). The time is
+  `created_at`, in UTC.
+- The **Echo removal (audio)** row tells what really happened, not only the setting:
   - `off` — the setting **Remove echo before transcribing** was off.
   - `solve-gate-cut, not run (only one track was recorded)` — no call track.
   - `…, not run (skipped: …)` — the step failed, so the engine heard the mic as recorded.
@@ -47,8 +68,9 @@ models on the same recording: set `echo_model`, transcribe again, and keep both 
     no single echo path and fell back.
 - In the recordings window, the transcript tabs show the echo name when two versions
   differ by it, for example `Parakeet · solve-gate` and `Parakeet · sonora`.
-- The quality runs (`MeasureAsync`) write the same line into their output transcript.
-- Transcripts made before 2026-11-12 have no such line.
+- The quality runs (`MeasureAsync`) write the same table into their output transcript.
+- Transcripts made before 2026-11-12 have no echo rows. When such a transcript is
+  written again (for example, when you name a speaker), it gets the table without them.
 
 ## The words used in this page
 
