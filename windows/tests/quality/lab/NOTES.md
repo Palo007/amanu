@@ -1367,3 +1367,19 @@ Run finished (overnight-cut2 `Amanu.exe` for solve-gate, one at a time; `transcr
 
 Per call (solve-gate / c): dev-0 7.1/6.3, dev-1 7.9/3.6, dev-2 10.7/4.0, dev-3 49.7/32.7, drift-0 9.9/38.0 (35 echo words in c), drift-1 51.9/68.2, drift-2 15.8/26.0, drift-3 31.5/55.2, one-0 25.0/50.0, one-1 0/0, one-2 275/850, one-3 87.5/75.0.
 Reading: with four devices c is better; with wandering drift (solver ERLE 7 dB) c is much worse and passes the far end's words (105 against 18) because cutting hands the engine the echo leftovers the gate let through; in the 1 % calls the numbers rest on 32 words (insertions dominate; st-one-2, where the gate was open 145 s, gives 275 and 850 %). Cache deleted after the run.
+
+### 22.2 The app's solve-gate-cut and the suppressed-audio variant on the stress set
+
+Report only; nothing tuned. `stress.py app TAG` runs the app's own model `solve-gate-cut` through `Amanu.exe` (`AMANU_LAB_EXE`, `asr.amanu`, one job at a time, only the recordings needed) with row tag `stress/app-cut-TAG`; `stress.py appshow` prints the table. solve-gate rows are the cached ones from 22.1 (not re-measured). Builds: `par` = `windows\artifacts\overnight-par` (today's source, i.e. the shipped solve-gate-cut: gate and audio both on the solver's plain output), `cut3` = `windows\artifacts\overnight-cut3` (gate on the plain output, engine gets the audio from behind the 0.15 residual suppressor). The cut3 patch was hand-applied to the current source (the solver now returns one array, so for cut3 the plain output is kept, the echo is rebuilt as mic minus plain and `Suppress` is run on a copy), built, and the source restored with `git checkout -- windows/src`; the patch is in the session scratchpad as cut3.patch. The first start failed on both: overnight-par had no `local-runtime` ("No local model for 'auto'"); I copied it from `artifacts\publish` (a copy, nothing deleted) into par and cut3. My WER %, echo words:
+
+| Group | words | solve-gate | app par | cut3 |
+|---|---|---|---|---|
+| drift (4) | 585 | 27.7 / 18 | 29.6 / 30 | 25.6 / 40 |
+| dev4 (4) | 564 | 19.3 / 1 | 11.9 / 0 | 12.1 / 0 |
+| one (4) | 32 | 96.9 / 0 | 225.0 / 4 | 290.6 / 5 |
+| all (12) | 1181 | 25.6 / 19 | 26.4 / 34 | 26.3 / 45 |
+
+Per call (solve-gate / par / cut3): dev-0 7.1/6.3/6.3, dev-1 7.9/3.6/3.6, dev-2 10.7/4.0/4.0, dev-3 49.7/32.7/33.3, drift-0 9.9/19.0/35.2 (28 echo words in cut3), drift-1 51.9/39.0/29.2, drift-2 15.8/26.0/12.3, drift-3 31.5/33.6/25.9, one-0 25.0/50.0/25.0, one-1 0/12.5/12.5, one-2 275/762.5/1050, one-3 87.5/75.0/75.0.
+Reading: the app's cutting leaves 29.6 % on drift with 30 echo words, not the lab setting c's 47.2 % with 105 (22.1): the app differs from the lab's c (its own gate and regions, solver run of the app), so 22.1's c row overstates the app. Against solve-gate the app is still 1.9 points worse on drift (+12 echo words) and 7.4 points better on dev4; in the 1 % calls the 32 words decide nothing. cut3 on drift is 25.6 but with 40 echo words (28 in drift-0 alone), so the suppressed audio does not remove the echo words; it is not better than par on the 12 calls (26.3 against 26.4 overall, 45 against 34 echo words). Differences of a few points on 585 words are within the noise of one run.
+Notebook numbers for cut3 (13.2, quoted): suite, 40 echo calls: WER 15.9 (cut2 15.9, solve-gate 18.1), no noise 8.8 (9.0), SNR 0 17.9 (17.6), SNR -5 39.1 (38.8), echo words 6 (4; solve-gate 4), echo time 508 s (471 s); the notebook concluded cut3 was not better than cut2 and took it out. Held-out: cut3 was never run on it (14.5 ran cut2 only; the docstring of the shipped model gives 10.0 % for cut2 against 11.8 % for solve-gate).
+All engine runs have ended; the stress cache is gone and not needed.

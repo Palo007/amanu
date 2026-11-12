@@ -5,6 +5,8 @@
     py -P stress.py cpu        # solver + gate per call, cached; CPU numbers (no engine)
     py -P stress.py engine     # THE ENGINE STEP: solve-gate (Amanu.exe) and setting c (transcribe-cli) on the 12 calls, then the table
     py -P stress.py show       # the table from the cached rows
+    py -P stress.py app TAG    # the APP's echo model solve-gate-cut (Amanu.exe at AMANU_LAB_EXE), one job at a time; rows under wer2/stress/app-cut-TAG
+    py -P stress.py appshow    # solve-gate (cached) / app-cut-* builds per group
 
 Groups (4 calls each, 2 to 3 minutes):
     drift   the call track runs against the mic's clock at a ppm that changes during the call
@@ -393,6 +395,41 @@ def show():
             print(f"  {n:11s} solve-gate {100 * base[n]['errors'] / base[n]['words']:5.1f} ({base[n]['leak']} echo)  c {100 * cut[n]['errors'] / cut[n]['words']:5.1f} ({cut[n]['leak']} echo)")
 
 
+def app(tag):
+    """The app's own solve-gate-cut through Amanu.exe (AMANU_LAB_EXE names the build; needs only the recordings).
+    One job at a time: each starts two transcribe-cli. Row tag stress/app-cut-<tag>, cached, so a stop can be resumed."""
+    import asr
+    t0 = time.time()
+    for n in names():
+        asr.amanu(str(WORK), f"stress/app-cut-{tag}", n, REC / n, "solve-gate-cut")
+        print(n, f"({time.time() - t0:.0f} s)", flush=True)
+    appshow()
+
+
+def appshow():
+    import asr
+    tags = sorted(p.name[len("app-cut-"):] for p in (WORK / "wer2" / "stress").iterdir() if p.name.startswith("app-cut-"))
+    base = asr.rows(str(WORK), "stress/solve-gate")
+    built = {t: asr.rows(str(WORK), f"stress/app-cut-{t}") for t in tags}
+    truths = {n: json.loads((REC / n / "truth.json").read_text(encoding="utf-8")) for n in names()}
+    head = f"{'group':6s} {'n':>2s} {'words':>5s} | {'solve-gate':>14s}"
+    for t in tags:
+        head += f" | {'cut ' + t:>14s}"
+    print(head + "    (my WER %, echo words)")
+    for grp in GROUPS + ("all",):
+        ks = [n for n in names() if grp == "all" or truths[n]["group"] == grp]
+        line = f"{grp:6s} {len(ks):2d} {sum(base[n]['words'] for n in ks if n in base):5d} |"
+        for rs in [base] + [built[t] for t in tags]:
+            r = [rs[n] for n in ks if n in rs]
+            line += f" {asr.wer(r) if r else float('nan'):8.1f} {sum(x['leak'] for x in r):5d} |"
+        print(line)
+    for n in names():
+        line = f"  {n:11s}"
+        for label, rs in [("solve-gate", base)] + [(t, built[t]) for t in tags]:
+            line += f" {label} {100 * rs[n]['errors'] / rs[n]['words']:5.1f} ({rs[n]['leak']}) " if n in rs else f" {label} -- "
+        print(line)
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "plan":
@@ -408,3 +445,7 @@ if __name__ == "__main__":
         engine()
     elif cmd == "show":
         show()
+    elif cmd == "app":
+        app(sys.argv[2])
+    elif cmd == "appshow":
+        appshow()
