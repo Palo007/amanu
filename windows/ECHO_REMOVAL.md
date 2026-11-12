@@ -27,6 +27,29 @@ Echo removal runs after the call, before transcription. It is a setting:
   if it came from the same model and the same processor revision. A model change makes a
   new cleaned copy.
 
+## How a transcript shows which echo removal made it
+
+Each new transcript records the echo removal that the engine heard. You can compare two
+models on the same recording: set `echo_model`, transcribe again, and keep both versions.
+
+- `transcript.md` has a line below the `engine:` line, for example
+  `echo removal: solve-gate-cut; transcript echo filter on`.
+- `transcript.json` has an `echo` object: `model` (the `echo_model` name, or `off`),
+  `ran` (true only if the mic that the engine heard was changed), `note`, `processor`
+  (the revision of the audio path; it changes when the code of a model changes), and
+  `transcript_filter` (the text filter `transcript_echo_filter` also ran).
+- The line tells what really happened, not only the setting:
+  - `off` — the setting **Remove echo before transcribing** was off.
+  - `solve-gate-cut, not run (only one track was recorded)` — no call track.
+  - `…, not run (skipped: …)` — the step failed, so the engine heard the mic as recorded.
+  - `…, not run (the call track was silent)` — nothing to remove.
+  - `solve-gate (many devices on the call, ran as plain sonora)` — the solver found
+    no single echo path and fell back.
+- In the recordings window, the transcript tabs show the echo name when two versions
+  differ by it, for example `Parakeet · solve-gate` and `Parakeet · sonora`.
+- The quality runs (`MeasureAsync`) write the same line into their output transcript.
+- Transcripts made before 2026-11-12 have no such line.
+
 ## The words used in this page
 
 - **My WER**: the share of your own words that the transcript gets wrong. Lower is better.

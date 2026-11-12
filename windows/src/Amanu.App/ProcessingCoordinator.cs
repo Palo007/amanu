@@ -488,6 +488,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             leveled = null;
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
+            transcript = transcript with { Echo = DescribeEcho(current, audio, ReadLedger(directory).AudioEchoCancellation) };
             transcript = await DiarizeCallAsync(directory, audio, transcript, current, cancellationToken).ConfigureAwait(false);
             if (transcript.Segments.All(segment => string.IsNullOrWhiteSpace(segment.Text)))
             {
@@ -684,6 +685,7 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             transcript = ApplyCustomWords(output, transcript, current);
             if (current.TranscriptEchoFilter && audio.BothSides)
                 transcript = transcript with { Segments = TranscriptEchoFilter.Filter(transcript.Segments) };
+            transcript = transcript with { Echo = DescribeEcho(current, audio, ReadLedger(output).AudioEchoCancellation) };
             await TranscriptWriter.WriteAsync(output, audio.Title, transcript, null, cancellationToken).ConfigureAwait(false);
             LogTiming(output, "total", total.Elapsed, $"{CountWords(transcript)} words");
             return transcript;
@@ -693,6 +695,26 @@ public sealed class ProcessingCoordinator : IAsyncDisposable
             cleaned?.Delete();
             leveled?.Delete();
         }
+    }
+
+    /// <summary>
+    /// What echo removal the engine heard the mic through, read from the ledger the
+    /// echo step just wrote, so a skipped or downgraded run is not reported as the
+    /// model the setting names.
+    /// </summary>
+    internal static TranscriptEcho DescribeEcho(AppSettings current, SessionAudio audio, EchoCancellationRecord? record)
+    {
+        var filter = current.TranscriptEchoFilter && audio.BothSides;
+        if (!current.OfflineEchoCancellation) return new TranscriptEcho(TranscriptEcho.Off, false, TranscriptFilter: filter);
+        var model = LocalVqeAssets.For(current.EchoModel);
+        if (!audio.BothSides) return new TranscriptEcho(model.Key, false, "only one track was recorded");
+        if (record is null) return new TranscriptEcho(model.Key, false, "no record of the echo step", TranscriptFilter: filter);
+        if (record.Skipped is { } why) return new TranscriptEcho(model.Key, false, $"skipped: {why}", record.Processor, filter);
+        if (record.Mode == "silent_reference_passthrough")
+            return new TranscriptEcho(model.Key, false, "the call track was silent", record.Processor, filter);
+        // A solver model that found many devices on the call leaves the mic to its stream, which is plain Sonora.
+        var note = model.Solver is not null && record.Mode != "echo_solver" ? "many devices on the call, ran as plain sonora" : null;
+        return new TranscriptEcho(model.Key, true, note, record.Processor, filter);
     }
 
     private static int CountWords(TranscriptDocument transcript) =>

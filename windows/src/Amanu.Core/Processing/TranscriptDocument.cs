@@ -15,7 +15,40 @@ public sealed record TranscriptDocument(
     [property: JsonPropertyName("engine")] string Engine,
     [property: JsonPropertyName("model")] string Model,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("segments")] IReadOnlyList<TranscriptSegment> Segments);
+    [property: JsonPropertyName("segments")] IReadOnlyList<TranscriptSegment> Segments,
+    // Null in transcripts made before this was recorded, and in tests that do not care.
+    [property: JsonPropertyName("echo"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TranscriptEcho? Echo = null);
+
+/// <summary>
+/// Which echo removal the engine heard the mic through, so transcripts of one
+/// recording made with different echo_model settings can be told apart and compared.
+/// </summary>
+/// <param name="Model">The echo_model key that ran or was meant to run, or "off" when the setting was off.</param>
+/// <param name="Ran">Whether the mic the engine heard was actually changed by it.</param>
+/// <param name="Note">Why it did not run, or how it ran differently from its name.</param>
+/// <param name="Processor">The audio path's revision (<see cref="LocalVqeModel.ProcessorVersion"/>), since a model's name outlives changes to its code.</param>
+/// <param name="TranscriptFilter">Whether the text-level transcript_echo_filter also ran.</param>
+public sealed record TranscriptEcho(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("ran")] bool Ran,
+    [property: JsonPropertyName("note"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Note = null,
+    [property: JsonPropertyName("processor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Processor = null,
+    [property: JsonPropertyName("transcript_filter")] bool TranscriptFilter = false)
+{
+    public const string Off = "off";
+
+    /// <summary>The few words a tab has room for.</summary>
+    public string ShortName => Ran ? Model : Model == Off ? "echo off" : "no echo removal";
+
+    /// <summary>The line under the engine in transcript.md.</summary>
+    public string Describe()
+    {
+        var text = Model == Off ? Off
+            : Ran ? Model + (Note is null ? "" : $" ({Note})")
+            : $"{Model}, not run" + (Note is null ? "" : $" ({Note})");
+        return TranscriptFilter ? text + "; transcript echo filter on" : text;
+    }
+}
 
 public static class TranscriptWriter
 {
@@ -51,6 +84,7 @@ public static class TranscriptWriter
             .Append("# ").AppendLine(title)
             .AppendLine()
             .Append("engine: ").Append(transcript.Engine).Append(" (").Append(transcript.Model).AppendLine(")");
+        if (transcript.Echo is { } echo) result.Append("echo removal: ").AppendLine(echo.Describe());
         if (speakerNames is { Count: > 0 })
         {
             result.Append("speakers: ").AppendLine(string.Join(", ", speakerNames.Select(pair => $"{pair.Key} → {pair.Value}")));

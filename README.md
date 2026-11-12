@@ -123,7 +123,7 @@ artifact names under `%USERPROFILE%\Amanu Recordings`:
 ~/Recordings/2026.09.02-1400 Weekly sync/
 ├── audio.m4a          # optional: microphone left, call audio right
 ├── transcript.md      # readable transcript with speaker names
-├── transcript.json    # timed segments and engine provenance
+├── transcript.json    # timed segments, engine and (Windows) echo removal provenance
 ├── speakers.json      # names, confidence, and supporting evidence
 ├── summary.md
 ├── meta.json          # timing, devices, trigger, and processing state

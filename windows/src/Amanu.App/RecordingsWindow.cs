@@ -363,8 +363,11 @@ internal sealed class RecordingsWindow : Window
             selectedSummaryDirectory = null;
         }
         var entries = item.Transcripts ?? [];
+        // The echo removal is named only when the versions differ by it: that is when it tells them apart.
+        var echoes = entries.Where(entry => entry.State == ProcessingStep.Done).Select(entry => entry.Echo).Distinct().Count() > 1;
         var choices = entries.Select((entry, index) => new TranscriptChoice(entry,
-            entry.EngineName + (entries.Count(other => other.Engine == entry.Engine) > 1 ? $" ({index + 1})" : "")
+            entry.EngineName + (echoes && entry.Echo is { } echo ? $" · {echo}" : "")
+            + (entries.Count(other => other.Engine == entry.Engine && (!echoes || other.Echo == entry.Echo)) > 1 ? $" ({index + 1})" : "")
             + " · " + Row.Step(row.StateFor(entry)))).ToList();
         updatingChoices = true;
         engineTabs.ItemsSource = choices.Select(choice => new TabItem { Header = EngineTabHeader(choice.Label), Tag = choice }).ToList();

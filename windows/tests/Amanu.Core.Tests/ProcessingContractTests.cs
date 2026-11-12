@@ -30,6 +30,41 @@ public sealed class ProcessingContractTests
         Assert.Equal(1_500, json.RootElement.GetProperty("segments")[0].GetProperty("start_ms").GetInt64());
     }
 
+    [Fact]
+    public async Task The_transcript_names_the_echo_removal_beside_the_engine_and_keeps_it_through_a_rewrite()
+    {
+        using var temp = new TemporaryDirectory();
+        var transcript = new TranscriptDocument("local", "parakeet", DateTimeOffset.Parse("2026-11-12T12:00:00Z"),
+            [new TranscriptSegment(0, 1_000, "Hello", "me")],
+            new TranscriptEcho("solve-gate-cut", true, Processor: "echo-solver-v1", TranscriptFilter: true));
+
+        await TranscriptWriter.WriteAsync(temp.Path, "Call", transcript);
+
+        var markdown = await File.ReadAllTextAsync(Path.Combine(temp.Path, "transcript.md"));
+        Assert.Contains("engine: local (parakeet)\necho removal: solve-gate-cut; transcript echo filter on\n", markdown.ReplaceLineEndings("\n"));
+        var json = await File.ReadAllTextAsync(Path.Combine(temp.Path, "transcript.json"));
+        var read = JsonSerializer.Deserialize<TranscriptDocument>(json)!;
+        Assert.Equal(transcript.Echo, read.Echo);
+        using var parsed = JsonDocument.Parse(json);
+        Assert.Equal("solve-gate-cut", parsed.RootElement.GetProperty("echo").GetProperty("model").GetString());
+    }
+
+    [Theory]
+    [InlineData("off", false, null, false, "off")]
+    [InlineData("sonora", true, null, false, "sonora")]
+    [InlineData("solve-gate", true, "many devices on the call, ran as plain sonora", true, "solve-gate (many devices on the call, ran as plain sonora); transcript echo filter on")]
+    [InlineData("solve-gate-cut", false, "skipped: no DLL", false, "solve-gate-cut, not run (skipped: no DLL)")]
+    public void Echo_removal_is_described_as_it_ran(string model, bool ran, string? note, bool filter, string expected) =>
+        Assert.Equal(expected, new TranscriptEcho(model, ran, note, TranscriptFilter: filter).Describe());
+
+    [Fact]
+    public void A_transcript_from_before_echo_was_recorded_has_no_echo_line()
+    {
+        var read = JsonSerializer.Deserialize<TranscriptDocument>("""{"engine":"local","model":"parakeet","created_at":"2026-11-01T00:00:00Z","segments":[]}""")!;
+        Assert.Null(read.Echo);
+        Assert.DoesNotContain("echo removal", TranscriptWriter.RenderMarkdown("Old", read));
+    }
+
     [Theory]
     [InlineData("assemblyai", true, true, "assemblyai", null)]
     [InlineData("assemblyai", false, true, null, null)]

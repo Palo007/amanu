@@ -3,7 +3,8 @@ using System.Text.Json;
 
 namespace Amanu.Core.Processing;
 
-public sealed record TranscriptVersion(string Directory, string Engine, DateTimeOffset CreatedAt, ProcessingStep State, bool IsCurrent = false)
+/// <param name="Echo">The echo removal's short name (<see cref="TranscriptEcho.ShortName"/>); null for a pending version or an older transcript.</param>
+public sealed record TranscriptVersion(string Directory, string Engine, DateTimeOffset CreatedAt, ProcessingStep State, bool IsCurrent = false, string? Echo = null)
 {
     public string EngineName => EngineResolver.DisplayName(Engine);
 }
@@ -83,7 +84,7 @@ public static class TranscriptVersions
                     var id = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(transcript, cancellationToken).ConfigureAwait(false)));
                     versions.RemoveAll(version => Path.GetFileName(version.Directory) == id);
                 }
-                versions.Add(new TranscriptVersion(path, engine, document.CreatedAt, ProcessingStep.Done, current));
+                versions.Add(new TranscriptVersion(path, engine, document.CreatedAt, ProcessingStep.Done, current, document.Echo?.ShortName));
             }
             catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
             {
