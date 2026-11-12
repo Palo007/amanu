@@ -1038,3 +1038,113 @@ Run E (quality.py, 41 calls, `--only "^(echo-|aec-real)" --modes solve-gate-cut`
 Run E result (quality.py, overnight-cut2 build, run folder `runs\overnight-cut`, 41 jobs, 27 minutes of jobs, report written with `report --run`): double-talk voice level -0.05 dB (mean of the 40 mixed calls; solve-gate from `runs\sonora-tuning`: -0.41), ERLE on aec-real 33.7 dB (solve-gate 33.7), echo removed on the 40 calls 28.7 dB (solve-gate 30.1), echo time for the 40 calls 448 s (solve-gate 427 s), my WER 15.9 (solve-gate 18.4 in that run), echo words 3 (solve-gate 3). aec-real time 68.8 s (solve-gate 53.6 s).
 
 Summary of 13.2: cut3 is not better than cut2 on the suite (same WER 15.9; echo words 6 against 4), so the source keeps cut2's behaviour (gate and audio both on the solver's plain output) and `windows\artifacts\overnight-cut2` is the build for a final held-out check. quality.py now knows `solve-gate-cut`. All engine runs of this task have ended; no transcribe-cli process of mine is running.
+
+
+## 20. Cutting without the gate (overnight, track C)
+
+Plan for the held-out run (written before it): setting A only, 52 calls, 3 at a time, one transcribe-cli process each, about 20 to 30 minutes of engine plus solve-floor recomputed per call. Why: on the 20 screening calls A is 1.8 points under solve-floor (no-noise better), the pre-agreed bar of 1.5. Run: `C1_SET=ho py -P c1.py "%USERPROFILE%\Amanu Quality Set\lab\overnight\C\ho" run:A`.
+
+
+## 19. A distilled gate (overnight, track S3)
+
+Hypothesis: a small classifier on log-mel frames copies DPDFNet's gate decision at a quarter of its time with under 3 % of
+frames different on the loud calls. Verdict: **loss on agreement, large win on time**. After the first run failed I made the
+one allowed change; it helped but did not reach the bar, so I stopped (stop rule). No engine was run.
+
+What it is. `s3d_train.py` `Gate`: a Conv1d (65 to 96 channels, kernel 5), a 2-layer bidirectional GRU (64 per direction) and a
+linear output, 168 129 parameters, ONNX 677 KB (`gate-a.onnx`, `gate-b.onnx`). Input per STFT frame of
+`pipeline.speech_gate` (512 samples, hop 256, so one frame is 16 ms): 64 log-mel values and the frame level re its
+95th percentile. Output: how many dB DPDFNet keeps in the frame (10 log10 of the power of its output over the power of the input,
+clipped to -70..+5). The gate arithmetic of `pipeline.speech_gate` (smoothing, 25 dB under the 99th percentile, 0.3 s
+minimum, 0.3 s hang, ramps) then runs on input level + predicted kept dB (`gate_active`, `gain_from_active`; with the TRUE
+kept dB it reproduces the real gate exactly, 0 frames differ, `s3d_eval.py check`). It is regression of a level, not a
+yes/no, because the real gate's threshold is relative to the call's own 99th percentile. Look-ahead: it is bidirectional
+inside 30 s pieces with 2 s context (as the app's pieces), so up to 2 s, not a few hundred ms.
+
+Training data (strict). Only N5's files, read-only: FLEURS Slovak *train* speech (`N5\data\speech-files.tsv` as it stood at
+23:00 on 11 Nov, sha256 of the tsv starts df44d460b5a0f44150ac; 295 utterances in my training pool, 16 in my validation pool;
+N5's filter drops any sentence id, file name or text of the suite's FLEURS test list and the held-out set's dev list) and DEMAND
+PSTATION and OHALLWAY, 4 channels each (`noise-files.tsv`, sha starts 09a14b7a07d21793d437).
+**Licence: DEMAND is CC BY 4.0 (zenodo 1227121) and FLEURS is CC BY 4.0. A model trained on them could not ship without a
+licence decision (attribution at least).** Nothing was downloaded or installed; PyTorch 2.15 CPU came from N5\pylib.
+`s3d_data.py`: 201 training mixes and 8 validation mixes of 60 s (3.5 h of audio). Each has a near talker (utterances with
+gaps, plus 0 to 3 stretches of 5 to 22 s of silence; 12 % of mixes are sparse), in 75 % of mixes a far-end-like leftover
+(another train talker through a diffuse reverb, 8 to 45 dB under my speech, in 1 to 4 stretches), and noise = babble of 2 to 8
+train talkers through reverb, DEMAND, both, or coloured noise (N5's `Pool.noise`) at SNR -8..3 dB (38 %), 3..12 (20 %), 12..30 (27 %),
+30..55 (15 %); 30 % of mixes have noise that changes level during the call; overall level -38..-14 dBFS. Each mix was labelled by the
+float DPDFNet baseline, 1 thread, the whole mix as one stream (the lab's `denoise.dpdf` path). Only int8 features, the frame level
+(float16) and the int8 label were kept: 51 MB in `%USERPROFILE%\Amanu Quality Set\lab\overnight\S3\data`; no audio on disk.
+Validation mixes use the validation speech and the last 20 % of each DEMAND channel (N5's split). No suite, held-out or
+`near.wav` audio, no truth.
+
+Training. 2 threads, CPU, machine busy: 3.6 s a step (12 windows of 24 s), 55 min = 913 steps, cosine lr 2e-3 to 1e-4, checkpoint
+every 5 min (`S3\ckpt`, `train.log`). Disagreement of the 16 ms active flag on my 8 validation mixes: 11.9, 8.4, 6.2, 4.1, 4.4, 3.9,
+3.9, 3.8, 4.2, 3.7 %, final 3.59 % (one mix at SNR -1.6 dB: 18.6 %; the others 0.2 to 4 %).
+
+Run 1 (`gate-a`), the suite's 40 mixed echo calls. Solver output and DPDFNet output come from the N2 cache (read only); the real
+gate is `speech_gate(e, c)`; a 10 ms frame is open when the mean gain is above 0.5 (as S1). Regions are n1 setting c (merge 1.5 s,
+pad 1.0 s).
+
+| | frames differ | regions real / distilled | seconds real / distilled | real region time covered | extra |
+|---|---|---|---|---|---|
+| all 40 calls | 9.84 % | 362 / 410 | 4023 / 4716 | 99.76 % | 703 s (17.5 %) |
+| the 14 loud calls (SNR 0, -5) | 19.76 % | 139 / 131 | 1448 / 1816 | 99.69 % | 372 s (25.7 %) |
+
+Where it fails: the cafe babble calls. At SNR -5 and 0 the distilled gate is open 89 to 98 % of the time where the real one is open
+39 to 55 % (cafe ser-15 snr-5: 58.9 % of frames differ). It errs on the safe side (it covers the real regions) but sends 55 to 70 %
+more audio to the engine in those calls. Office and street calls: 0.0 to 2.6 % differ with the echo at ser -5 or +5, but 3.8 to 6.9 %
+with the echo at ser -15 (far-end leftover). My reading, argued and not measured: the model has not learnt what DPDFNet removes in
+cafe babble (the training babble is Slovak read speech of 2 to 8 talkers, not a cafe recording), and 900 steps are few.
+
+The one stated change (`gate-b`, `py -P s3d_train.py train 1500 b`, 25 min, started from `gate-a`): mixes with SNR under 5 dB three
+times as likely, frames where DPDFNet removed more than 20 dB weigh three times as much, lr 6e-4 to 1e-4, 450 steps. Validation 3.43 %.
+
+| | frames differ | regions real / distilled | seconds real / distilled | real region time covered | extra |
+|---|---|---|---|---|---|
+| all 40 calls | 6.72 % | 362 / 411 | 4023 / 4480 | 99.26 % | 487 s (12.1 %) |
+| the 14 loud calls | 13.53 % | 139 / 136 | 1448 / 1694 | 98.98 % | 260 s (18.0 %) |
+
+Better (loud calls from 19.8 to 13.5 %), still far from 3 %. Cafe snr -5 calls: 35 to 47 % differ; snr 0: 20 to 23 %. Per call numbers:
+`S3\eval-a.log`, `eval-b.log`, `eval-a.json`, `eval-b.json`. Stop rule: one failure, one change, no pass; I stopped.
+
+Time (`s3d_eval.py time`; the 5 calls of S1/S2, 812 s of audio; back to back, best of 2; machine busy; 1 thread each). The real gate in
+the app's pieces (30 s + 2 s context, `s2q.compute`, plus the gate arithmetic) 184.4 s; the distilled gate 5.22 s = **0.028**
+(features 2.2 s in numpy, ONNX model 1.0 s = 0.005, gate arithmetic 2.0 s). A C# port of the features (a 512-point FFT per 16 ms and
+64 mel sums) would cost about what numpy does. So time is no problem even at ten times the model size; agreement is.
+
+Not tried, with the reason I expect each to matter: (1) babble that looks like a cafe: more talkers (up to 20) and crowd noise other
+than PCAFETER (the suite's own); the lab has none and I may not download. (2) A much longer run (913 steps on a busy PC are about 12
+epochs of 201 mixes). (3) Predict the open/closed flag directly with a focal loss next to the regression. (4) Use it as a pre-filter:
+where it says closed the real gate is closed (98.98 to 99.76 % of the real region time is covered), so DPDFNet could be skipped on the
+stretches it calls closed, restarting at the next stretch as S2's skip does. In the cafe calls it is open 90 % of the time and saves
+nothing; office and street calls (open 50 %) would save about half of the 17 s per minute. Not measured.
+
+Commands. Reproduce: `py -P s3d_data.py A 1800 8` and `py -P s3d_data.py B 1800 0` (two processes), `py -P s3d_train.py train 3300 a`,
+`py -P s3d_train.py train 1500 b`, `py -P s3d_train.py export b`, `py -P s3d_eval.py eval <onnx>`, `py -P s3d_eval.py time <onnx>`.
+Engine check of setting c with the distilled gate on the 14 loud + 6 no-noise calls (not run; the cache is 21 MB a call, 420 MB for
+20 calls, so use a work dir on a disk with room and delete it afterwards):
+`py -P s3d_cache.py <work dir> "%USERPROFILE%\Amanu Quality Set\lab\overnight\S3\gate-b.onnx"` then `py -P n1.py <work dir> run:c`
+(the baseline rows are N1's setting c and su/solve-gate). I would not spend engine time on it: the gate is not good enough to replace
+DPDFNet on the loud calls.
+
+### 20.1 Result
+
+`lab/c1.py`. Regions from a cheap detector on the cleaned mic of solve-floor (the lab's `solve-res15`, run again per call; its cached rows `su/solve-res15` are the baseline, 29.4 on the 20 calls, because no `su/solve-floor` rows exist in the lab cache), then n1.py's setting c cutting (merge 1.5 s, pad 1.0 s, -20 dBFS per region, `--batch`). Fixed settings, mic and far only. Detector E: 16 ms frame energy against a 10th-percentile floor over 10 s, 3 dB margin, runs under 0.25 s dropped, 0.3 s hangover. Detector F: the same on 300-3400 Hz, and spectral flatness of that band below 1.5 times its sliding median. Time per call (156 s of audio, other jobs running): E 0.11 s, F 0.17 s.
+
+Signal check against the gate's regions (20 calls, 2051 s of gate region time). First try, margin 6 dB, flatness below the median: E covered 63 %, F 64 %, and in the cafe babble at SNR 0 and -5 only 5 to 22 % (the detector does not open; frame energy cannot tell a voice at 0 dB from babble), and F lost 13 % in the no-noise calls. So the margin went to 3 dB and F's flatness test was loosened before any engine run (one signal tuning round, the engine saw only the final settings). Final: E covers 92 % of the gate's region time, F 89 % (cafe with noise 84 and 77 %), but the extra time is 1001 s (E) and 775 s (F): the detectors open on about 60 to 70 % of the call, the gate on about 65 % of the loud calls and the cuts are far less selective.
+
+Screening, 20 calls (14 loud + 6 no noise), my WER %:
+
+| | SNR 0 | SNR -5 | 14 loud | no noise | all 20 |
+|---|---|---|---|---|---|
+| solve-floor (lab, su/solve-res15) | 24.8 | 54.7 | 37.6 | 10.2 | 29.4 |
+| solve-gate | 19.6 | 42.8 | 29.6 | 10.4 | 23.8 |
+| n1 setting c | 17.6 | 40.0 | 27.2 | 9.2 | 21.8 |
+| A (E on solve-floor, cut) | 24.4 | 50.5 | 35.6 | 8.9 | 27.6 |
+| B (F on solve-floor, cut) | 30.2 | 48.0 | 37.8 | 12.4 | 30.2 |
+
+A against solve-floor: -1.8 [-3.8, +0.4], no noise 1.3 better; against solve-gate +3.8 [+1.6, +6.1]. B: +0.8 [-2.5, +3.6] against solve-floor, no noise 2.2 worse, so B fails both guards. C (silence sends nothing) was skipped: cut pieces already do that.
+
+Held-out set, A only (52 calls, no tuning): 12.4 against solve-floor 13.0 (-0.7 [-2.1, +0.9]), solve-gate 11.8 (+0.6 [-0.7, +2.0]), setting c 10.0. Loud calls 27.8 (floor 31.4, gate 27.2), no noise 5.5 (floor 7.4, gate 6.3).
+
+Verdict: unclear, leaning loss. The cheap cut gets about a third of the gain of the gated cut on the suite and a third on held-out, with intervals that include zero. Why: in loud babble the detector is blind (it misses speech) or open everywhere, so the gain of setting c comes mostly from where the gate is closed over babble and noise only, plus the gate's own noise suppression (solve-gate cleans loud calls to 29.6 before cutting). Not tried: a detector that uses the far track (open only where far is quiet), a detector on solve-gate's mask for loud calls only. Rows: `...\overnight\C\wer2\n1\{A,B}` and `...\C\ho\wer2\n1\A`; solve-floor outputs cached in `...\C\cache` (20 calls). All engine runs of this track have ended.
