@@ -45,18 +45,6 @@ public sealed record TranscriptStage(
     public const string Total = "total";
     public const string SpeakerNames = "speaker_names";
 
-    public string Label => Stage switch
-    {
-        Decode => "reading the audio",
-        Echo => "echo removal",
-        Levels => "speech levels",
-        Recognition => "recognition",
-        Diarization => "call voices",
-        Total => "in all",
-        SpeakerNames => "speaker names",
-        _ => Stage,
-    };
-
     /// <summary>Tenths of a second under a minute, where most stages are; minutes and seconds above it.</summary>
     public string Duration()
     {
@@ -126,26 +114,49 @@ public static class TranscriptWriter
         TranscriptDocument transcript,
         IReadOnlyDictionary<string, string>? speakerNames = null)
     {
-        // A table with an empty header, which the preview leaves out, so that the
-        // provenance reads as label and value rather than as one run-on line.
+        // A table of label and value, so that the provenance does not read as one
+        // run-on line. A transcript that was timed gets a third column with the time
+        // of the stage each row names, beside the setting it was timed under; its
+        // header names that column. Without times the header is empty, and the
+        // preview leaves it out.
+        var stages = transcript.Stages is { Count: > 0 } ? transcript.Stages : null;
         var result = new StringBuilder()
             .Append("# ").AppendLine(title)
-            .AppendLine()
-            .AppendLine("| | |")
-            .AppendLine("|---|---|");
-        void Row(string label, string value) => result.Append("| ").Append(label).Append(" | ").Append(Cell(value)).AppendLine(" |");
-        Row("Transcribed", FormatTime(transcript.CreatedAt.ToLocalTime()));
-        Row("Engine", $"{transcript.Engine} · {transcript.Model}");
+            .AppendLine();
+        result.AppendLine(stages is null ? "| | |" : "| | | Time taken |")
+            .AppendLine(stages is null ? "|---|---|" : "|---|---|--:|");
+        string? Took(string stage) => stages?.FirstOrDefault(timed => timed.Stage == stage)?.Duration();
+        void Row(string label, string value, string? time = null)
+        {
+            result.Append("| ").Append(label).Append(" | ").Append(Cell(value));
+            if (stages is not null) result.Append(" | ").Append(time);
+            result.AppendLine(" |");
+        }
+        // Reading the audio has no row of its own; it is in the total, and in transcript.json.
+        Row("Transcribed", FormatTime(transcript.CreatedAt.ToLocalTime()), Took(TranscriptStage.Total) is { } total ? $"{total} in all" : null);
+        Row("Engine", $"{transcript.Engine} · {transcript.Model}", Took(TranscriptStage.Recognition));
         if (transcript.Echo is { } echo)
         {
-            Row("Echo removal (audio)", echo.Describe());
+            Row("Echo removal (audio)", echo.Describe(), Took(TranscriptStage.Echo));
             Row("Echo filter (text)", echo.TranscriptFilter ? "on" : "off");
         }
-        // Speaker names are timed after the total, which covers only the transcript itself.
-        if (transcript.Stages is { Count: > 0 } stages)
-            Row("Time taken", string.Join(" · ", stages.Select(stage => $"{stage.Label} {stage.Duration()}")));
+        // Speech levels and call voices have no setting row of their own, so they get
+        // one only when they ran and there is a time to put beside them.
+        if (Took(TranscriptStage.Levels) is { } levels)
+            Row("Speech levels", "evened out", levels);
+        if (Took(TranscriptStage.Diarization) is { } voices)
+        {
+            var count = transcript.Segments.Select(segment => segment.Speaker)
+                .Where(speaker => speaker is not null && (speaker == "them" || speaker.StartsWith("them ", StringComparison.Ordinal)))
+                .Distinct().Count();
+            Row("Call voices", count == 1 ? "1 voice" : $"{count} voices", voices);
+        }
+        // Naming is a later pass than the total, and only a pass that asked a model is timed.
+        var naming = Took(TranscriptStage.SpeakerNames);
         if (speakerNames is { Count: > 0 })
-            Row("Speakers", string.Join(", ", speakerNames.Select(pair => $"{pair.Key} → {pair.Value}")));
+            Row("Speakers", string.Join(", ", speakerNames.Select(pair => $"{pair.Key} → {pair.Value}")), naming);
+        else if (naming is not null)
+            Row("Speakers", "none named", naming);
         result.AppendLine();
         foreach (var segment in transcript.Segments)
         {

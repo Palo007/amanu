@@ -35,30 +35,41 @@ public sealed class ProcessingContractTests
     {
         using var temp = new TemporaryDirectory();
         var transcript = new TranscriptDocument("local", "parakeet", DateTimeOffset.Parse("2026-11-12T12:00:00Z"),
-            [new TranscriptSegment(0, 1_000, "Hello", "me")],
+            [new TranscriptSegment(0, 1_000, "Hello", "me"), new TranscriptSegment(1_000, 2_000, "Hi", "them A"),
+             new TranscriptSegment(2_000, 3_000, "Hey", "them B"), new TranscriptSegment(3_000, 4_000, "Yes", "them A")],
             new TranscriptEcho("solve-gate-cut", true, Processor: "echo-solver-v1", TranscriptFilter: true),
             [new TranscriptStage(TranscriptStage.Decode, 1.24), new TranscriptStage(TranscriptStage.Echo, 70),
-             new TranscriptStage(TranscriptStage.Recognition, 3_725), new TranscriptStage(TranscriptStage.Total, 3_800)]);
+             new TranscriptStage(TranscriptStage.Levels, 3.1), new TranscriptStage(TranscriptStage.Recognition, 3_725),
+             new TranscriptStage(TranscriptStage.Diarization, 31), new TranscriptStage(TranscriptStage.Total, 3_800)]);
         // A later pass replaces its own stage and leaves the others where they are.
         transcript = transcript.WithStage(TranscriptStage.SpeakerNames, TimeSpan.FromSeconds(9))
             .WithStage(TranscriptStage.SpeakerNames, TimeSpan.FromSeconds(4.56));
 
-        await TranscriptWriter.WriteAsync(temp.Path, "Call", transcript);
+        await TranscriptWriter.WriteAsync(temp.Path, "Call", transcript, new Dictionary<string, string> { ["me"] = "Alice" });
 
         var markdown = await File.ReadAllTextAsync(Path.Combine(temp.Path, "transcript.md"));
         var time = TranscriptWriter.FormatTime(transcript.CreatedAt.ToLocalTime());
         Assert.StartsWith(string.Join("\n",
             "# Call",
             "",
-            "| | |",
-            "|---|---|",
-            $"| Transcribed | {time} |",
-            "| Engine | local · parakeet |",
-            "| Echo removal (audio) | solve-gate-cut |",
-            "| Echo filter (text) | on |",
-            "| Time taken | reading the audio 1.2 s · echo removal 1:10 · recognition 1:02:05 · in all 1:03:20 · speaker names 4.6 s |",
+            "| | | Time taken |",
+            "|---|---|--:|",
+            $"| Transcribed | {time} | 1:03:20 in all |",
+            "| Engine | local · parakeet | 1:02:05 |",
+            "| Echo removal (audio) | solve-gate-cut | 1:10 |",
+            "| Echo filter (text) | on |  |",
+            "| Speech levels | evened out | 3.1 s |",
+            "| Call voices | 2 voices | 31.0 s |",
+            "| Speakers | me → Alice | 4.6 s |",
             "",
-            "**[0:00] me:** Hello"), markdown.ReplaceLineEndings("\n"));
+            "**[0:00] Alice:** Hello"), markdown.ReplaceLineEndings("\n"));
+        Assert.Equal(TranscriptStage.SpeakerNames, transcript.Stages![^1].Stage);
+        Assert.Single(transcript.Stages, stage => stage.Stage == TranscriptStage.SpeakerNames);
+
+        // A transcript made before times were recorded keeps its table of two columns.
+        var untimed = TranscriptWriter.RenderMarkdown("Call", transcript with { Stages = null });
+        Assert.Contains("| | |\n|---|---|\n| Transcribed | " + time + " |\n", untimed.ReplaceLineEndings("\n"));
+        Assert.DoesNotContain("Speech levels", untimed);
         var json = await File.ReadAllTextAsync(Path.Combine(temp.Path, "transcript.json"));
         var read = JsonSerializer.Deserialize<TranscriptDocument>(json)!;
         Assert.Equal(transcript.Echo, read.Echo);

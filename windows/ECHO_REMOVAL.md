@@ -41,14 +41,15 @@ models on the same recording: set `echo_model`, transcribe again, and keep both 
 - `transcript.md` starts with a table below the title:
 
   ```markdown
-  | | |
-  |---|---|
-  | Transcribed | 2026-11-12 14:32 (UTC+01:00) |
-  | Engine | local · parakeet |
-  | Echo removal (audio) | solve-gate-cut |
-  | Echo filter (text) | on |
-  | Time taken | reading the audio 1.2 s · echo removal 1:10 · recognition 4:12 · call voices 31.0 s · in all 6:05 · speaker names 4.6 s |
-  | Speakers | me → Alice, them → Bob |
+  | | | Time taken |
+  |---|---|--:|
+  | Transcribed | 2026-11-12 14:32 (UTC+01:00) | 6:05 in all |
+  | Engine | local · parakeet | 4:12 |
+  | Echo removal (audio) | solve-gate-cut | 1:10 |
+  | Echo filter (text) | on |  |
+  | Speech levels | evened out | 3.1 s |
+  | Call voices | 2 voices | 31.0 s |
+  | Speakers | me → Alice, them A → Bob | 4.6 s |
   ```
 
   - **Transcribed** is when the transcript was made, in local time with its UTC offset.
@@ -59,10 +60,12 @@ models on the same recording: set `echo_model`, transcribe again, and keep both 
     engine runs, it drops a line of yours that repeats the far end's words at the same
     time. The two are separate settings, and both change which words are left, so compare
     only transcripts that have the same filter value.
-  - **Time taken** lists only the stages that ran, in the order they ran. **in all** is
-    the whole transcript, from reading the audio to writing the file. **speaker names**
-    comes after it and is not part of it, and shows only when a model was asked for names.
-    Transcripts made before this was recorded have no such row.
+  - **Time taken** is how long the stage of each row took. **in all** is the whole
+    transcript, from reading the audio to writing the file; reading the audio has no row
+    of its own. **Speech levels** and **Call voices** show only when they ran. The
+    **Speakers** time is a later pass, not part of **in all**, and shows only when a
+    model was asked for names. Transcripts made before times were recorded have no
+    such column.
   - **Speakers** shows only when speakers have names.
   - The recordings window shows the table without its empty header row.
 - `transcript.json` has an `echo` object: `model` (the `echo_model` name, or `off`),
