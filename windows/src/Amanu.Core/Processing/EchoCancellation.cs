@@ -219,7 +219,7 @@ public static class LocalVqeAssets
 
     public static readonly IReadOnlyList<LocalVqeModel> Models = [Sonora, Fast, Thorough, SonoraLinear, SonoraNearend, SonoraGentle, SonoraLong, SonoraLong80, SonoraLong80Nearend, SonoraDelayLinear, SonoraDelayNearend, SonoraDelayFloor, SonoraDelayNearendFloor, SonoraDelayFloor70, SonoraDelayNearendNf70, SonoraDelayNearendFloor70, Solve, SolveFloor, SolveGate, SolveGateCut];
 
-    public static LocalVqeModel Default => SolveFloor;
+    public static LocalVqeModel Default => SolveGateCut;
 
     /// <summary>The model the echo_model setting names; an unknown name gets the default rather than no echo removal.</summary>
     public static LocalVqeModel For(string? key) =>

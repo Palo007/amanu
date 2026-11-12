@@ -119,6 +119,6 @@ public sealed class SpeechRegionsTests
         Assert.True(cut.Solver.CutRegions);
         Assert.NotEqual(LocalVqeAssets.SolveGate.ProcessorVersion, cut.ProcessorVersion);
         Assert.All(LocalVqeAssets.Models.Where(model => model.Key != "solve-gate-cut"), model => Assert.False(model.Solver?.CutRegions ?? false));
-        Assert.Same(LocalVqeAssets.SolveFloor, LocalVqeAssets.Default);
+        Assert.Same(LocalVqeAssets.SolveGateCut, LocalVqeAssets.Default);
     }
 }

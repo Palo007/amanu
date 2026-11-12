@@ -319,15 +319,15 @@ public sealed class OfflineEchoTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void The_solver_with_its_suppressor_is_the_default_echo_remover_and_the_setting_picks_the_others()
+    public void The_solver_with_region_cutting_is_the_default_echo_remover_and_the_setting_picks_the_others()
     {
-        Assert.Equal("solve-floor", new AppSettings().EchoModel);
-        Assert.Same(LocalVqeAssets.SolveFloor, LocalVqeAssets.For(new AppSettings().EchoModel));
+        Assert.Equal("solve-gate-cut", new AppSettings().EchoModel);
+        Assert.Same(LocalVqeAssets.SolveGateCut, LocalVqeAssets.For(new AppSettings().EchoModel));
         Assert.Same(LocalVqeAssets.Sonora, LocalVqeAssets.For("sonora"));
         Assert.True(LocalVqeAssets.Sonora.IsSonora);
         Assert.Same(LocalVqeAssets.Fast, LocalVqeAssets.For("fast"));
         Assert.Same(LocalVqeAssets.Thorough, LocalVqeAssets.For(JsonSerializer.Deserialize<AppSettings>("""{"echo_model": "thorough"}""")!.EchoModel));
-        Assert.Same(LocalVqeAssets.SolveFloor, LocalVqeAssets.For("nonsense"));
+        Assert.Same(LocalVqeAssets.SolveGateCut, LocalVqeAssets.For("nonsense"));
         Assert.Equal(AppSettings.EchoModels, LocalVqeAssets.Models.Select(model => model.Key));
     }
 
