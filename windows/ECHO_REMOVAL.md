@@ -22,6 +22,12 @@ Echo removal runs after the call, before transcription. It is a setting:
 - All work is local. No audio leaves your computer. Nothing is downloaded at run time.
 - A recording with no call track gets no echo removal. The clean test sets are such
   recordings.
+- You set it in **Settings → Setup → Transcription**, in the echo card. The card has two
+  switches. The first is this setting, with the `echo_model` menu beside it. The menu
+  shows the default and the six other main models first. The test variants come after a
+  line. The second switch is **Drop echoed speech from the transcript**
+  (`transcript_echo_filter`). It works on the words after transcription, not on the
+  sound.
 - Setting **Keep the cleaned audio** (`keep_echo_cleaned_audio`) keeps the cleaned copy
   beside the recording, so a second transcription can reuse it. The copy is only reused
   if it came from the same model and the same processor revision. A model change makes a

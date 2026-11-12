@@ -76,6 +76,10 @@ internal sealed class SetupForm
     private readonly TextBlock liveModelStatus = Ui.Status();
     private readonly Dictionary<string, RadioButton> liveCards = [];
     private readonly TextBlock liveGeminiStatus = Ui.Status();
+    private readonly CheckBox echoRemoval = Ui.Switch(T("Remove the call’s echo from my microphone", "Убирать эхо звонка из моего микрофона"));
+    private readonly ComboBox echoModel = new() { MinWidth = 180 };
+    private readonly TextBlock echoDetail = Ui.Detail("");
+    private readonly CheckBox echoFilter = Ui.Switch(T("Drop echoed speech from the transcript", "Убирать отражённую речь из расшифровки"));
     private Grid? liveModelRow;
 
     private readonly TextBlock folderPath = new() { FontFamily = new System.Windows.Media.FontFamily("Cascadia Mono, Consolas"), FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis };
@@ -150,7 +154,8 @@ internal sealed class SetupForm
                 Ui.Detail(T("Words appear as you speak. The final transcript is still made afterwards, with the engine chosen above.",
                     "Слова появляются по мере речи. Итоговая расшифровка всё равно делается после встречи движком, выбранным выше."))),
                 LiveEngineCards(),
-                liveModelRow = Ui.Row(Ui.Symbol(""), liveModelStatus, Ui.Detail(""), localDownload["nemotron-live"])))));
+                liveModelRow = Ui.Row(Ui.Symbol(""), liveModelStatus, Ui.Detail(""), localDownload["nemotron-live"])),
+            EchoBox())));
 
         View.Children.Add(Ui.Section(T("Files", "Файлы"), Ui.Box(
             Ui.Row(Ui.Symbol(""), folderPath, folderDetail, Ui.Button(T("Choose…", "Выбрать…"), ChooseFolder)),
@@ -339,6 +344,28 @@ internal sealed class SetupForm
         return Ui.Box(cloudBlock, localBlock);
     }
 
+    /// <summary>
+    /// The two echo settings, here rather than in Advanced because on a call heard
+    /// through speakers they change more of the transcript than the engine does.
+    /// They are separate switches because they are separate steps: one cleans the
+    /// mic's sound before the engine hears it, the other drops words afterwards.
+    /// </summary>
+    private Border EchoBox()
+    {
+        foreach (var model in EchoChoices.Main) echoModel.Items.Add(new ComboBoxItem { Content = model, Tag = model });
+        echoModel.Items.Add(new Separator());
+        foreach (var model in AppSettings.EchoModels.Except(EchoChoices.Main))
+            echoModel.Items.Add(new ComboBoxItem { Content = model, Tag = model });
+        System.Windows.Automation.AutomationProperties.SetName(echoModel, T("Echo removal model", "Модель удаления эха"));
+        echoModel.VerticalAlignment = VerticalAlignment.Top;
+        return Ui.Box(
+            Ui.Row(echoRemoval, Ui.Title(T("Remove the call’s echo from my microphone", "Убирать эхо звонка из моего микрофона")),
+                echoDetail, echoModel),
+            Ui.Row(echoFilter, Ui.Title(T("Drop echoed speech from the transcript", "Убирать отражённую речь из расшифровки")),
+                Ui.Detail(T("After transcribing, removes your lines that only repeat what the other side said. Works on the words, so it also catches echo the first switch left.",
+                    "После расшифровки убирает ваши реплики, которые только повторяют сказанное другой стороной. Работает со словами, поэтому ловит и эхо, оставшееся после первого переключателя."))));
+    }
+
     private StackPanel LanguageRow()
     {
         language.Items.Add(new ComboBoxItem { Content = T("Detect automatically", "Определять автоматически"), Tag = "" });
@@ -438,6 +465,13 @@ internal sealed class SetupForm
         };
         live.Click += (_, _) => Change(settings => settings.LiveTranscription.Enabled = live.IsChecked == true);
         keepAudio.Click += (_, _) => Change(settings => settings.KeepAudio = keepAudio.IsChecked == true);
+        echoRemoval.Click += (_, _) => Change(settings => settings.OfflineEchoCancellation = echoRemoval.IsChecked == true);
+        echoFilter.Click += (_, _) => Change(settings => settings.TranscriptEchoFilter = echoFilter.IsChecked == true);
+        echoModel.SelectionChanged += (_, _) =>
+        {
+            if (refreshing || echoModel.SelectedItem is not ComboBoxItem { Tag: string model }) return;
+            Change(settings => settings.EchoModel = model);
+        };
 
         summaries.Click += (_, _) => Change(settings => settings.Summary.Enabled = summaries.IsChecked == true);
         foreach (var (id, card) in summaryCards)
@@ -840,6 +874,15 @@ internal sealed class SetupForm
                 localDownload[id].Visibility = ready || !runtime.LocalRuntimePresent ? Visibility.Collapsed : Visibility.Visible;
                 localDownload[id].IsEnabled = downloadBar.Visibility != Visibility.Visible;
             }
+
+            echoRemoval.IsChecked = settings.OfflineEchoCancellation;
+            echoFilter.IsChecked = settings.TranscriptEchoFilter;
+            echoModel.IsEnabled = settings.OfflineEchoCancellation;
+            var echo = AppSettings.EchoModels.Contains(settings.EchoModel) ? settings.EchoModel : runtime.DefaultFor("echo_model")?.ToString();
+            echoModel.SelectedItem = echoModel.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == echo);
+            echoDetail.Text = T("On a call heard through speakers, cleans the other side’s voice out of a copy of your mic before transcribing. The recording itself is not changed.",
+                    "На звонке через колонки убирает голос другой стороны из копии вашего микрофона перед расшифровкой. Сама запись не меняется.")
+                + (settings.OfflineEchoCancellation && echo is not null ? " " + EchoChoices.Describe(echo, runtime.DefaultFor("echo_model")?.ToString()) : "");
 
             var code = settings.Transcription.Language ?? "";
             language.SelectedItem = language.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == code)

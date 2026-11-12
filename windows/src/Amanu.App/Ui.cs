@@ -360,7 +360,7 @@ internal static class Ui
         };
     }
 
-    public static ScrollViewer Scroll(UIElement content) => new()
+    public static ScrollViewer Scroll(UIElement content) => new WheelScrollViewer
     {
         Content = content,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -395,4 +395,40 @@ internal static class Ui
 
     public static string Megabytes(long bytes) =>
         Core.Localization.Localized.T($"{bytes / 1_000_000:N0} MB", $"{bytes / 1_000_000:N0} МБ");
+}
+
+/// <summary>
+/// A scroll viewer that moves as far as the wheel turned. WPF's own moves three
+/// lines for every wheel event, whatever its size: a mouse with a high-resolution
+/// or free-spinning wheel, and a touchpad, send many small events for what other
+/// programs treat as one notch, so each of them moved the page a whole notch.
+/// </summary>
+internal sealed class WheelScrollViewer : ScrollViewer
+{
+    /// <summary>WPF's line, so that one ordinary notch still moves as far as it did.</summary>
+    public const double LinePixels = 16;
+    public const double NotchDelta = 120;
+
+    // The offset asked for and not yet laid out: events arrive faster than layout
+    // runs, and each one counted from the old offset would undo the one before.
+    // Layout applies the last offset asked for, so once it has run there is
+    // nothing pending, whoever moved the page.
+    private double? pending;
+
+    public WheelScrollViewer() => ScrollChanged += (_, _) => pending = null;
+
+    protected override void OnMouseWheel(MouseWheelEventArgs e)
+    {
+        var lines = SystemParameters.WheelScrollLines;
+        // A wheel set to scroll a page at a time, or a page with nothing to scroll, keeps WPF's behaviour.
+        if (e.Handled || lines <= 0 || ScrollableHeight <= 0)
+        {
+            base.OnMouseWheel(e);
+            return;
+        }
+        var target = Math.Clamp((pending ?? VerticalOffset) - e.Delta / NotchDelta * lines * LinePixels, 0, ScrollableHeight);
+        pending = target;
+        ScrollToVerticalOffset(target);
+        e.Handled = true;
+    }
 }

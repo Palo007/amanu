@@ -25,6 +25,10 @@ public enum SettingKind
 /// For a setting whose absence is a behaviour rather than a value, the words for
 /// that behaviour, shown in the grey of an empty field.
 /// </param>
+/// <param name="OptionHelp">
+/// For a choice, one sentence per option. The Advanced tab shows the sentence for
+/// the chosen option under the help, so the help need not walk through every option.
+/// </param>
 /// <param name="AskedInSetup">
 /// True when the setup form already asks this fully. Those are left out of the
 /// Advanced tab, which is the tab's premise: it is what setup does not ask. Asked
@@ -41,7 +45,8 @@ public sealed record SettingEntry(
     string? DescribedAs = null,
     bool AskedInSetup = false,
     bool NeedsRestart = false,
-    bool Decimal = false)
+    bool Decimal = false,
+    IReadOnlyDictionary<string, string>? OptionHelp = null)
 {
     public string[] Keys => Path.Split('.');
 }
@@ -117,9 +122,13 @@ public static class SettingsSchema
         [
             new("system_audio",
                 T("Record system audio from", "Записывать звук системы"),
-                T("app: only the call app and the processes it started. all: everything Windows plays, music and notifications included.",
-                  "app — только приложение звонка и запущенные им процессы. all — всё, что играет Windows, вместе с музыкой и уведомлениями."),
-                SettingKind.Choice, Options: ["app", "all"]),
+                T("Which sound counts as the other side of the call.",
+                  "Какой звук считается другой стороной звонка."),
+                SettingKind.Choice, Options: ["app", "all"], OptionHelp: new Dictionary<string, string>
+                {
+                    ["app"] = T("Only the call app and the processes it started.", "Только приложение звонка и запущенные им процессы."),
+                    ["all"] = T("Everything Windows plays, music and notifications included.", "Всё, что играет Windows, вместе с музыкой и уведомлениями."),
+                }),
             new("keep_audio",
                 T("Keep the audio after transcribing", "Оставлять звук после расшифровки"),
                 T("Saves one stereo M4A: your mic on the left, the other side on the right. A recording that never got a transcript is kept either way.",
@@ -148,10 +157,6 @@ public static class SettingsSchema
                 T("local: a model on this PC, nothing leaves it. gemini: Gemini Live captions the meeting in the cloud with your Gemini key.",
                   "local — модель на этом ПК, звук никуда не уходит. gemini — Gemini Live расшифровывает встречу в облаке по вашему ключу Gemini."),
                 SettingKind.Choice, Options: LiveTranscriptionSettings.Engines, AskedInSetup: true),
-            new("live_transcription.gemini_model",
-                T("Gemini Live model", "Модель Gemini Live"),
-                T("The Gemini Live model that captions the meeting.", "Модель Gemini Live для расшифровки по ходу встречи."),
-                SettingKind.Text),
             new("transcription.engine",
                 T("Engine", "Движок"),
                 T("auto: the cloud engine when there's a key and the network answers, the local model otherwise.",
@@ -177,17 +182,17 @@ public static class SettingsSchema
                 T("Drop echoed speech", "Убирать отражённую речь"),
                 T("Removes mic segments duplicating system audio — the far end coming back through the speakers.",
                   "Убирает куски с микрофона, повторяющие звук системы, — дальнюю сторону, вернувшуюся через колонки."),
-                SettingKind.Toggle),
+                SettingKind.Toggle, AskedInSetup: true),
             new("offline_echo_cancellation",
                 T("Remove echo before transcribing", "Убирать эхо перед расшифровкой"),
                 T("Cleans the call's sound out of a copy of the mic on this computer before transcription. The recording itself is not changed.",
                   "Перед расшифровкой убирает звук звонка из копии записи микрофона прямо на этом компьютере. Сама запись не меняется."),
-                SettingKind.Toggle),
+                SettingKind.Toggle, AskedInSetup: true),
             new("echo_model",
                 T("Echo removal model", "Модель удаления эха"),
                 T("solve-gate-cut (the default): finds the echo path over the whole recording, also when the clocks of the two devices drift apart, and the engine then hears only your sentences, each on its own. sonora: the classic WebRTC echo canceller, by far the fastest. fast: a small LocalVQE neural model, about 13 times slower. thorough: a larger LocalVQE model that also removes echo in rooms with strong reverb, slower again. solve: fits the echo path over the whole recording, also when the clocks of the two devices drift apart. solve-floor: the same, and turns down what is left of the echo. solve-gate: the same, and turns the mic down between your sentences, which helps most in loud noise. solve-gate-cut: the same, and the engine then hears only your sentences, each on its own.",
                   "solve-gate-cut (по умолчанию): подбирает путь эха по всей записи, в том числе когда часы двух устройств расходятся, и движок слышит только ваши фразы, каждую отдельно. sonora: классический эхоподавитель WebRTC, самый быстрый. fast: небольшая нейросетевая модель LocalVQE, примерно в 13 раз медленнее. thorough: модель LocalVQE побольше, убирает эхо и в гулких комнатах, ещё медленнее. solve: подбирает путь эха по всей записи, в том числе когда часы двух устройств расходятся. solve-floor: то же, и приглушает остаток эха. solve-gate: то же, и приглушает микрофон между вашими фразами, что больше всего помогает при сильном шуме. solve-gate-cut: то же, и движок слышит только ваши фразы, каждую отдельно."),
-                SettingKind.Choice, Options: AppSettings.EchoModels),
+                SettingKind.Choice, Options: AppSettings.EchoModels, AskedInSetup: true),
             new("keep_echo_cleaned_audio",
                 T("Keep echo-cleaned audio", "Хранить очищенный от эха звук"),
                 T("Keeps the cleaned copy beside the recording, so transcribing again skips echo removal. Costs about 230 MB per hour of meeting.",
@@ -195,19 +200,40 @@ public static class SettingsSchema
                 SettingKind.Toggle),
             new("transcription.level_normalization",
                 T("Even out speech levels before transcribing", "Выравнивать громкость речи перед расшифровкой"),
-                T("auto: makes quiet or loud speech in a copy of each track closer to normal before transcription. Can help when quiet speakers lose words. The recording itself is not changed.",
-                  "auto — перед расшифровкой делает тихую или громкую речь в копии каждой дорожки ближе к обычной. Может помочь, когда у тихих собеседников теряются слова. Сама запись не меняется."),
-                SettingKind.Choice, Options: TranscriptionSettings.LevelNormalizations),
+                T("Makes quiet or loud speech in a copy of each track closer to normal before transcription. The recording itself is not changed.",
+                  "Перед расшифровкой делает тихую или громкую речь в копии каждой дорожки ближе к обычной. Сама запись не меняется."),
+                SettingKind.Choice, Options: TranscriptionSettings.LevelNormalizations, OptionHelp: new Dictionary<string, string>
+                {
+                    ["auto"] = T("On. Can help when quiet speakers lose words.", "Включено. Может помочь, когда у тихих собеседников теряются слова."),
+                    ["off"] = T("Off. The engine hears each track as it was recorded.", "Выключено. Движок слышит каждую дорожку такой, какой она записана."),
+                }),
+        ]),
+
+        new(T("Voices on the call", "Голоса в звонке"),
+        [
             new("transcription.diarization",
                 T("Tell call voices apart", "Различать голоса в звонке"),
-                T("auto: after a local engine, splits the call side by voice on this computer, so \"them\" becomes \"them A\", \"them B\". Downloads about 32 MB of models once. Cloud engines do this themselves. Off by default: it is not yet reliable on calls of several people, and it adds about as much time as transcription.",
-                  "auto — после локального движка делит сторону звонка по голосам прямо на этом компьютере: «они» становится «они A», «они B». Один раз скачивает около 32 МБ моделей. Облачные движки делают это сами. По умолчанию выключено: на звонках с несколькими людьми пока ненадёжно и занимает примерно столько же времени, сколько расшифровка."),
-                SettingKind.Choice, Options: TranscriptionSettings.Diarizations),
+                T("After a local engine, splits the call side by voice on this computer, so \"them\" becomes \"them A\", \"them B\". Cloud engines do this themselves.",
+                  "После локального движка делит сторону звонка по голосам прямо на этом компьютере: «они» становится «они A», «они B». Облачные движки делают это сами."),
+                SettingKind.Choice, Options: TranscriptionSettings.Diarizations, OptionHelp: new Dictionary<string, string>
+                {
+                    ["auto"] = T("On. Downloads about 32 MB of models once and adds about as much time as transcription. Not yet reliable on calls of several people.",
+                        "Включено. Один раз скачивает около 32 МБ моделей и занимает примерно столько же времени, сколько расшифровка. На звонках с несколькими людьми пока ненадёжно."),
+                    ["off"] = T("Off. The call side stays one speaker, \"them\".", "Выключено. Сторона звонка остаётся одним говорящим, «они»."),
+                }),
             new("transcription.diarization_threshold",
                 T("Voice likeness threshold", "Порог сходства голосов"),
                 T("How alike two voices must be to count as one person, from 0 to 1. Higher gives fewer people; lower splits one person into several.",
                   "Насколько похожими должны быть два голоса, чтобы считаться одним человеком, от 0 до 1. Выше — меньше людей; ниже — один человек делится на нескольких."),
                 SettingKind.Number, DescribedAs: T($"{TranscriptionSettings.DefaultDiarizationThreshold}", $"{TranscriptionSettings.DefaultDiarizationThreshold}"), Decimal: true),
+        ]),
+
+        new(T("Cloud engine models", "Модели облачных движков"),
+        [
+            new("live_transcription.gemini_model",
+                T("Gemini Live model", "Модель Gemini Live"),
+                T("The Gemini Live model that captions the meeting.", "Модель Gemini Live для расшифровки по ходу встречи."),
+                SettingKind.Text),
             new("transcription.assemblyai.speech_model",
                 T("AssemblyAI speech model", "Модель речи AssemblyAI"),
                 T("Empty sends nothing and lets the API pick its own default.",
@@ -234,14 +260,22 @@ public static class SettingsSchema
                 SettingKind.Toggle, AskedInSetup: true),
             new("summary.backend",
                 T("Which model to ask", "У какой модели спрашивать"),
-                T("auto walks the chain: claude CLI, Anthropic API, codex CLI, OpenAI API, ollama — subscriptions before metered keys. none skips summarizing without turning off the rest.",
-                  "auto идёт по цепочке: claude CLI, Anthropic API, codex CLI, OpenAI API, ollama — сначала подписки, потом платные ключи. none пропускает саммари, не выключая всего остального."),
-                SettingKind.Choice, Options: SummarySettings.Backends),
+                T("Where the transcript is sent to be summarized.",
+                  "Куда отправляется расшифровка, чтобы написать саммари."),
+                SettingKind.Choice, Options: SummarySettings.Backends, OptionHelp: ModelRoutes(
+                    T("Walks the chain: claude CLI, Anthropic API, codex CLI, OpenAI API, ollama. Subscriptions come before metered keys.",
+                      "Идёт по цепочке: claude CLI, Anthropic API, codex CLI, OpenAI API, ollama. Сначала подписки, потом платные ключи."),
+                    T("Skips summarizing without turning off the rest.", "Пропускает саммари, не выключая всего остального."))),
             new("summary.source",
                 T("Summarize from", "Из чего писать саммари"),
-                T("transcript: the final transcript made after the meeting. live: the live captions kept during it. both: sends the two together, so each fills the other's gaps. Without live captions the final transcript is used.",
-                  "transcript — итоговая расшифровка после встречи. live — живые субтитры, сохранённые во время встречи. both — обе вместе, чтобы одна закрывала пробелы другой. Без живых субтитров берётся итоговая расшифровка."),
-                SettingKind.Choice, Options: SummarySettings.Sources),
+                T("What the summary is written from. Without live captions the final transcript is used.",
+                  "Из чего пишется саммари. Без живых субтитров берётся итоговая расшифровка."),
+                SettingKind.Choice, Options: SummarySettings.Sources, OptionHelp: new Dictionary<string, string>
+                {
+                    ["transcript"] = T("The final transcript made after the meeting.", "Итоговая расшифровка после встречи."),
+                    ["live"] = T("The live captions kept during the meeting.", "Живые субтитры, сохранённые во время встречи."),
+                    ["both"] = T("The two together, so each fills the other's gaps.", "Обе вместе, чтобы одна закрывала пробелы другой."),
+                }),
             new("summary.model",
                 T("Anthropic model", "Модель Anthropic"),
                 T("Used on the API path, and by the claude CLI once it is set here; left empty, the CLI uses whatever model Claude Code is set to.",
@@ -280,6 +314,10 @@ public static class SettingsSchema
                 T("Instructions sent to the model. Clear the field to restore the built-in template.",
                   "Инструкции для модели. Очистите поле, чтобы вернуть встроенный шаблон."),
                 SettingKind.MultilineText, DescribedAs: T("the built-in template", "встроенный шаблон")),
+        ]),
+
+        new("Slack",
+        [
             new("slack_summary.enabled",
                 T("Offer the summary for Slack", "Предлагать саммари для Slack"),
                 T("After a Slack huddle, a small card offers to copy the summary and open Slack. It never picks the channel and never sends.",
@@ -310,9 +348,16 @@ public static class SettingsSchema
                 SettingKind.Text, DescribedAs: T("the account's name", "имя учётной записи")),
             new("speaker_names.backend",
                 T("Which model to ask", "У какой модели спрашивать"),
-                T("summary sends the transcript wherever summaries go, and nowhere when they are off — only your own name is filled in then. Anything else is a choice for naming alone; none asks no model.",
-                  "summary отправляет расшифровку туда же, куда и саммари, а если саммари выключены — никуда, и подставляется только ваше имя. Любой другой вариант — выбор только для имён; none — не спрашивать никакую модель."),
-                SettingKind.Choice, Options: SpeakerNameSettings.Backends),
+                T("Where the transcript is sent to work out the speakers' names. Any choice but summary is for naming alone.",
+                  "Куда отправляется расшифровка, чтобы узнать имена говорящих. Любой вариант, кроме summary, — только для имён."),
+                SettingKind.Choice, Options: SpeakerNameSettings.Backends, OptionHelp: new Dictionary<string, string>(ModelRoutes(
+                    T("Walks the same chain as summaries: claude CLI, Anthropic API, codex CLI, OpenAI API, ollama.",
+                      "Идёт по той же цепочке, что и саммари: claude CLI, Anthropic API, codex CLI, OpenAI API, ollama."),
+                    T("Asks no model. Only your own name is filled in.", "Не спрашивает никакую модель. Подставляется только ваше имя.")))
+                {
+                    ["summary"] = T("Wherever summaries go, and nowhere when they are off. Then only your own name is filled in.",
+                        "Туда же, куда и саммари, а если саммари выключены — никуда. Тогда подставляется только ваше имя."),
+                }),
             new("speaker_names.model",
                 T("Anthropic model for naming", "Модель Anthropic для имён"),
                 T("Naming is an easier job than summarizing; empty uses the summary's model.",
@@ -329,9 +374,14 @@ public static class SettingsSchema
         [
             new("interface_language",
                 T("Language of Amanu's own windows", "Язык окон Amanu"),
-                T("auto follows Windows. Not the language of your meetings, and not the one summaries are written in — those are settings of their own.",
-                  "auto — как в Windows. Это не язык встреч и не язык саммари: у тех есть собственные настройки."),
-                SettingKind.Choice, Options: Localized.ConfiguredValues, NeedsRestart: true),
+                T("Not the language of your meetings, and not the one summaries are written in. Those are settings of their own.",
+                  "Это не язык встреч и не язык саммари: у тех есть собственные настройки."),
+                SettingKind.Choice, Options: Localized.ConfiguredValues, NeedsRestart: true, OptionHelp: new Dictionary<string, string>
+                {
+                    [Localized.Automatic] = T("Follows the language of Windows.", "Как язык Windows."),
+                    ["en"] = T("English.", "Английский."),
+                    ["ru"] = T("Russian.", "Русский."),
+                }),
             new("start_at_login",
                 T("Start when you sign in", "Запускать при входе в Windows"),
                 T("So a meeting is never missed because nobody opened Amanu.",
@@ -362,6 +412,21 @@ public static class SettingsSchema
                 SettingKind.Toggle, AskedInSetup: true),
         ]),
     ];
+
+    /// <summary>
+    /// The routes summaries and names share, each in one sentence; the two
+    /// settings differ only in what auto and none mean.
+    /// </summary>
+    private static Dictionary<string, string> ModelRoutes(string auto, string none) => new()
+    {
+        ["auto"] = auto,
+        ["claude-cli"] = T("Claude Code, on the subscription you are signed in to.", "Claude Code, по подписке, в которую вы вошли."),
+        ["anthropic-api"] = T("The Anthropic API, with your key.", "Anthropic API, с вашим ключом."),
+        ["codex-cli"] = T("Codex, on your OpenAI subscription.", "Codex, по вашей подписке OpenAI."),
+        ["openai-api"] = T("The OpenAI API, or an OpenAI-compatible service, with your key.", "OpenAI API или OpenAI-compatible сервис, с вашим ключом."),
+        ["ollama"] = T("Ollama. It stays on this computer only with a localhost URL.", "Ollama. Остаётся на этом компьютере, только если адрес localhost."),
+        ["none"] = none,
+    };
 
     /// <summary><see cref="Sections"/> minus what setup already asks; an emptied section goes with it.</summary>
     public static IReadOnlyList<SettingSection> AdvancedSections =>

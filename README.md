@@ -569,6 +569,11 @@ before using this example offline.
 - `live_transcription.enabled` controls the separate local streaming model.
   `system_audio` is `app` or `all`; `transcript_echo_filter` removes duplicate
   far-end speech. Apple's `mic_voice_processing` is macOS-only.
+- On Windows, `offline_echo_cancellation`, `echo_model` and
+  `transcript_echo_filter` are in the Setup tab's Transcription section rather
+  than in Advanced, because on a call heard through speakers they change more of
+  the transcript than the engine does. `windows/ECHO_REMOVAL.md` describes each
+  echo model.
 - `keep_echo_cleaned_audio` (Windows, on by default) keeps the echo-cleaned mic
   and its aligned call track in the session's hidden `.echo-kept` folder, as
   16-bit audio (about 230 MB per hour). "Transcribe again" then reuses it and

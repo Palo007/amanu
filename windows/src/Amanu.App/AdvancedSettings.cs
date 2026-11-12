@@ -30,19 +30,15 @@ internal sealed class AdvancedSettings
     private readonly List<Action> refreshers = [];
     private bool refreshing;
 
-    public StackPanel View { get; } = new() { Margin = new Thickness(Ui.Gutter, 20, Ui.Gutter, 16), MaxWidth = 860, HorizontalAlignment = HorizontalAlignment.Left };
+    public StackPanel View { get; } = new() { Margin = new Thickness(Ui.Gutter, 20, Ui.Gutter, 8) };
 
     public AdvancedSettings(AmanuRuntime runtime)
     {
         this.runtime = runtime;
+        // The Setup tab's arrangement, a grey heading over a card of rows, so
+        // that the two tabs read alike and a section's end can be seen.
         foreach (var section in SettingsSchema.AdvancedSections)
-        {
-            var heading = Ui.Heading(section.Title);
-            heading.FontSize = 16;
-            heading.Margin = new Thickness(0, View.Children.Count == 0 ? 0 : 20, 0, 4);
-            View.Children.Add(heading);
-            foreach (var entry in section.Entries) View.Children.Add(Row(entry));
-        }
+            View.Children.Add(Ui.Section(section.Title, Ui.Box([.. section.Entries.Select(Row)])));
         runtime.SettingsChanged += OnSettingsChanged;
         Refresh();
     }
@@ -58,39 +54,66 @@ internal sealed class AdvancedSettings
         finally { refreshing = false; }
     }
 
+    /// <summary>
+    /// A switch on the left of its words, as in Setup; a menu or a number on the
+    /// right; a field that holds a path, a URL or a list under its words, where it
+    /// has the card's width. A row without a switch keeps the switch's space empty,
+    /// so every title in a card starts at one edge.
+    /// </summary>
     private Grid Row(SettingEntry entry)
     {
-        var grid = new Grid { Margin = new Thickness(0, 12, 0, 0) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 240 });
-        grid.RowDefinitions.Add(new RowDefinition());
-        grid.RowDefinitions.Add(new RowDefinition());
-
-        var label = Ui.Title(entry.Label);
-        label.Margin = new Thickness(0, 4, 16, 0);
-        grid.Children.Add(label);
-
-        var control = Control(entry);
-        if (entry.Kind is SettingKind.Toggle or SettingKind.Choice) control.HorizontalAlignment = HorizontalAlignment.Left;
-        Grid.SetColumn(control, 1);
-        grid.Children.Add(control);
-
         var help = Ui.Detail(entry.NeedsRestart
             ? entry.Help + " " + T("Takes effect at the next launch.", "Подействует при следующем запуске.")
             : entry.Help);
-        help.MaxWidth = 600;
-        help.HorizontalAlignment = HorizontalAlignment.Left;
-        help.Margin = new Thickness(0, 4, 0, 0);
-        Grid.SetRow(help, 1);
-        Grid.SetColumnSpan(help, 2);
-        grid.Children.Add(help);
+        if (entry.Kind == SettingKind.Toggle) return Ui.Row(Toggle(entry), Ui.Title(entry.Label), help);
+
+        var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        words.Children.Add(Ui.Title(entry.Label));
+        words.Children.Add(help);
+        FrameworkElement? right = null;
+        switch (entry.Kind)
+        {
+            case SettingKind.Choice:
+                // The chosen option's own sentence, in place of help that walks through them all.
+                var note = Ui.Detail("").Brush(TextBlock.ForegroundProperty, Ui.Primary);
+                note.Margin = new Thickness(0, 4, 0, 0);
+                words.Children.Add(note);
+                right = Choice(entry, note);
+                break;
+            case SettingKind.Number:
+                right = Text(entry);
+                right.VerticalAlignment = VerticalAlignment.Top;
+                break;
+            default:
+                // As wide as the card allows up to a limit, from the left edge: a
+                // field left to size itself shrank to the grey of its placeholder.
+                var control = Control(entry);
+                control.HorizontalAlignment = HorizontalAlignment.Stretch;
+                var holder = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+                holder.ColumnDefinitions.Add(new ColumnDefinition { MaxWidth = entry.Kind is SettingKind.MultilineText or SettingKind.List ? 520 : 420 });
+                holder.Children.Add(control);
+                words.Children.Add(holder);
+                break;
+        }
+
+        var grid = new Grid { Margin = new Thickness(16, 12, 16, 12) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Ui.Indent) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(words, 1);
+        grid.Children.Add(words);
+        if (right is not null)
+        {
+            right.Margin = new Thickness(16, 0, 0, 0);
+            Grid.SetColumn(right, 2);
+            grid.Children.Add(right);
+        }
         return grid;
     }
 
+    /// <summary>The controls that sit under their words.</summary>
     private FrameworkElement Control(SettingEntry entry) => entry.Kind switch
     {
-        SettingKind.Toggle => Toggle(entry),
-        SettingKind.Choice => Choice(entry),
         SettingKind.Command => Command(entry),
         SettingKind.File => File(entry),
         _ => Text(entry),
@@ -102,8 +125,7 @@ internal sealed class AdvancedSettings
     /// </summary>
     private FrameworkElement File(SettingEntry entry)
     {
-        var panel = new StackPanel { Orientation = Orientation.Horizontal };
-        panel.Children.Add(Text(entry));
+        var panel = new DockPanel();
         var open = Ui.Button(T("Open", "Открыть"), () =>
         {
             var path = ProcessingCoordinator.PeoplePath(runtime.Settings);
@@ -123,11 +145,13 @@ internal sealed class AdvancedSettings
         });
         open.Margin = new Thickness(8, 0, 0, 0);
         open.VerticalAlignment = VerticalAlignment.Top;
+        DockPanel.SetDock(open, Dock.Right);
         panel.Children.Add(open);
+        panel.Children.Add(Text(entry));
         return panel;
     }
 
-    private FrameworkElement Toggle(SettingEntry entry)
+    private CheckBox Toggle(SettingEntry entry)
     {
         var toggle = Ui.Switch(entry.Label);
         refreshers.Add(() => toggle.IsChecked = runtime.GetValue(entry.Path)?.GetValue<bool>() == true);
@@ -135,11 +159,17 @@ internal sealed class AdvancedSettings
         return toggle;
     }
 
-    private FrameworkElement Choice(SettingEntry entry)
+    private FrameworkElement Choice(SettingEntry entry, TextBlock optionNote)
     {
-        var combo = new ComboBox { MinWidth = 240, ItemsSource = entry.Options };
+        var combo = new ComboBox { MinWidth = 180, ItemsSource = entry.Options, VerticalAlignment = VerticalAlignment.Top };
         System.Windows.Automation.AutomationProperties.SetName(combo, entry.Label);
-        refreshers.Add(() => combo.SelectedItem = runtime.GetValue(entry.Path)?.ToString());
+        refreshers.Add(() =>
+        {
+            var value = runtime.GetValue(entry.Path)?.ToString();
+            combo.SelectedItem = value;
+            optionNote.Text = value is not null && entry.OptionHelp?.GetValueOrDefault(value) is { } words ? $"{value}: {words}" : "";
+            optionNote.Visibility = optionNote.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        });
         combo.SelectionChanged += (_, _) =>
         {
             if (!refreshing && combo.SelectedItem is string value) Commit(entry, JsonValue.Create(value));

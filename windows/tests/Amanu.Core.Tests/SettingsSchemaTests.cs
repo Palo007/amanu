@@ -77,6 +77,35 @@ public sealed class SettingsSchemaTests
         Assert.DoesNotContain(advanced, entry => entry.AskedInSetup);
         Assert.Contains(advanced, entry => entry.Path == "auto_record.stop_delay_seconds");
         Assert.DoesNotContain(SettingsSchema.AdvancedSections, section => section.Entries.Count == 0);
+        // The echo settings are asked in setup, beside the engine they change the input of.
+        Assert.DoesNotContain(advanced, entry => entry.Path is "echo_model" or "offline_echo_cancellation" or "transcript_echo_filter");
+    }
+
+    [Fact]
+    public void Every_advanced_menu_says_what_each_of_its_options_does()
+    {
+        foreach (var language in new[] { InterfaceLanguage.English, InterfaceLanguage.Russian })
+        {
+            using var scope = Localized.Use(language);
+            foreach (var entry in SettingsSchema.AdvancedSections.SelectMany(section => section.Entries)
+                         .Where(entry => entry.Kind == SettingKind.Choice))
+            {
+                Assert.NotNull(entry.OptionHelp);
+                Assert.Equal(entry.Options!.Order(), entry.OptionHelp!.Keys.Order());
+                Assert.All(entry.OptionHelp.Values, words => Assert.False(string.IsNullOrWhiteSpace(words), entry.Path));
+            }
+        }
+    }
+
+    [Fact]
+    public void The_setup_echo_menu_offers_every_model_with_the_default_first()
+    {
+        var fallback = SettingsSchema.DefaultFor("echo_model", "C:\\Docs")!.GetValue<string>();
+        Assert.Equal(fallback, EchoChoices.Main[0]);
+        Assert.All(EchoChoices.Main, model => Assert.Contains(model, AppSettings.EchoModels));
+        Assert.EndsWith(" It is the default.", EchoChoices.Describe(fallback, fallback));
+        Assert.DoesNotContain("default", EchoChoices.Describe("sonora", fallback));
+        Assert.Contains("ECHO_REMOVAL.md", EchoChoices.Describe("sonora-long", fallback));
     }
 
     [Fact]
