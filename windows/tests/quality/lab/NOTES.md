@@ -1219,6 +1219,21 @@ about 5 min of engine time plus 3 min of mask on CPU, as for n4):
 against solve-gate and against n1 setting c. Bar: 1.5 points under 27.2 with an interval that excludes 0.)
 Disk: N5 holds 645 MB (torch in `pylib` 534 MB, data 88 MB, checkpoints 21 MB). Nothing else was written.
 
+### 18.1 Engine screen of the tiny mask
+
+Command (no change to `n5.py` was needed): `py -P n5.py run "%USERPROFILE%\Amanu Quality Set\lab" n5-a6 a6-final` (3 transcriptions at once, 20 calls; rows in `...\lab\wer2\n5\n5-a6`; log `overnight\N5\run-a6.log`).
+Result, "my WER", mask on the plain solver output, then solve-gate's gate and setting c's cutting:
+
+| | SNR 0 | SNR -5 | loud-14 | no noise (6) | echo words |
+|---|---|---|---|---|---|
+| n5-a6 | 19.5 | 40.9 | 28.7 | 9.2 | 6 |
+| n1 setting c (no mask) | 17.6 | 40.0 | 27.2 | 9.2 | |
+| solve-gate | 19.6 | 42.8 | 29.6 | 10.4 | |
+
+Paired bootstrap on the 20 calls: against solve-gate -1.0 [-1.9, -0.1]; against setting c +1.0 [+0.3, +1.9] (worse). Engine time 241 s (sum of batch seconds over 20 calls), plus the mask on CPU.
+Verdict: fail. The bar was loud-14 <= 25.7 and no-noise <= 9.7; no-noise holds (9.2), loud-14 is 28.7, 1.5 points worse than setting c. The mask's 3 dB of SNR gain does not turn into fewer word errors, and it costs words at SNR 0 (19.5 against 17.6). The held-out run was not made.
+Deleted: nothing was left to delete (the script removes its temp WAV folder after each call; no audio cache was made). Free space on C: 7.6 GB before and after.
+
 ## 21. The solver's memory (overnight, track G)
 
 Result: win. A two-hour call took 5.9 to 7.2 GB of working set in the solver stage before (default collector, this PC) and takes 0.87 GB after for one echo path,
