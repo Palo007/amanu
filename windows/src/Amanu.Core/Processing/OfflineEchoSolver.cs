@@ -30,6 +30,41 @@ public static class OfflineEchoSolver
     public sealed record Result(float[] Cleaned, float[] Echo, IReadOnlyList<Section> Sections, bool ManyPaths = false);
 
     /// <summary>
+    /// A track the solver reads a piece at a time, so that a two-hour call need not sit in memory
+    /// twice over: at 16 kHz one track is 460 MB as floats, and the solver needs the mic, the call
+    /// track and its own output.
+    /// </summary>
+    public interface ITrack
+    {
+        /// <summary>The length in samples; what lies beyond it is silence.</summary>
+        int Length { get; }
+
+        /// <summary>Fills <paramref name="destination"/> with the samples from <paramref name="start"/> on; before sample 0 and after <see cref="Length"/> there is silence. Many threads may call this at once.</summary>
+        void Read(long start, Span<float> destination);
+    }
+
+    /// <summary>A track held in an array, as long as <paramref name="length"/>: the part the array does not reach is silence.</summary>
+    public sealed class ArrayTrack(float[] samples, int length) : ITrack
+    {
+        public int Length { get; } = length;
+
+        public void Read(long start, Span<float> destination)
+        {
+            destination.Clear();
+            var from = Math.Max(0, start);
+            var to = Math.Min(Math.Min(samples.Length, Length), start + destination.Length);
+            if (to > from) samples.AsSpan((int)from, (int)(to - from)).CopyTo(destination[(int)(from - start)..]);
+        }
+    }
+
+    private static float[] Slice(ITrack track, long start, int count)
+    {
+        var slice = new float[Math.Max(0, count)];
+        track.Read(start, slice);
+        return slice;
+    }
+
+    /// <summary>
     /// The mic with the linear echo of the call track taken out, and the echo estimate.
     /// Frames of 256 ms with a hop of 64 ms fit as well as short ones and cost far less.
     /// A long stretch is fitted in blocks of about five minutes: the room changes over a long
@@ -38,10 +73,48 @@ public static class OfflineEchoSolver
     /// </summary>
     public static Result Cancel(float[] mic, float[] far, CancellationToken cancellationToken = default, double blockSeconds = 300)
     {
+        var echo = Estimate(new ArrayTrack(mic, mic.Length), new ArrayTrack(far, Math.Max(far.Length, mic.Length)), cancellationToken, blockSeconds, out var sections, out var manyPaths);
+        if (echo is null) return new Result((float[])mic.Clone(), new float[mic.Length], sections, manyPaths);
+        var cleaned = new float[mic.Length];
+        for (var i = 0; i < mic.Length; i++) cleaned[i] = mic[i] - echo[i];
+        return new Result(cleaned, echo, sections);
+    }
+
+    /// <summary>
+    /// <see cref="Cancel"/> and, when <paramref name="suppressorFloor"/> is given, <see cref="Suppress"/> for
+    /// tracks read piece by piece, keeping one array of the call's length instead of five: the echo
+    /// estimate is turned into the cleaned mic in place, and the suppressor works on it in place, taking
+    /// the echo it needs back as mic minus cleaned. The result's Echo is empty. When the recording joins
+    /// many devices the result's Cleaned is empty too, as no one echo path can be solved.
+    /// </summary>
+    public static Result Solve(ITrack mic, ITrack far, double? suppressorFloor = null, CancellationToken cancellationToken = default, double blockSeconds = 300)
+    {
+        var echo = Estimate(mic, far, cancellationToken, blockSeconds, out var sections, out var manyPaths);
+        if (manyPaths) return new Result([], [], sections, true);
+        if (echo is null) return new Result(Slice(mic, 0, mic.Length), [], sections);
+        var buffer = new float[1 << 16];
+        for (var position = 0; position < echo.Length; position += buffer.Length)
+        {
+            var count = Math.Min(buffer.Length, echo.Length - position);
+            mic.Read(position, buffer.AsSpan(0, count));
+            for (var i = 0; i < count; i++) echo[position + i] = buffer[i] - echo[position + i];
+        }
+        if (suppressorFloor is { } floor)
+            SuppressInPlace(echo, (from, part) =>
+            {
+                var micPart = Slice(mic, from, part.Length);
+                for (var i = 0; i < micPart.Length; i++) micPart[i] -= part[i];
+                return micPart;
+            }, floor, 2.0, blockSeconds);
+        return new Result(echo, [], sections);
+    }
+
+    /// <summary>The echo estimate of the whole call, or null when no echo was found.</summary>
+    private static float[]? Estimate(ITrack mic, ITrack far, CancellationToken cancellationToken, double blockSeconds, out IReadOnlyList<Section> sections, out bool manyPaths)
+    {
         const int n = FrameLength, hop = FrameHop;
-        if (far.Length < mic.Length) Array.Resize(ref far, mic.Length);
-        var (sections, manyPaths) = Track(mic, far, cancellationToken);
-        if (sections.Count == 0) return new Result((float[])mic.Clone(), new float[mic.Length], sections, manyPaths);
+        (sections, manyPaths) = Track(mic, far, cancellationToken);
+        if (sections.Count == 0) return null;
 
         var frames = (mic.Length + n) / hop + 1;
         var search = 12 * SampleRate / hop;
@@ -63,6 +136,7 @@ public static class OfflineEchoSolver
             for (var j = 0; j < blocks; j++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                CollectBlockGarbage();
                 var to = from + count / blocks + (j < count % blocks ? 1 : 0);
                 var lastBlock = j == blocks - 1;
                 // A stretch's first and last blocks also cover the frames around the place where
@@ -95,13 +169,19 @@ public static class OfflineEchoSolver
             }
         }
         if (pending is not null) Stft.AddInverse(pending.Estimate, pending.Low, pending.From, pending.High, echo, n, hop);
-
-        var cleaned = new float[mic.Length];
-        for (var i = 0; i < mic.Length; i++) cleaned[i] = mic[i] - echo[i];
-        return new Result(cleaned, echo, sections);
+        pending = null;
+        CollectBlockGarbage();
+        return echo;
     }
 
     private const int FrameLength = 4096, FrameHop = 1024;
+
+    /// <summary>
+    /// A block's spectra are arrays of tens of megabytes. The collector would let those of a dozen
+    /// blocks pile up, since it counts them against a budget that grows as the run goes on: a
+    /// two-hour call then took 4 GB although it never needed more than 0.8 GB at once.
+    /// </summary>
+    private static void CollectBlockGarbage() => GC.Collect(2, GCCollectionMode.Forced, blocking: true);
 
     /// <summary>One block's echo estimate over the frames low..high of the call, and what it leaves of the mic per frame.</summary>
     private sealed record Block(Stft.Spectrum Estimate, double[] Residual, int Low, int High)
@@ -109,23 +189,36 @@ public static class OfflineEchoSolver
         public int From { get; set; }
     }
 
+    /// <summary>The mic's frames low..high; only the stretch of it they cover is read.</summary>
+    private static Stft.Spectrum MicSpectrum(ITrack mic, int low, int high)
+    {
+        const int n = FrameLength, hop = FrameHop;
+        var start = low * hop - n;
+        return Stft.Forward(Slice(mic, start, (high - low - 1) * hop + n), n, hop, low, high - low, start);
+    }
+
+    /// <summary>The frames first..first + count of the call track warped onto the mic's clock.</summary>
+    private static Stft.Spectrum CallSpectrum(ITrack far, Section section, int first, int count, int limit)
+    {
+        const int n = FrameLength, hop = FrameHop;
+        var origin = first * hop - n;
+        return Stft.Forward(Warp(far, section.Lag, section.Slope, origin, (count - 1) * hop + n, limit, Lead), n, hop, first, count, origin);
+    }
+
     /// <summary>
     /// Fits the echo path of one stretch on the frames from..to and applies it to low..high.
     /// The weights are one over the residual's power, so the frames where I talk count less:
     /// two rounds are as good as three.
     /// </summary>
-    private static Block Fit(float[] mic, float[] far, Section section, int low, int high, int from, int to, bool wantResidual)
+    private static Block Fit(ITrack mic, ITrack far, Section section, int low, int high, int from, int to, bool wantResidual)
     {
-        const int n = FrameLength, hop = FrameHop, pre = 1, iterations = 2;
+        const int hop = FrameHop, pre = 1, iterations = 2;
         const double tailSeconds = 0.75, ridge = 1e-4, floor = 1e-4;
         var taps = (int)Math.Ceiling(tailSeconds * SampleRate / hop);
-        var y = Stft.Forward(mic, n, hop, low, high - low);
+        var y = MicSpectrum(mic, low, high);
         // The call track's frames reach taps - 1 before the mic's first frame and `pre` after its last.
-        var xFirst = low - taps + 1;
-        var xCount = high - low + taps - 1 + pre;
-        var origin = xFirst * hop - n;
-        var warped = Warp(far, section.Lag, section.Slope, origin, (xCount - 1) * hop + n, mic.Length, Lead);
-        var x = Stft.Forward(warped, n, hop, xFirst, xCount, origin);
+        var x = CallSpectrum(far, section, low - taps + 1, high - low + taps - 1 + pre, mic.Length);
+        CollectBlockGarbage();                                             // the pieces of the two tracks the spectra were made from
         var rows = new bool[high - low];
         for (var t = Math.Max(from, low); t < Math.Min(to, high); t++) rows[t - low] = true;
         float[]? weights = null;
@@ -133,7 +226,13 @@ public static class OfflineEchoSolver
         for (var round = 0; round < iterations; round++)
         {
             d = FitAndApply(y, x, taps, pre, weights, ridge, rows);
-            weights = InverseResidualPower(y, d, rows, floor);
+            // The weights of the last round would not be used, so they are not made.
+            if (round < iterations - 1)
+            {
+                weights = InverseResidualPower(y, d, rows, floor);
+                d = null!;
+                CollectBlockGarbage();
+            }
         }
         var residual = new double[high - low];
         if (wantResidual)
@@ -150,26 +249,47 @@ public static class OfflineEchoSolver
     /// </summary>
     public static float[] Suppress(float[] cleaned, float[] echo, double gainFloor = 0.15, double over = 2.0, double blockSeconds = 300)
     {
+        var output = (float[])cleaned.Clone();
+        SuppressInPlace(output, (from, part) => echo.AsSpan(from, part.Length).ToArray(), gainFloor, over, blockSeconds);
+        return output;
+    }
+
+    /// <summary>
+    /// <see cref="Suppress"/> over the array it is given. <paramref name="echoOf"/> returns the echo
+    /// under the stretch of the cleaned mic it is handed, which starts at the sample `from`.
+    /// </summary>
+    private static void SuppressInPlace(float[] cleaned, Func<int, float[], float[]> echoOf, double gainFloor, double over, double blockSeconds)
+    {
         // A long call goes in blocks of about five minutes, each with its own measure of the
         // echo left and of the noise, joined by a short cross-fade.
         var blocks = Math.Max(1, (int)Math.Round(cleaned.Length / (blockSeconds * SampleRate)));
-        if (blocks == 1) return SuppressBlock(cleaned, echo, gainFloor, over);
+        if (blocks == 1)
+        {
+            SuppressBlock(cleaned, echoOf(0, cleaned), gainFloor, over).CopyTo(cleaned, 0);
+            return;
+        }
         const int margin = 2 * SampleRate, fade = 512;
-        var output = new float[cleaned.Length];
+        // The blocks overlap by the margin, and the one before has already written over the start of
+        // this one's input, so the input there is kept from before it wrote.
+        var kept = Array.Empty<float>();
         for (var b = 0; b < blocks; b++)
         {
+            CollectBlockGarbage();
             var start = (int)((long)cleaned.Length * b / blocks);
             var end = (int)((long)cleaned.Length * (b + 1) / blocks);
             var from = Math.Max(0, start - margin);
             var to = Math.Min(cleaned.Length, end + margin);
-            var part = SuppressBlock(cleaned[from..to], echo[from..to], gainFloor, over);
+            var input = cleaned[from..to];
+            if (b > 0) kept.AsSpan(0, Math.Min(kept.Length, input.Length)).CopyTo(input);
+            var next = cleaned[Math.Max(0, end - margin)..Math.Min(cleaned.Length, end + fade)];
+            var part = SuppressBlock(input, echoOf(from, input), gainFloor, over);
             for (var i = start; i < Math.Min(cleaned.Length, end + fade); i++)
             {
                 var weight = b > 0 && i < start + fade ? (i - start + 0.5f) / fade : 1f;
-                output[i] = output[i] * (1 - weight) + part[i - from] * weight;
+                cleaned[i] = weight == 1f ? part[i - from] : cleaned[i] * (1 - weight) + part[i - from] * weight;
             }
+            kept = next;
         }
-        return output;
     }
 
     private static float[] SuppressBlock(float[] cleaned, float[] echo, double gainFloor, double over)
@@ -177,16 +297,19 @@ public static class OfflineEchoSolver
         const int n = 512, hop = 128;
         var e = Stft.Forward(cleaned, n, hop);
         var d = Stft.Forward(echo, n, hop);
+        echo = null!;
         int bins = e.Bins, frames = e.Frames;
-        var pd = Power(d);
-        var pe = Power(e);
+        // The power of a bin of a frame is made from the spectra where it is wanted, not kept in
+        // arrays of doubles twice the size of the spectra (and as many again for their smoothing).
+        double Pd(int i) => (double)d.Re[i] * d.Re[i] + (double)d.Im[i] * d.Im[i];
+        double Pe(int i) => (double)e.Re[i] * e.Re[i] + (double)e.Im[i] * e.Im[i];
         var fd = new double[frames];
         var fe = new double[frames];
         for (var f = 0; f < bins; f++)
             for (var t = 0; t < frames; t++)
             {
-                fd[t] += pd[f * frames + t];
-                fe[t] += pe[f * frames + t];
+                fd[t] += Pd(f * frames + t);
+                fe[t] += Pe(f * frames + t);
             }
         var top = fd.Max();
         if (top <= 0) return cleaned;
@@ -199,7 +322,7 @@ public static class OfflineEchoSolver
             for (var f = 0; f < bins; f++)
             {
                 double sum = 0;
-                for (var i = 0; i < count; i++) sum += pe[f * frames + quiet[i]];
+                for (var i = 0; i < count; i++) sum += Pe(f * frames + quiet[i]);
                 noise[f] = sum / count;
             }
         }
@@ -215,8 +338,8 @@ public static class OfflineEchoSolver
             double se = 0, sd = 0;
             foreach (var t in farOnly)
             {
-                se += pe[f * frames + t];
-                sd += pd[f * frames + t];
+                se += Pe(f * frames + t);
+                sd += Pd(f * frames + t);
             }
             share[f] = Math.Max(se / farOnly.Length - noise[f], 0) / (sd / farOnly.Length + 1e-20);
         }
@@ -228,20 +351,51 @@ public static class OfflineEchoSolver
             smoothShare[f] = sum / 5;
         }
 
-        var pdSmooth = BoxSmooth(pd, bins, frames, 1, 0);
-        var peSmooth = BoxSmooth(pe, bins, frames, 1, 1);
-        Parallel.For(0, bins, f =>
+        // The mean over three frames of a bin's power; the echo's is smoothed over frames alone, the
+        // signal's over three bins too. The gains wait in an array because the neighbours of a bin
+        // must see the signal as it was.
+        void Across(Func<int, double> power, int bin, double[] row)
         {
+            for (var k = 0; k < frames; k++)
+            {
+                double sum = 0;
+                for (var j = -1; j <= 1; j++) sum += power(bin * frames + Math.Clamp(k + j, 0, frames - 1));
+                row[k] = sum / 3;
+            }
+        }
+        var gains = new float[bins * frames];
+        CollectBlockGarbage();
+        // Each thread keeps its four rows: a row is 300 KB, so one new row per bin and use would put
+        // a gigabyte through the large-object heap in a two-hour call.
+        Parallel.For(0, bins, () => (new double[frames], new double[frames], new double[frames], new double[frames]), (f, _, rows) =>
+        {
+            var (before, now, after, pdSmooth) = rows;
+            Across(Pe, Math.Max(f - 1, 0), before);
+            Across(Pe, f, now);
+            Across(Pe, Math.Min(f + 1, bins - 1), after);
+            Across(Pd, f, pdSmooth);
             double left = 0;
             for (var t = 0; t < frames; t++)
             {
                 // The tail of the room rings on after the estimate ends: the echo left decays over frames.
-                left = Math.Max(smoothShare[f] * pdSmooth[f * frames + t], 0.8 * left);
-                var gain = (float)Math.Clamp(1 - over * left / (peSmooth[f * frames + t] + 1e-20), gainFloor, 1.0);
-                e.Re[f * frames + t] *= gain;
-                e.Im[f * frames + t] *= gain;
+                left = Math.Max(smoothShare[f] * pdSmooth[t], 0.8 * left);
+                double sum = 0;
+                sum += before[t];
+                sum += now[t];
+                sum += after[t];
+                var peSmooth = sum / 3;
+                gains[f * frames + t] = (float)Math.Clamp(1 - over * left / (peSmooth + 1e-20), gainFloor, 1.0);
             }
-        });
+            return rows;
+        }, _ => { });
+        for (var i = 0; i < gains.Length; i++)
+        {
+            e.Re[i] *= gains[i];
+            e.Im[i] *= gains[i];
+        }
+        gains = null!;
+        d = null!;
+        CollectBlockGarbage();
         return Stft.Inverse(e, cleaned.Length, n, hop);
     }
 
@@ -252,7 +406,10 @@ public static class OfflineEchoSolver
     /// smears by 6 samples only), then, with the call track warped by them, fine lines from
     /// 8 s windows.
     /// </summary>
-    public static (IReadOnlyList<Section> Sections, bool ManyPaths) Track(float[] mic, float[] far, CancellationToken cancellationToken = default)
+    public static (IReadOnlyList<Section> Sections, bool ManyPaths) Track(float[] mic, float[] far, CancellationToken cancellationToken = default) =>
+        Track(new ArrayTrack(mic, mic.Length), new ArrayTrack(far, Math.Max(far.Length, mic.Length)), cancellationToken);
+
+    private static (IReadOnlyList<Section> Sections, bool ManyPaths) Track(ITrack mic, ITrack far, CancellationToken cancellationToken)
     {
         var all = GccPoints(mic, far, 2.0, 1.0, 0.6, cancellationToken);
         var coarse = Sections(all, 24.0);
@@ -260,14 +417,7 @@ public static class OfflineEchoSolver
         // clear peaks that no line explains mean a recording that joins many devices.
         if (coarse.Count == 0) return (coarse, all.Length > 0 && all.Count(p => p.Sharpness >= 10.0) >= 0.3 * all.Length);
         const int lead = 1024;
-        var warped = new float[mic.Length];
-        foreach (var section in coarse)
-        {
-            var part = Warp(far, section.Lag, section.Slope, 0, mic.Length, mic.Length, lead);
-            var from = (int)Math.Clamp(section.Start * SampleRate, 0, mic.Length);
-            var to = double.IsInfinity(section.End) ? mic.Length : (int)Math.Clamp(section.End * SampleRate, 0, mic.Length);
-            Array.Copy(part, from, warped, from, to - from);
-        }
+        var warped = new WarpedTrack(far, coarse, mic.Length, lead);
         var points = GccPoints(mic, warped, 8.0, 4.0, 2.0 * lead / SampleRate, cancellationToken);
         var fine = new List<Section>();
         foreach (var section in coarse)
@@ -292,12 +442,17 @@ public static class OfflineEchoSolver
     /// Per window: the lag of the echo in samples, to a fraction, and how sharp its peak is.
     /// The lag is the peak of the phase-weighted cross-correlation between 300 and 6000 Hz.
     /// </summary>
-    private static DelayPoint[] GccPoints(float[] mic, float[] far, double windowSeconds, double hopSeconds, double maxSeconds, CancellationToken cancellationToken)
+    private static DelayPoint[] GccPoints(ITrack mic, ITrack far, double windowSeconds, double hopSeconds, double maxSeconds, CancellationToken cancellationToken)
     {
         int window = (int)(windowSeconds * SampleRate), hop = (int)(hopSeconds * SampleRate), maxLag = (int)(maxSeconds * SampleRate);
         var size = (int)BitOperations.RoundUpToPowerOf2((uint)(window + maxLag));
         double total = 0;
-        foreach (var v in far) total += (double)v * v;
+        var chunk = new float[1 << 16];
+        for (var position = 0; position < far.Length; position += chunk.Length)
+        {
+            far.Read(position, chunk);
+            for (var i = 0; i < chunk.Length && position + i < far.Length; i++) total += (double)chunk[i] * chunk[i];
+        }
         var level = total / Math.Max(1, far.Length) * 0.05;
         var count = mic.Length >= window ? (mic.Length - window) / hop + 1 : 0;
         var points = new DelayPoint?[count];
@@ -305,12 +460,13 @@ public static class OfflineEchoSolver
         Parallel.For(0, count, new ParallelOptions { CancellationToken = cancellationToken }, index =>
         {
             var start = index * hop;
+            var fr = new float[size];
+            far.Read(start, fr.AsSpan(0, window));
             double power = 0;
-            for (var i = 0; i < window; i++) power += (double)far[start + i] * far[start + i];
+            for (var i = 0; i < window; i++) power += (double)fr[i] * fr[i];
             if (power / window < level) return;
-            float[] mr = new float[size], mi = new float[size], fr = new float[size], fi = new float[size];
-            Array.Copy(mic, start, mr, 0, window);
-            Array.Copy(far, start, fr, 0, window);
+            float[] mr = new float[size], mi = new float[size], fi = new float[size];
+            mic.Read(start, mr.AsSpan(0, window));
             Fft.Transform(mr, mi, false);
             Fft.Transform(fr, fi, false);
             for (var k = 0; k < size; k++)
@@ -492,9 +648,20 @@ public static class OfflineEchoSolver
     /// windowed-sinc interpolation. The result holds the samples origin..origin + length of
     /// the call; those before the call's start or at and after `limit` are silence.
     /// </summary>
-    private static float[] Warp(float[] far, double lag, double slope, int origin, int length, int limit, int lead)
+    private static float[] Warp(ITrack far, double lag, double slope, int origin, int length, int limit, int lead)
     {
         var output = new float[length];
+        // The call track is read only where the interpolation reaches: its lag is a few seconds at most,
+        // and a whole call of it need not be in memory for a stretch of five minutes.
+        var first = Math.Max(origin, 0);
+        var last = Math.Min(origin + length, limit) - 1;
+        if (last < first) return output;
+        double Position(long g) => g - (lag + slope * g / SampleRate) + lead;
+        var low = (long)Math.Floor(Math.Min(Position(first), Position(last))) - SincTaps / 2;
+        var high = (long)Math.Floor(Math.Max(Position(first), Position(last))) + SincTaps / 2 + 1;
+        low = Math.Max(low, 0);
+        high = Math.Min(high, far.Length);
+        var source = Slice(far, low, (int)Math.Max(0, high - low));
         Parallel.For(0, (length + 65535) / 65536, block =>
         {
             var end = Math.Min(length, (block + 1) * 65536);
@@ -502,20 +669,40 @@ public static class OfflineEchoSolver
             {
                 var g = origin + i;
                 if (g < 0 || g >= limit) continue;
-                var position = g - (lag + slope * g / SampleRate) + lead;
+                var position = Position(g);
                 if (position < 0 || position >= far.Length) continue;
                 var whole = (int)Math.Floor(position);
                 var row = (int)Math.Round((position - whole) * SincPhases) * SincTaps;
                 float sum = 0;
                 for (var j = 0; j < SincTaps; j++)
                 {
-                    var source = whole + j - SincTaps / 2 + 1;
-                    if ((uint)source < (uint)far.Length) sum += far[source] * SincTable[row + j];
+                    var index = whole + j - SincTaps / 2 + 1;
+                    if ((uint)index < (uint)far.Length) sum += source[index - low] * SincTable[row + j];
                 }
                 output[i] = sum;
             }
         });
         return output;
+    }
+
+    /// <summary>The call track warped by the coarse lines of the delay, each over its own stretch, made a window at a time.</summary>
+    private sealed class WarpedTrack(ITrack far, IReadOnlyList<Section> sections, int length, int lead) : ITrack
+    {
+        public int Length { get; } = length;
+
+        public void Read(long start, Span<float> destination)
+        {
+            destination.Clear();
+            foreach (var section in sections)
+            {
+                var from = (int)Math.Clamp(section.Start * SampleRate, 0, Length);
+                var to = double.IsInfinity(section.End) ? Length : (int)Math.Clamp(section.End * SampleRate, 0, Length);
+                var low = (int)Math.Max(from, start);
+                var high = (int)Math.Min(to, start + destination.Length);
+                if (high <= low) continue;
+                Warp(far, section.Lag, section.Slope, low, high - low, Length, lead).CopyTo(destination[(int)(low - start)..]);
+            }
+        }
     }
 
     // ------------------------------------------------------------ the fit
@@ -644,22 +831,45 @@ public static class OfflineEchoSolver
     private static float[] InverseResidualPower(Stft.Spectrum y, Stft.Spectrum d, bool[] rows, double floor)
     {
         int bins = y.Bins, frames = y.Frames;
-        var power = new double[bins * frames];
-        for (var i = 0; i < power.Length; i++)
+        // One bin's smoothed power at a time, from y and d, with its neighbours' two rows beside it:
+        // an array of doubles for the whole block would be as large as y and d together.
+        double[] Across(int bin)
         {
-            double re = y.Re[i] - d.Re[i], im = y.Im[i] - d.Im[i];
-            power[i] = re * re + im * im;
+            var row = new double[frames];
+            for (var k = 0; k < frames; k++)
+            {
+                double sum = 0;
+                for (var j = -2; j <= 2; j++)
+                {
+                    var i = bin * frames + Math.Clamp(k + j, 0, frames - 1);
+                    double re = y.Re[i] - d.Re[i], im = y.Im[i] - d.Im[i];
+                    sum += re * re + im * im;
+                }
+                row[k] = sum / 5;
+            }
+            return row;
         }
-        var smooth = BoxSmooth(power, bins, frames, 2, 1);
         var weights = new float[bins * frames];
         var count = Math.Max(1, rows.Count(r => r));
+        var smooth = new double[frames];
+        double[] before = Across(0), now = before, after = bins > 1 ? Across(1) : now;
         for (var f = 0; f < bins; f++)
         {
             double mean = 0;
             for (var t = 0; t < frames; t++)
-                if (rows[t]) mean += smooth[f * frames + t];
+            {
+                double sum = 0;
+                sum += before[t];
+                sum += now[t];
+                sum += after[t];
+                smooth[t] = sum / 3;
+                if (rows[t]) mean += smooth[t];
+            }
             var least = floor * mean / count;
-            for (var t = 0; t < frames; t++) weights[f * frames + t] = (float)(1.0 / Math.Max(Math.Max(smooth[f * frames + t], least), 1e-30));
+            for (var t = 0; t < frames; t++) weights[f * frames + t] = (float)(1.0 / Math.Max(Math.Max(smooth[t], least), 1e-30));
+            before = now;
+            now = after;
+            after = f + 2 < bins ? Across(f + 2) : now;
         }
         return weights;
     }
@@ -673,36 +883,6 @@ public static class OfflineEchoSolver
             sum += re * re + im * im;
         }
         return sum;
-    }
-
-    private static double[] Power(Stft.Spectrum s)
-    {
-        var power = new double[s.Re.Length];
-        for (var i = 0; i < power.Length; i++) power[i] = (double)s.Re[i] * s.Re[i] + (double)s.Im[i] * s.Im[i];
-        return power;
-    }
-
-    /// <summary>The mean over 2t+1 frames and 2f+1 bins, edges repeated.</summary>
-    private static double[] BoxSmooth(double[] p, int bins, int frames, int t, int f)
-    {
-        var across = new double[p.Length];
-        for (var b = 0; b < bins; b++)
-            for (var k = 0; k < frames; k++)
-            {
-                double sum = 0;
-                for (var j = -t; j <= t; j++) sum += p[b * frames + Math.Clamp(k + j, 0, frames - 1)];
-                across[b * frames + k] = sum / (2 * t + 1);
-            }
-        if (f == 0) return across;
-        var result = new double[p.Length];
-        for (var b = 0; b < bins; b++)
-            for (var k = 0; k < frames; k++)
-            {
-                double sum = 0;
-                for (var j = -f; j <= f; j++) sum += across[Math.Clamp(b + j, 0, bins - 1) * frames + k];
-                result[b * frames + k] = sum / (2 * f + 1);
-            }
-        return result;
     }
 
     /// <summary>The q-th percentile with linear interpolation between ranks, as numpy's.</summary>

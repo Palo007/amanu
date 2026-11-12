@@ -1148,3 +1148,117 @@ A against solve-floor: -1.8 [-3.8, +0.4], no noise 1.3 better; against solve-gat
 Held-out set, A only (52 calls, no tuning): 12.4 against solve-floor 13.0 (-0.7 [-2.1, +0.9]), solve-gate 11.8 (+0.6 [-0.7, +2.0]), setting c 10.0. Loud calls 27.8 (floor 31.4, gate 27.2), no noise 5.5 (floor 7.4, gate 6.3).
 
 Verdict: unclear, leaning loss. The cheap cut gets about a third of the gain of the gated cut on the suite and a third on held-out, with intervals that include zero. Why: in loud babble the detector is blind (it misses speech) or open everywhere, so the gain of setting c comes mostly from where the gate is closed over babble and noise only, plus the gate's own noise suppression (solve-gate cleans loud calls to 29.6 before cutting). Not tried: a detector that uses the far track (open only where far is quiet), a detector on solve-gate's mask for loud calls only. Rows: `...\overnight\C\wer2\n1\{A,B}` and `...\C\ho\wer2\n1\A`; solve-floor outputs cached in `...\C\cache` (20 calls). All engine runs of this track have ended.
+
+### 19.1 WER of the distilled gate (gate-b), setting c, 14 loud + 6 no-noise calls
+
+Run: `s3d_cache.py` then `n1.py run:c` on work dir `S3\w` (the plain solver output gated by gate-b, so only the gate differs; 3 transcriptions at once, none running before). Rows `S3\w\wer2\n1\c`; `s3d_cmp.py` compares them with N1's setting c rows.
+My WER, distilled gate / setting c with the real gate / solve-gate: loud 14 28.5 / 27.2 / 29.6; SNR 0 18.2 / 17.6 / 19.6; SNR -5 42.4 / 40.0 / 42.8; no-noise 6 9.7 / 9.2 / 10.4; all 20 22.9 / 21.8 / 23.8.
+Paired difference against setting c on the 20 calls: +1.06 points, 95 % interval [+0.28, +1.93]. Against solve-gate: -0.9 [-1.5, -0.3].
+Engine seconds: 333 s against setting c's 287 s (+16 %, the extra region time). Win was within 0.3 points of setting c: this is a **loss** (it keeps about half of setting c's gain over solve-gate); the cut audio is cheap to make, but the gate decisions of section 19 cost the words.
+All engine runs have ended (no transcribe-cli process); the 420 MB cache and temp WAVs are deleted; the held-out set was not run.
+
+
+## 18. A tiny mask trained for the engine (overnight, track N5)
+
+Hypothesis: a small bidirectional GRU on level-normalized log-mel features, trained to predict the ideal ratio mask with a floor of 0.3 on
+babble, takes more noise out of the solver output than it takes speech, and then n1 setting c's cutting beats 27.2. Step 1, CPU only; no
+transcription was run. Scripts: `n5.py` (`data`, `train`, `check`, and the prepared `run`, `show`), `n5_fetch.py` (the data).
+
+Training data (all in `%USERPROFILE%\Amanu Quality Set\lab\overnight\N5\data`; lists with SHA-256 in `speech-files.tsv` and `noise-files.tsv`):
+- Speech: FLEURS Slovak **train** split, the first 311 files of `train.tar.gz` (0.92 h, read as a stream, 160 MB; a first stream of 350 MB was
+  wasted, see below). None has a sentence id, file name or normalized text that occurs in the suite's test list (`downloads\fleurs-sk-test.tsv`)
+  or the held-out set's dev list (`heldout\downloads\fleurs-sk-dev.tsv`): 0 dropped. Every 20th file by sorted name (16) validates, 295 train. The set
+  hash over names and FLAC hashes is `n5.py data`. Speed perturbation 0.88..1.12 on half the utterances.
+- Noise: DEMAND PSTATION and OHALLWAY (CC BY 4.0, zenodo 1227121), channels 01/05/09/13 of each, 300 s each; the first 80 % trains, the last 20 %
+  validates. The suite uses OOFFICE, PCAFETER, STRAFFIC, DLIVING and the held-out set OMEETING, PRESTO, DKITCHEN, SPSQUARE, so neither is used.
+  Plus babble: sums of 2 to 8 FLEURS train talkers, each through its own diffuse reverb (RT60 0.4..1.1 s, DRR -6..+4 dB), a bank of 80 x 20 s, and
+  coloured noise. Mix: 45 % babble, 25 % DEMAND, 15 % both, 7 % coloured, 8 % babble and coloured. My speech gets a light room on half the windows;
+  SNR against my active power -8..3 dB (60 %), 3..15 (25 %), 15..35 (15 %). Windows of 10 s, features computed on the fly, nothing cached.
+- Never used: the suite's or the held-out set's audio, near.wav, the noise track or truth inside the mask (at run time it sees the solver output `e` alone).
+
+Model: Linear(128, 96), 2 x bidirectional GRU(128), Linear(256, 257), mask = 0.3 + 0.7 sigmoid; 548,449 parameters. STFT 512/128 as in `n4.py`. Input per
+24 ms frame: 64 log-mel bands (dB) minus the 95th percentile of the window's frame energy, and the mean of the same over the window's loud frames
+(within 12 dB of that percentile), as the call's long-term spectrum. The gate's open frames are not used: the loud-frame mean is self-contained and the
+same in training and in use. Loss: mask against max(IRM, 0.3), weighted by the mixture magnitude^0.6 and by `ASYM` where the mask is under its target.
+Use: windows of 10 s, hop 8 s, cross-faded.
+- Run 1 (`ASYM` 2): AdamW, 2 threads, 3141 steps of 12 windows in 6601 s (110 min), cosine lr 2e-3, checkpoints every 10 min. Validation (24 windows,
+  proxy from the true parts) ended at speech -1.54 dB, SNR gain +4.63 dB.
+- Run 2 (the one change of the stop rule, `ASYM` 6, fine-tune of run 1 for 2400 s at lr 5e-4, `ckpt\a6-final.pt`): 1561 steps; validation -1.02 dB / +4.01 dB.
+- Mistake on the way: the first training ran about 10 minutes on silence, because FLEURS wavs are 32-bit float and I read them as int16. Caught by the
+  validation (NaN) and fixed; that log is `train-bad-int16.log`. The downloads came to about 1 GB in all (torch twice 126 MB, 350 + 160 MB speech, 197 MB noise).
+
+Signal check (`n5.py check`, logs `N5\check.log` and `check-a6.log`; truth only measures; the mask chosen from the mixture is applied to my speech part and
+to the rest separately, as in section 17). Mean over calls; speech = level change over my speech frames, SNR gain inside setting c's regions, both dB:
+
+| Call set | run 1 (ASYM 2) | run 2 (ASYM 6) | n4 f12 (section 17) | DPDFNet baseline raw, speech level (section 16) |
+|---|---|---|---|---|
+| cafe -5 (x3) | -4.01 / +3.31 | -2.74 / +3.30 | -3.86 / +1.89 | -5.9, -8.3, -5.9 (mean of cafe+office -5: -6.71) |
+| cafe 0 (x3) | -2.29 / +4.18 | -1.45 / +3.77 | -1.86 / +3.33 | -2.35 |
+| office -5 (x3) | -0.25 / +9.83 | -0.14 / +9.62 | -0.25 / +2.11 | about -0.1 |
+| office 0 (x3) | -0.18 / +9.46 | -0.10 / +9.03 | -0.13 / +0.97 | |
+| living 0 | -1.28 / +6.36 | -0.79 / +6.03 | -1.47 / +3.91 | -0.56 (section 16) |
+| street 0 | -0.65 / +8.11 | -0.39 / +7.83 | -0.58 / +4.10 | |
+| no noise (6) | -0.04..-0.14 / +0.5..+1.4 | -0.04..-0.07 | under 0.1 | -0.26 |
+
+No-noise calls change by under 0.15 dB in speech level (bar 0.5). DPDFNet's SNR gain is not comparable: `check` also prints it by projection on
+near.wav (+6 to +9 dB at cafe, +23 to +28 at office), but the projection counts everything the denoiser removed from my speech as removed noise.
+Section 16 gives only its speech level, and that is the figure to compare: the mask loses 2.7 to 4.0 dB at cafe -5 against 6 to 8 dB.
+
+Verdict (stop rule): after run 1 the mask gave 3.3 dB of SNR gain at cafe -5 (bar 3) but lost 4.0 dB of speech (bar: under 2). One change (`ASYM` 6) cut the loss to 2.7 dB
+at cafe -5 and 1.45 dB at cafe 0 for the same 3.3 dB of gain at -5 (3.8 at 0). Stopped there. The aim of 1.5 dB is met at cafe 0 and every other noise, not at
+cafe -5, where the loss is still 2.7 dB; the 3 dB gain is met. So it is better than every earlier denoiser on this check (it takes about 1.2 dB of speech for 1 dB of
+babble at -5, section 17 took 2), but still on the same curve: cafe -5 is where the 40 to 60 point errors are and it is the one setting that loses speech. Whether the
+engine likes that cannot be told without a run. Not tried: a longer training, more speech (0.9 h is small), a floor of 0.4, a loss on the engine's own features.
+
+Prepared, not run (3 transcriptions at once, 14 noisy and 6 no-noise calls = 20; baselines `su/solve-gate` and `N1\n1\c` from the cached rows, never measured again;
+about 5 min of engine time plus 3 min of mask on CPU, as for n4):
+
+    cd windows/tests/quality/lab && py -P n5.py run "%USERPROFILE%\Amanu Quality Set\lab" n5-a6 a6-final && py -P n5.py show "%USERPROFILE%\Amanu Quality Set\lab" n5-a6
+
+(`n5-a6` is only the row tag; use `final` as the last argument of `run` for run 1. Rows land in `...\lab\wer2\n5\<tag>`; `show` prints the paired bootstrap
+against solve-gate and against n1 setting c. Bar: 1.5 points under 27.2 with an interval that excludes 0.)
+Disk: N5 holds 645 MB (torch in `pylib` 534 MB, data 88 MB, checkpoints 21 MB). Nothing else was written.
+
+## 21. The solver's memory (overnight, track G)
+
+Result: win. A two-hour call took 5.9 to 7.2 GB of working set in the solver stage before (default collector, this PC) and takes 0.87 GB after for one echo path,
+1.06 GB for eight; the output is bit-identical for `solve` and `solve-gate-cut`, and 150 dB under the signal (float rounding) for `solve-floor` and `solve-gate`.
+
+What was long. Two hours are 115.2 M samples, 460 MB per float array. Before: the mic and the call track whole (2 x 460), then `Track` warped the call track
+once per coarse section into a full-length array and copied it into a second full-length one (2 x 460 per section, thrown away), `Cancel` held the echo and the cleaned mic
+(2 x 460), `Suppress` an output array (460), and every block of the fit (300 s: y, x, d, the power, two smoothings, the weights, 40 to 80 MB each) was new
+large-object-heap garbage that the collector let pile up. Live size at the worst moment was about 2.3 GB (the brief's figure; not measured again); the working set was far above it because the collector
+ran a full collection only every few blocks. The new code runs under `DOTNET_GCHeapHardLimit` of 1.25 GB and fails at 1 GB (fragmentation); its live size by forced collection is 0.8 to 0.88 GB.
+
+What changed (`OfflineEchoSolver.cs`, `OfflineEchoAudio.cs`, one new test):
+- `ITrack` (read a piece at any place, silence outside) replaces whole arrays inside the solver; `ArrayTrack` keeps `Cancel(float[], float[])` and the lab/test callers as they were. The app reads
+  the decoded float wave files through `FileTrack` (positional, under a lock). `Warp` reads only the stretch of the call track its output reaches; the fine delay pass makes the warped call track a window at a time (`WarpedTrack`) instead of as a 460 MB array; `GccPoints` streams the call track's power. Same sums in the same order, so no number moved.
+- `OfflineEchoSolver.Solve(mic, far, floor)` is `Cancel` and `Suppress` for tracks: the echo array becomes the cleaned mic in place, `Suppress` runs in place (`SuppressInPlace`, which keeps the
+  2.5 s of input the block before has already overwritten), and the echo it needs is mic minus cleaned. That is the only inexact step (one float rounding); everything else is the same arithmetic.
+- `InverseResidualPower` smooths one bin at a time from y and d instead of building three double arrays the size of y; the second round's weights, which nothing used, are not made.
+  `SuppressBlock` makes powers from the spectra where it needs them instead of four double arrays, keeps its gains in a float array, and gives each thread its four 300 KB rows (new rows per bin were 300 MB of large-object garbage per block).
+- `GC.Collect` between blocks (`CollectBlockGarbage`): without it the first version had 0.8 GB live and 4 GB working set.
+
+Proof, old build against new build, `OfflineEchoAudio.Prepare` end to end (no transcription), harness in `overnight\G\harness`, `cmp_run.py`; 8 calls x 4 models = 32 pairs, none differs by more than rounding:
+
+| Calls | `solve` | `solve-gate-cut` | `solve-floor` | `solve-gate` |
+|---|---|---|---|---|
+| 6 suite echo calls (cafe, office, street, living; 171 s) and held-out `ho-long-3`, `ho-long-0` (760 s, 3 suppressor blocks) | bit-identical | bit-identical | -150.3 to -157.5 dB (max abs 6e-8) | -150.7 to -157.5 dB |
+
+A 30-minute call joined from four held-out calls (4 echo paths, so the section joins and the in-place blocks are used): `solve` bit-identical, `solve-floor` -151.1 dB.
+Unit tests: 331 + 113 + the new one pass (`dotnet test Amanu.Windows.slnx`, as BUILDING-HERE.md says).
+
+Two hours, solver stage only (harness `solver` and `solver-new`, `solve-floor`, 16-bit input of 2 x 230 MB; the 2 h is a real held-out call tiled to 7200 s, plus a one-path synthetic):
+
+| | peak working set before | after | time before | after |
+|---|---|---|---|---|
+| 1 echo path (synthetic, 7200 s) | 5.9 to 6.9 GB | 0.87 GB | 49 to 61 s | 52 s |
+| 8 echo paths (held-out tiles, 7200 s) | 5.6 to 7.2 GB | 1.06 GB | 63 s | 58 s |
+| 30 min, 4 paths | 4.2 GB | 0.66 GB | 14 s | 16 s |
+
+Time is the same within the noise of a busy PC (ratio 0.93 to 1.06). Real calls take 1.0 to 1.1 of the old time on 760 s calls (6.8 against 6.4 s for `solve-floor`).
+
+Left over. (1) The speech gate is outside the solver and still holds three arrays of the call's length (`Apply`: audio, the denoiser's output, the gain), so `solve-gate` and `solve-gate-cut` peak
+near 1.4 GB on two hours at that step; making `Gain` write into the denoiser's array would take it to 0.92 GB. (2) The one stage that still holds a whole-call array is the cleaned mic (460 MB), because the gate, the cutter
+and the writer want it; the rest of the solver is under 0.45 GB over it. (3) With several echo paths the block that waits for the next path's fit (`pending`, 77 MB) is the difference between 0.87 and 1.06 GB.
+(4) Prepare itself writes 2 x 460 MB of decoded wave files and the same again for the output on two hours, so it was not run at 2 h here (disk); the solver stage numbers above are what it adds.

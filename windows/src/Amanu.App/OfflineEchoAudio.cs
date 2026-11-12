@@ -100,14 +100,14 @@ public static class OfflineEchoAudio
             float[]? cleaned = null;
             if (active && model?.Solver is { } solver)
             {
-                var solved = OfflineEchoSolver.Cancel(
-                    ReadAll(micSource, micLead, frames, cancellationToken), ReadAll(systemSource, systemLead, frames, cancellationToken), cancellationToken);
+                // The solver reads both tracks from their files a piece at a time: the whole of two hours
+                // as floats is 460 MB for each of them.
+                using var micTrack = new FileTrack(micSource, micLead, (int)frames);
+                using var systemTrack = new FileTrack(systemSource, systemLead, (int)frames);
+                var solved = OfflineEchoSolver.Solve(micTrack, systemTrack, solver.SuppressorFloor, cancellationToken);
                 // A recording that joins many devices has no one echo path to solve: cleaned
                 // stays null, and the model's stream (plain Sonora) runs below.
-                if (!solved.ManyPaths)
-                    cleaned = solved.Sections.Count > 0 && solver.SuppressorFloor is { } floor
-                        ? OfflineEchoSolver.Suppress(solved.Cleaned, solved.Echo, floor)
-                        : solved.Cleaned;
+                if (!solved.ManyPaths) cleaned = solved.Cleaned;
                 result = result with { Solver = Describe(solved), Solved = cleaned is not null };
                 Mark("solve");
             }
@@ -398,23 +398,6 @@ public static class OfflineEchoAudio
         return int.TryParse(Environment.GetEnvironmentVariable("AMANU_ECHO_WORKERS"), out var forced) && forced > 0 ? forced : 1;
     }
 
-    /// <summary>A track on the shared timeline: a wave file read after <paramref name="lead"/> samples of silence.</summary>
-    /// <summary>One track on the recording's timeline, whole, for the echo solver.</summary>
-    private static float[] ReadAll(string path, long lead, long frames, CancellationToken cancellationToken)
-    {
-        var all = new float[frames];
-        using var source = new LeadSource(path, lead);
-        var position = 0;
-        while (position < all.Length)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var read = source.Read(all.AsSpan(position, Math.Min(1 << 16, all.Length - position)));
-            if (read == 0) break;
-            position += read;
-        }
-        return all;
-    }
-
     private static string Describe(OfflineEchoSolver.Result solved)
     {
         if (solved.ManyPaths) return "many echo paths";
@@ -424,6 +407,40 @@ public static class OfflineEchoAudio
         return $"{solved.Sections.Count} echo path{(solved.Sections.Count == 1 ? "" : "s")}: {string.Join("; ", parts)}";
     }
 
+    /// <summary>
+    /// One decoded track on the recording's timeline for the echo solver: <paramref name="lead"/> samples of
+    /// silence, then the wave file, then silence up to <paramref name="length"/>. Reads may come from many
+    /// threads at once.
+    /// </summary>
+    private sealed class FileTrack(string path, long lead, int length) : OfflineEchoSolver.ITrack, IDisposable
+    {
+        private readonly WaveFileReader reader = new(path);
+
+        public int Length { get; } = length;
+
+        public void Read(long start, Span<float> destination)
+        {
+            destination.Clear();
+            var first = Math.Max(start, lead);
+            var last = Math.Min(Math.Min(start + destination.Length, lead + reader.SampleCount), Length);
+            if (last <= first) return;
+            var bytes = MemoryMarshal.AsBytes(destination.Slice((int)(first - start), (int)(last - first)));
+            lock (reader)
+            {
+                reader.Position = (first - lead) * sizeof(float);
+                for (var done = 0; done < bytes.Length;)
+                {
+                    var read = reader.Read(bytes[done..]);
+                    if (read == 0) break;
+                    done += read;
+                }
+            }
+        }
+
+        public void Dispose() => reader.Dispose();
+    }
+
+    /// <summary>A track on the shared timeline: a wave file read after <paramref name="lead"/> samples of silence.</summary>
     private sealed class LeadSource : IMonoSampleSource, IDisposable
     {
         private readonly WaveSource wave;
